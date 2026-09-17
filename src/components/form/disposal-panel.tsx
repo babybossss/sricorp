@@ -1,0 +1,287 @@
+"use client";
+
+import * as React from "react";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Pill } from "@/components/ui/pill";
+import { money, parseAmount } from "@/lib/format";
+import { computeDisposal, disposalJournal, isBalanced } from "@/lib/disposal/capital-gain";
+import { splitRepayment, repaymentJournal } from "@/lib/disposal/repayment";
+import type { Installment } from "@/lib/loan/schedule";
+import { cn } from "@/lib/utils";
+
+/** ตารางบรรทัดบัญชีที่ระบบจะลงให้ — ใช้ร่วมกันทั้งสองแผง */
+function JournalPreview({
+  lines,
+}: {
+  lines: { account: string; label: string; debit: number; credit: number }[];
+}) {
+  const balanced = isBalanced(lines);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <div className="text-sm font-semibold text-ink-600">ระบบจะลงบัญชีให้ดังนี้</div>
+        <Pill className={balanced ? "border-pos bg-pos-bg text-pos-fg" : "border-neg bg-neg-bg text-neg-fg"}>
+          {balanced ? "สมดุล ✓" : "ไม่สมดุล"}
+        </Pill>
+      </div>
+      <div className="overflow-hidden rounded border border-line">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-canvas">
+              <th className="p-[8px_10px] text-left font-semibold text-ink-600">บัญชี</th>
+              <th className="p-[8px_10px] text-right font-semibold text-ink-600">เดบิต</th>
+              <th className="p-[8px_10px] text-right font-semibold text-ink-600">เครดิต</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l, i) => (
+              <tr key={`${l.account}-${i}`} className="border-t border-line">
+                <td className="p-[8px_10px]">
+                  <span className="text-ink-400">{l.account}</span> {l.label}
+                </td>
+                <td className="p-[8px_10px] text-right">{l.debit ? money(l.debit) : "–"}</td>
+                <td className="p-[8px_10px] text-right">{l.credit ? money(l.credit) : "–"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export type DisposalValue = {
+  costBasis: string;
+  salePrice: string;
+  sellingCosts: string;
+  unrealizedGain: string;
+};
+
+export const EMPTY_DISPOSAL: DisposalValue = {
+  costBasis: "",
+  salePrice: "",
+  sellingCosts: "",
+  unrealizedGain: "",
+};
+
+/**
+ * Backlog ข้อ 4 — แผงคำนวณกำไร/ขาดทุนจากการขาย
+ * ต้นทุนดึงมาให้ (ในระบบจริงมาจาก ledger) แก้ค่าธรรมเนียมได้ก่อนยืนยัน
+ */
+export function DisposalPanel({
+  value,
+  onChange,
+  assetCoa = "1500",
+  assetName = "อสังหาริมทรัพย์เพื่อการลงทุน",
+}: {
+  value: DisposalValue;
+  onChange: (v: DisposalValue) => void;
+  assetCoa?: string;
+  assetName?: string;
+}) {
+  const patch = (p: Partial<DisposalValue>) => onChange({ ...value, ...p });
+
+  const cost = parseAmount(value.costBasis);
+  const price = parseAmount(value.salePrice);
+  const ready = cost > 0 && price > 0;
+
+  const result = ready
+    ? computeDisposal({
+        costBasis: cost,
+        salePrice: price,
+        sellingCosts: parseAmount(value.sellingCosts),
+        unrealizedGain: parseAmount(value.unrealizedGain),
+      })
+    : null;
+
+  return (
+    <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
+      <div className="text-base font-semibold">คำนวณกำไร/ขาดทุนจากการขาย</div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="ต้นทุนตามบัญชี" hint="ดึงจากรายการซื้อและค่ารีโนเวทที่บันทึกไว้">
+          <Input value={value.costBasis} onChange={(e) => patch({ costBasis: e.target.value })} inputMode="decimal" />
+        </Field>
+        <Field label="ราคาขายจริง" required>
+          <Input value={value.salePrice} onChange={(e) => patch({ salePrice: e.target.value })} inputMode="decimal" />
+        </Field>
+        <Field label="ค่าธรรมเนียม / ค่าใช้จ่ายในการขาย" hint="ค่านายหน้า ค่าโอน ภาษีธุรกิจเฉพาะ">
+          <Input value={value.sellingCosts} onChange={(e) => patch({ sellingCosts: e.target.value })} inputMode="decimal" />
+        </Field>
+        <Field label="กำไรยังไม่รับรู้ที่เคยบันทึกไว้" hint="จากการตีราคา — ต้องล้างออกพร้อมการขาย">
+          <Input value={value.unrealizedGain} onChange={(e) => patch({ unrealizedGain: e.target.value })} inputMode="decimal" />
+        </Field>
+      </div>
+
+      {result ? (
+        <>
+          <div className="flex flex-wrap items-center gap-4 rounded border border-line bg-surface p-[14px_16px]">
+            <div>
+              <div className="text-sm text-ink-600">เงินที่ได้สุทธิ</div>
+              <div className="text-h2 font-semibold">{money(result.netProceeds)}</div>
+            </div>
+            <div>
+              <div className="text-sm text-ink-600">
+                {result.isGain ? "กำไรจากการขาย" : "ขาดทุนจากการขาย"}{" "}
+                <span className="text-ink-400">Capital {result.isGain ? "gain" : "loss"}</span>
+              </div>
+              <div className={cn("text-h2 font-semibold", result.isGain ? "text-pos" : "text-neg")}>
+                {result.isGain ? "+" : "−"}
+                {money(Math.abs(result.capitalGain))}
+              </div>
+            </div>
+            <div className="ml-auto text-sm leading-6 text-ink-600">
+              ราคาขาย {money(result.salePrice)} − ค่าใช้จ่าย {money(result.sellingCosts)} − ต้นทุน {money(result.costBasis)}
+            </div>
+          </div>
+
+          {result.unrealizedToReverse > 0 ? (
+            <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
+              ⚠ กำไรยังไม่รับรู้ {money(result.unrealizedToReverse)} ของทรัพย์ชิ้นนี้จะถูก<b>ล้างออกพร้อมกัน</b> —
+              ไม่งั้นจะนับกำไรซ้ำสองรอบ (รอบแรกตอนตีราคา รอบสองตอนขายจริง)
+            </div>
+          ) : null}
+
+          <JournalPreview lines={disposalJournal(result, assetCoa, assetName)} />
+        </>
+      ) : (
+        <div className="text-sm leading-6 text-ink-600">กรอกต้นทุนและราคาขายเพื่อดูกำไร/ขาดทุนก่อนยืนยัน</div>
+      )}
+    </div>
+  );
+}
+
+export type RepaymentValue = {
+  amountPaid: string;
+  manualPrincipal: string;
+  manualInterest: string;
+  useManual: boolean;
+};
+
+export const EMPTY_REPAYMENT: RepaymentValue = {
+  amountPaid: "",
+  manualPrincipal: "",
+  manualInterest: "",
+  useManual: false,
+};
+
+/**
+ * Backlog ข้อ 5 — แผงแยกเงินต้น/ดอกเบี้ย
+ * ดึงงวดที่ค้างจากสัญญามาตั้งค่าให้ แล้วให้ผู้ใช้ยืนยันหรือแก้ได้
+ */
+export function RepaymentPanel({
+  value,
+  onChange,
+  installment,
+  liabilityCoa = "2410",
+  liabilityName = "เงินกู้ธนาคาร",
+}: {
+  value: RepaymentValue;
+  onChange: (v: RepaymentValue) => void;
+  /** งวดที่ค้างตามสัญญา ถ้ามี */
+  installment?: Installment;
+  liabilityCoa?: string;
+  liabilityName?: string;
+}) {
+  const patch = (p: Partial<RepaymentValue>) => onChange({ ...value, ...p });
+
+  const paid = parseAmount(value.amountPaid);
+
+  // ไม่มีตารางงวดอ้างอิง = ต้องกรอกเองเสมอ ไม่ว่าจะติ๊กช่องหรือไม่
+  const manualMode = value.useManual || !installment;
+  // ยังไม่กรอกอะไรเลยก็อย่าเพิ่งขึ้น error ให้ตกใจ
+  const manualTouched = value.manualPrincipal.trim() !== "" || value.manualInterest.trim() !== "";
+
+  let split: ReturnType<typeof splitRepayment> | null = null;
+  let error: string | null = null;
+
+  if (paid > 0 && (!manualMode || manualTouched)) {
+    try {
+      split = splitRepayment({
+        amountPaid: paid,
+        installment,
+        manualPrincipal: manualMode ? parseAmount(value.manualPrincipal) : undefined,
+        manualInterest: manualMode ? parseAmount(value.manualInterest) : undefined,
+      });
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
+      <div className="text-base font-semibold">แยกเงินต้น / ดอกเบี้ย</div>
+
+      {installment ? (
+        <div className="rounded border border-brand-100 bg-brand-50 p-[12px_14px] text-sm leading-6">
+          งวดที่ {installment.period} ครบกำหนด {installment.dueDate} · ตามสัญญาต้องจ่าย{" "}
+          <b>{money(installment.total)}</b> (เงินต้น {money(installment.principal)} + ดอกเบี้ย {money(installment.interest)})
+        </div>
+      ) : (
+        <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
+          ไม่มีตารางงวดอ้างอิง — ต้องระบุเงินต้นและดอกเบี้ยเอง ระบบจะไม่เดาให้
+        </div>
+      )}
+
+      <Field label="ยอดที่จ่ายจริง" required>
+        <Input value={value.amountPaid} onChange={(e) => patch({ amountPaid: e.target.value })} inputMode="decimal" />
+      </Field>
+
+      <label className="flex min-h-control items-center gap-2.5 text-base">
+        <input
+          type="checkbox"
+          checked={manualMode}
+          disabled={!installment}
+          onChange={(e) => patch({ useManual: e.target.checked })}
+          className="h-[26px] w-[26px] accent-brand-600"
+        />
+        ระบุเงินต้น/ดอกเบี้ยเอง
+        {!installment ? <span className="text-sm text-ink-400">(บังคับ เพราะไม่มีตารางงวด)</span> : null}
+      </label>
+
+      {manualMode ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="เงินต้น" hint="ลดหนี้สินในงบดุล ไม่ใช่ค่าใช้จ่าย">
+            <Input value={value.manualPrincipal} onChange={(e) => patch({ manualPrincipal: e.target.value })} inputMode="decimal" />
+          </Field>
+          <Field label="ดอกเบี้ย" hint="เป็นค่าใช้จ่ายใน P&L">
+            <Input value={value.manualInterest} onChange={(e) => patch({ manualInterest: e.target.value })} inputMode="decimal" />
+          </Field>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="rounded border border-neg bg-neg-bg p-[12px_14px] text-sm leading-6 text-neg-fg">{error}</div>
+      ) : null}
+
+      {split ? (
+        <>
+          <div className="flex flex-wrap items-center gap-6 rounded border border-line bg-surface p-[14px_16px]">
+            <div>
+              <div className="text-sm text-ink-600">เงินต้น <span className="text-ink-400">ลดหนี้สิน</span></div>
+              <div className="text-h2 font-semibold">{money(split.principal)}</div>
+            </div>
+            <div>
+              <div className="text-sm text-ink-600">ดอกเบี้ย <span className="text-ink-400">ค่าใช้จ่าย</span></div>
+              <div className="text-h2 font-semibold text-neg">{money(split.interest)}</div>
+            </div>
+            {split.isPartial ? (
+              <Pill className="border-warn bg-warn-bg text-warn-fg">ไม่ตรงงวด</Pill>
+            ) : (
+              <Pill className="border-pos bg-pos-bg text-pos-fg">ตรงตามงวด</Pill>
+            )}
+          </div>
+
+          {split.note ? (
+            <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
+              {split.note}
+            </div>
+          ) : null}
+
+          <JournalPreview lines={repaymentJournal(split, liabilityCoa, liabilityName)} />
+        </>
+      ) : null}
+    </div>
+  );
+}

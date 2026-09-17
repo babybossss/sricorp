@@ -10,9 +10,14 @@ import { Input, AmountInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pill } from "@/components/ui/pill";
+import { Button } from "@/components/ui/button";
+import { coa } from "@/lib/rules/coa";
 import { TYPE_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import { ContactPicker } from "./contact-picker";
+import { LoanTermsDialog } from "./loan-terms-dialog";
+import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
+import { money } from "@/lib/format";
 import type { TxFormApi } from "./use-tx-form";
 
 /** ขั้น 1 — เลือกประเภทรายการ */
@@ -176,9 +181,91 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         />
       </div>
 
+      {/* Backlog ข้อ 2 — เงื่อนไขสัญญากู้/ให้กู้ */}
+      {requires("loanTerms") ? (
+        <LoanTermsSection api={api} contactLayer={contactLayer} />
+      ) : null}
+
+      {/* Backlog ข้อ 4 — กำไร/ขาดทุนจากการขาย */}
+      {requires("capitalGain") ? (
+        <DisposalPanel
+          value={draft.disposal}
+          onChange={(v) => patch({ disposal: v })}
+          assetCoa={sub?.cr ?? "1500"}
+          assetName={sub ? coa(sub.cr).nameTh : "ทรัพย์"}
+        />
+      ) : null}
+
+      {/* Backlog ข้อ 5 — แยกเงินต้น/ดอกเบี้ย */}
+      {requires("principalInterestSplit") ? (
+        <RepaymentPanel
+          value={draft.repayment}
+          onChange={(v) => patch({ repayment: v })}
+          installment={draft.loanTerms.schedule[0]}
+          liabilityCoa={sub?.dr ?? "2410"}
+          liabilityName={sub ? coa(sub.dr).nameTh : "เงินกู้"}
+        />
+      ) : null}
+
       <Field label="หมายเหตุ" hint="ไม่จำเป็นต้องกรอก">
         <Input value={draft.note} onChange={(e) => patch({ note: e.target.value })} placeholder="ไม่จำเป็นต้องกรอก" />
       </Field>
+    </div>
+  );
+}
+
+/**
+ * ปุ่มเปิดฟอร์มเงื่อนไขสัญญา + สรุปตารางงวดที่สร้างแล้ว
+ * แยกออกมาเพราะต้องมี state ของ dialog เป็นของตัวเอง
+ */
+function LoanTermsSection({ api, contactLayer }: { api: TxFormApi; contactLayer: number }) {
+  const [open, setOpen] = React.useState(false);
+  const { draft, patch } = api;
+  const terms = draft.loanTerms;
+  const done = terms.schedule.length > 0;
+
+  // ฝั่งไหน: กู้เข้า (finance_in) = เรายืมเขา · ปล่อยกู้ (invest_buy) = เราให้ยืม
+  const direction = draft.typeKey === "finance_in" ? "borrow" : "lend";
+
+  const totalInterest = terms.schedule.reduce((t, r) => t + r.interest, 0);
+
+  return (
+    <div className={cn("flex flex-col gap-3 rounded-card border p-4", done ? "border-line bg-canvas" : "border-warn bg-warn-bg")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-base font-semibold">เงื่อนไขสัญญา</div>
+        {done ? (
+          <Pill className="border-pos bg-pos-bg text-pos-fg">สร้างตารางงวดแล้ว {terms.schedule.length} งวด</Pill>
+        ) : (
+          <Pill className="border-warn bg-surface text-warn-fg">ยังไม่ได้กรอก</Pill>
+        )}
+        <Button type="button" variant={done ? "secondary" : "primary"} size="sm" className="ml-auto" onClick={() => setOpen(true)}>
+          {done ? "แก้ไขเงื่อนไข" : "กรอกเงื่อนไขสัญญา"}
+        </Button>
+      </div>
+
+      {done ? (
+        <div className="text-sm leading-6 text-ink-600">
+          วงเงิน {terms.principal} · ดอกเบี้ย {terms.rate}% ต่อ{terms.ratePeriod === "month" ? "เดือน" : "ปี"} ·{" "}
+          {terms.schedule.length} งวด · งวดแรก {terms.schedule[0].dueDate} · งวดสุดท้าย{" "}
+          {terms.schedule[terms.schedule.length - 1].dueDate}
+          <br />
+          ดอกเบี้ยรวมตลอดสัญญา <b className="text-ink-900">{money(totalInterest)}</b>
+        </div>
+      ) : (
+        <div className="text-sm leading-6 text-warn-fg">
+          หมวดย่อยนี้เป็นสัญญากู้ — ต้องกรอกเงื่อนไข (ยืมจากใคร วงเงิน กำหนดคืน ดอกเบี้ย)
+          เพื่อให้ระบบสร้างตารางงวดชำระ แล้วหน้ายืนยันรับ-จ่ายจะดึงไปใช้ได้เอง
+        </div>
+      )}
+
+      <LoanTermsDialog
+        open={open}
+        onOpenChange={setOpen}
+        value={terms}
+        onSave={(v) => patch({ loanTerms: v })}
+        direction={direction}
+        layer={contactLayer}
+      />
     </div>
   );
 }

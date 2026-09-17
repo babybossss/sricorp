@@ -3,6 +3,8 @@
 import * as React from "react";
 import { allowedSubs, findSub, isValidPair, type TxTypeKey, type SubCategory } from "@/lib/rules/tx-rules";
 import { HOLDERS } from "@/lib/mock/entities";
+import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
+import { EMPTY_DISPOSAL, EMPTY_REPAYMENT, type DisposalValue, type RepaymentValue } from "./disposal-panel";
 
 export type TxDraft = {
   typeKey: TxTypeKey | null;
@@ -18,6 +20,12 @@ export type TxDraft = {
   contactId: string;
   note: string;
   skipApproval: boolean;
+  /** Backlog ข้อ 2 — เงื่อนไขสัญญา + ตารางงวด (เมื่อหมวดย่อยบังคับ loanTerms) */
+  loanTerms: LoanTermsValue;
+  /** Backlog ข้อ 4 — กำไร/ขาดทุนจากการขาย (เมื่อบังคับ capitalGain) */
+  disposal: DisposalValue;
+  /** Backlog ข้อ 5 — แยกเงินต้น/ดอกเบี้ย (เมื่อบังคับ principalInterestSplit) */
+  repayment: RepaymentValue;
 };
 
 const EMPTY: TxDraft = {
@@ -34,6 +42,9 @@ const EMPTY: TxDraft = {
   contactId: "",
   note: "",
   skipApproval: false,
+  loanTerms: EMPTY_LOAN_TERMS,
+  disposal: EMPTY_DISPOSAL,
+  repayment: EMPTY_REPAYMENT,
 };
 
 /**
@@ -74,6 +85,16 @@ export function useTxForm() {
     if (!draft.amount.trim()) out.push("จำนวนเงิน");
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
     if (requires("asset") && !draft.assetId) out.push("ทรัพย์ที่ผูก");
+    // Backlog ข้อ 2: หมวดที่เป็นสัญญากู้ ต้องมีตารางงวดแล้วถึงจะส่งได้
+    if (requires("loanTerms") && draft.loanTerms.schedule.length === 0) out.push("เงื่อนไขสัญญา + ตารางงวด");
+    // Backlog ข้อ 4: ขายทรัพย์ต้องรู้ต้นทุนและราคาขายก่อน ไม่งั้นคำนวณกำไรไม่ได้
+    if (requires("capitalGain") && (!draft.disposal.costBasis.trim() || !draft.disposal.salePrice.trim())) {
+      out.push("ต้นทุนและราคาขาย");
+    }
+    // Backlog ข้อ 5: คืนเงินกู้ต้องแยกเงินต้น/ดอกเบี้ยก่อน
+    if (requires("principalInterestSplit") && !draft.repayment.amountPaid.trim()) {
+      out.push("ยอดที่จ่ายจริง (แยกเงินต้น/ดอกเบี้ย)");
+    }
     return out;
   }, [draft, requires]);
 
