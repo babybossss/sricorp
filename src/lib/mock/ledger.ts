@@ -29,7 +29,7 @@ export const STATUS_LABEL: Record<LedgerStatus, string> = {
 
 export const LEDGER: LedgerRow[] = [
   { id: "l1", docDate: "01/09/2026", cashDate: "03/09/2026", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่า ก.ย.", assetName: "คอนโดตัวอย่าง C", ownerId: "thanakorn", accountName: "ธนากร - BBL 888", inAmt: 12000, outAmt: null, status: "done", hasFile: true, contactId: "c1" },
-  { id: "l2", docDate: "02/09/2026", cashDate: "02/09/2026", typeKey: "income", subCode: "inc.interest", detail: "ดอกเบี้ยขายฝาก งวด 8", assetName: "ทาวน์โฮมตัวอย่าง B", ownerId: "corp", accountName: "SRI - SCB", inAmt: 45000, outAmt: null, status: "done", hasFile: true, contactId: "c4" },
+  { id: "l2", docDate: "02/09/2026", cashDate: "02/09/2026", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 8", assetName: "ทาวน์โฮมตัวอย่าง B", ownerId: "corp", accountName: "SRI - SCB", inAmt: 45000, outAmt: null, status: "done", hasFile: true, contactId: "c4" },
   { id: "l3", docDate: "04/09/2026", cashDate: "—", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่า ก.ย. (ยังไม่ได้รับ)", assetName: "คอนโดตัวอย่าง A", ownerId: "corp", accountName: "SRI - SCB", inAmt: 31500, outAmt: null, status: "late", hasFile: false, contactId: "c2" },
   { id: "l4", docDate: "05/09/2026", cashDate: "05/09/2026", typeKey: "expense", subCode: "exp.common", detail: "ค่าส่วนกลาง Q3", assetName: "คอนโดตัวอย่าง C", ownerId: "thanakorn", accountName: "ธนากร - BBL 888", inAmt: null, outAmt: 9800, status: "done", hasFile: true },
   { id: "l5", docDate: "08/09/2026", cashDate: "08/09/2026", typeKey: "invest_buy", subCode: "inv.lend", detail: "ปล่อยเงินขายฝากรายใหม่", assetName: "ที่ดินตัวอย่าง D", ownerId: "corp", accountName: "SRI - SCB", inAmt: null, outAmt: 1800000, status: "saved", hasFile: true, contactId: "c4" },
@@ -116,8 +116,8 @@ export const APPROVALS: Approval[] = [
   { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026" },
   { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026" },
   { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026" },
-  { id: "a4", typeKey: "expense", subCode: "exp.admin", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026" },
+  { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026" },
   { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026" },
-  { id: "a6", typeKey: "invest_buy", subCode: "inv.capex", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026" },
-  { id: "a7", typeKey: "income", subCode: "inc.interest", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026" },
+  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026" },
+  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026" },
 ];
