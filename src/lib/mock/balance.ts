@@ -17,27 +17,31 @@ export const TREE: TreeNode[] = [
   {
     id: "assets",
     name: "สินทรัพย์",
-    value: 82945920,
+    value: 84415920,
     cost: null,
     children: [
       {
         id: "cash",
         name: "เงินสดและเงินฝาก",
-        value: 4545920,
+        value: 6015920,
         cost: null,
         children: [
           { id: "c1", name: "SRI - SCB", ownerLabel: "SRI Corporation", value: 2340120, cost: null, src: "ยอดธนาคาร 17/09" },
           { id: "c2", name: "ธนากร - BBL 888", ownerLabel: "ธนากร", value: 1286500, cost: null, src: "ยอดธนาคาร 17/09" },
           { id: "c3", name: "ธนวินท์ - KBANK", ownerLabel: "ธนวินท์", value: 592400, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c3b", name: "ธนวินท์ - BBL", ownerLabel: "ธนวินท์", value: 150000, cost: null, src: "ยอดธนาคาร 17/09" },
           { id: "c4", name: "เบ็ญจพร - BBL", ownerLabel: "เบ็ญจพร", value: 326900, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c5", name: "สุธี - TTB", ownerLabel: "สุธี (ป๊า)", value: 850000, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c6", name: "สุดจิตต์ - BAY", ownerLabel: "สุดจิตต์ (ม๊า)", value: 420000, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c7", name: "เงินสดในมือ SRI", ownerLabel: "SRI Corporation", value: 50000, cost: null, src: "นับเงินสด 17/09" },
         ],
       },
       {
         id: "re",
         name: "Real Estate",
         value: 39800000,
-        cost: 34600000,
-        gl: 5200000,
+        cost: 36600000,
+        gl: 3200000,
         children: [
           { id: "re1", name: "RE รอขาย", ownerLabel: "SRI Corporation", value: 8500000, cost: 7400000, gl: 1100000, src: "ประเมินภายใน 08/2026", status: "Active", statusTone: "saved" },
           {
@@ -103,18 +107,20 @@ export const TREE: TreeNode[] = [
   {
     id: "eq",
     name: "ส่วนของเจ้าของ",
-    value: 64245920,
+    value: 65715920,
     cost: null,
     children: [
       { id: "e1", name: "ทุน", value: 30000000, cost: null },
-      { id: "e2", name: "กำไรสะสม", value: 28900000, cost: null },
-      { id: "e3", name: "ส่วนเปลี่ยนแปลงมูลค่ายุติธรรม (ยังไม่รับรู้)", value: 5345920, cost: null, src: "จากราคาประเมิน/ราคาตลาด" },
+      { id: "e2", name: "กำไรสะสม", value: 30265920, cost: null },
+      { id: "e3", name: "ส่วนเปลี่ยนแปลงมูลค่ายุติธรรม (ยังไม่รับรู้)", value: 5450000, cost: null, src: "จากราคาประเมิน/ราคาตลาด" },
     ],
   },
 ];
 
 export const NAV_BY_HOLDER = [
-  { name: "SRI Corporation", color: "#004AAD", value: "฿ 48.8M" },
+  { name: "SRI Corporation", color: "#004AAD", value: "฿ 40.2M" },
+  { name: "สุธี (ป๊า)", color: "#7A5AF8", value: "฿ 6.4M" },
+  { name: "สุดจิตต์ (ม๊า)", color: "#7A5AF8", value: "฿ 2.2M" },
   { name: "ธนากร", color: "#7A5AF8", value: "฿ 9.8M" },
   { name: "ธนวินท์", color: "#7A5AF8", value: "฿ 3.6M" },
   { name: "เบ็ญจพร", color: "#7A5AF8", value: "฿ 2.0M" },

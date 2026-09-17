@@ -115,13 +115,15 @@ select c.id, v.code, v.name_th, v.sort_order
 on conflict (code) do nothing;
 
 -- ---------- seed owners ----------
--- ตาม PLAN.md: Corporate 3 + Personal 3
--- ⚠ Excel จริงมีบุคคลมากกว่านี้ (สุธี สุดจิตต์ ชลานุช นิภาพร สมาน นุช)
---   ยังไม่ seed เพราะต้องยืนยันก่อนว่าเป็น owner หรือเป็นแค่ contact — ดู docs/DECISIONS.md Q-A
+-- Corporate 3 + Personal 5
+-- ลูกพี่ยืนยันแล้ว: ฝั่งบุคคลมี 5 คน (เพิ่มสุธี + สุดจิตต์) — ดู docs/DECISIONS.md D-018
+-- ส่วน ชลานุช · นิภาพร · สมาน · นุช ที่อยู่ใน Excel ไม่ใช่ owner ให้ลงเป็น contacts
 insert into owners (code, type, policy, name_th, name_en, status, color, sort_order) values
   ('SRI_CORP',    'company', 'corporate_strict',  'SRI Corporation', 'SRI Corporation Co., Ltd.', 'active',  '#004AAD', 10),
   ('SRI_HOLDING', 'company', 'corporate_strict',  'SRI Holding',     'SRI Holding',               'planned', '#004AAD', 20),
   ('SRI_CAPITAL', 'company', 'corporate_strict',  'SRI Capital',     'SRI Capital',               'planned', '#004AAD', 30),
+  ('SUTEE',       'person',  'personal_flexible', 'สุธี (ป๊า)',       'Sutee',                     'active',  '#7A5AF8', 35),
+  ('SUDJIT',      'person',  'personal_flexible', 'สุดจิตต์ (ม๊า)',   'Sudjit',                    'active',  '#7A5AF8', 36),
   ('THANAKORN',   'person',  'personal_flexible', 'ธนากร',           'Thanakorn',                 'active',  '#7A5AF8', 40),
   ('THANAWIN',    'person',  'personal_flexible', 'ธนวินท์',          'Thanawin',                  'active',  '#7A5AF8', 50),
   ('BENJAPORN',   'person',  'personal_flexible', 'เบ็ญจพร',         'Benjaporn',                 'active',  '#7A5AF8', 60)

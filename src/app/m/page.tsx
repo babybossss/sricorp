@@ -29,7 +29,7 @@ export default function MobileHomePage() {
 
           <div className="rounded-card border border-line bg-surface p-4">
             <div className="text-sm text-ink-600">มูลค่าทรัพย์สินสุทธิ (NAV)</div>
-            <div className="text-display font-semibold">฿ 64.2M</div>
+            <div className="text-display font-semibold">฿ 65.7M</div>
             <div className="text-sm font-semibold text-pos">▲ 1.8% เทียบเดือนก่อน</div>
           </div>
 

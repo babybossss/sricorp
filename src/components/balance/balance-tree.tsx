@@ -137,7 +137,7 @@ export function BalanceTree() {
             >
               <div className="flex h-24 w-24 flex-col items-center justify-center rounded-pill bg-surface">
                 <div className="text-sm text-ink-400">NAV</div>
-                <div className="text-lg font-semibold">฿ 64.2M</div>
+                <div className="text-lg font-semibold">฿ 65.7M</div>
               </div>
             </div>
           </div>

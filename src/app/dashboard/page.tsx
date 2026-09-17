@@ -137,7 +137,7 @@ export default function DashboardPage() {
                 >
                   <div className="flex h-24 w-24 flex-col items-center justify-center rounded-pill bg-surface">
                     <div className="text-sm text-ink-400">รวม</div>
-                    <div className="text-lg font-semibold">฿ 82.9M</div>
+                    <div className="text-lg font-semibold">฿ 84.4M</div>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 text-base">

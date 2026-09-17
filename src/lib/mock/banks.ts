@@ -19,4 +19,8 @@ export const BANKS: BankAccount[] = [
   { id: "b5", name: "ธนวินท์ - KBANK", bank: "กสิกรไทย", last4: "5520", ownerId: "thanawin", opening: "฿ 600,000.00", short: "KB", color: "#0A8F3C", off: false },
   { id: "b6", name: "ธนวินท์ - BBL", bank: "กรุงเทพ", last4: "3317", ownerId: "thanawin", opening: "฿ 150,000.00", short: "BBL", color: "#1E4598", off: false },
   { id: "b7", name: "เบ็ญจพร - BBL", bank: "กรุงเทพ", last4: "6045", ownerId: "benjaporn", opening: "฿ 300,000.00", short: "BBL", color: "#1E4598", off: false },
+  { id: "b8", name: "สุธี - TTB", bank: "ทหารไทยธนชาต", last4: "1174", ownerId: "sutee", opening: "฿ 850,000.00", short: "TTB", color: "#0A4FA0", off: false },
+  { id: "b9", name: "สุดจิตต์ - BAY", bank: "กรุงศรีอยุธยา", last4: "7702", ownerId: "sudjit", opening: "฿ 420,000.00", short: "BAY", color: "#8a6200", off: false },
+  // กระเป๋าเงินสดที่มีตัวตน — Money Invariant 2 ยอมให้ผูกได้เหมือนบัญชีธนาคาร
+  { id: "b10", name: "เงินสดในมือ SRI", bank: "เงินสดในมือ", last4: "—", ownerId: "corp", opening: "฿ 50,000.00", short: "CASH", color: "#425466", off: false },
 ];

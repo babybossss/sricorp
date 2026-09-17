@@ -1,7 +1,7 @@
 export const KPIS = [
-  { label: "สินทรัพย์รวม", en: "Total assets", value: "฿ 82.9M", delta: "▲ 1.2%", note: "เทียบเดือนก่อน", positive: true, spark: "0,30 18,29 36,27 54,28 72,24 90,23 108,22 126,19 144,18 162,14 180,12 200,8", sparkColor: "#004AAD" },
+  { label: "สินทรัพย์รวม", en: "Total assets", value: "฿ 84.4M", delta: "▲ 1.2%", note: "เทียบเดือนก่อน", positive: true, spark: "0,30 18,29 36,27 54,28 72,24 90,23 108,22 126,19 144,18 162,14 180,12 200,8", sparkColor: "#004AAD" },
   { label: "หนี้สิน", en: "Liabilities", value: "฿ 18.7M", delta: "▼ 0.4%", note: "ลดลง ดีขึ้น", positive: true, spark: "0,10 18,11 36,12 54,12 72,14 90,15 108,15 126,17 144,18 162,19 180,20 200,22", sparkColor: "#8792A2" },
-  { label: "ส่วนของเจ้าของ", en: "Equity · NAV", value: "฿ 64.2M", delta: "▲ 1.8%", note: "เทียบเดือนก่อน", positive: true, spark: "0,31 18,29 36,30 54,25 72,26 90,21 108,20 126,20 144,15 162,12 180,9 200,6", sparkColor: "#004AAD" },
+  { label: "ส่วนของเจ้าของ", en: "Equity · NAV", value: "฿ 65.7M", delta: "▲ 1.8%", note: "เทียบเดือนก่อน", positive: true, spark: "0,31 18,29 36,30 54,25 72,26 90,21 108,20 126,20 144,15 162,12 180,9 200,6", sparkColor: "#004AAD" },
   { label: "ผลตอบแทนเฉลี่ยทั้งพอร์ต", en: "(ก่อนหักต้นทุนทางการเงิน)", value: "7.03%", delta: "▲ 0.15 จุด", note: "", positive: true, spark: "0,26 18,25 36,24 54,24 72,22 90,21 108,20 126,19 144,17 162,15 180,13 200,11", sparkColor: "#004AAD" },
 ];
 
