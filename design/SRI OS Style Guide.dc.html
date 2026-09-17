@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet"><style>body{margin:0;background:#F6F9FC;color:#0A2540;font-family:'IBM Plex Sans Thai','IBM Plex Sans',system-ui,sans-serif;font-size:18px;line-height:1.55;font-variant-numeric:tabular-nums}*{box-sizing:border-box}a{color:#004AAD;text-decoration:none}a:hover{color:#003A8A;text-decoration:underline}input{font-family:inherit}</style></helmet>
+<div style="max-width:1320px;margin:0 auto;padding:40px 32px 72px;display:flex;flex-direction:column;gap:32px">
+
+<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+<img src="assets/sri-logo.png" alt="SRI" style="width:72px;height:72px;object-fit:contain">
+<div>
+<div style="font-size:28px;line-height:36px;font-weight:600">SRI OS · Style Guide</div>
+<div style="font-size:16px;line-height:24px;color:#425466">Design tokens สำหรับ Company OS ของ SRI Corporation · เวอร์ชัน 1.0 · 17/09/2026</div>
+</div>
+</div>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:16px">
+<div style="font-size:22px;line-height:30px;font-weight:600">สี · Color</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">
+<sc-for list="{{ colors }}" as="c" hint-placeholder-count="14">
+<div style="border:1px solid #E3E8EE;border-radius:10px;overflow:hidden">
+<div style="height:64px;background:{{ c.hex }}"></div>
+<div style="padding:10px 12px">
+<div style="font-size:16px;line-height:22px;font-weight:600">{{ c.token }}</div>
+<div style="font-size:16px;line-height:22px;color:#8792A2">{{ c.hex }}</div>
+<div style="font-size:16px;line-height:22px;color:#425466">{{ c.use }}</div>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;gap:24px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #E3E8EE">
+<div style="display:flex;align-items:center;gap:8px;font-size:16px;color:#425466"><span style="width:12px;height:12px;border-radius:999px;background:#004AAD"></span>Corporate</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:16px;color:#425466"><span style="width:12px;height:12px;border-radius:999px;background:#7A5AF8"></span>Personal</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:16px;color:#425466"><span style="width:12px;height:12px;border-radius:999px;background:#0A2540"></span>Consolidated (รวม)</div>
+</div>
+</section>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:20px">
+<div style="font-size:22px;line-height:30px;font-weight:600">ตัวอักษร · IBM Plex Sans Thai</div>
+<div style="display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">Display · 36/44 · 600</div><div style="font-size:36px;line-height:44px;font-weight:600">฿ 64.2M</div></div>
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">H1 · 28/36 · 600</div><div style="font-size:28px;line-height:36px;font-weight:600">งบดุล &amp; ทรัพย์สิน</div></div>
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">H2 · 22/30 · 600</div><div style="font-size:22px;line-height:30px;font-weight:600">กระแสเงินสดสุทธิเดือนนี้</div></div>
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">Body · 18/28 · 400</div><div style="font-size:18px;line-height:28px">ค่าเช่าคอนโดตัวอย่าง C เดือนกันยายน รับเข้าบัญชี Thanakorn - BBL 888</div></div>
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">Body-strong · 18/28 · 600</div><div style="font-size:18px;line-height:28px;font-weight:600">฿ 1,234,567.00</div></div>
+<div style="display:flex;gap:24px;align-items:baseline;flex-wrap:wrap"><div style="width:190px;flex:none;font-size:16px;color:#8792A2">Small · 16/24 · 400 (ขั้นต่ำ)</div><div style="font-size:16px;line-height:24px;color:#425466">วันที่เงินเข้าจริง</div></div>
+</div>
+<div style="font-size:16px;line-height:24px;color:#425466;background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px">ตัวเลขทั้งระบบใช้ tabular numbers · โหมดตัวใหญ่เพิ่มทุกระดับ +2px (ตั้งค่าได้รายผู้ใช้)</div>
+</section>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:20px">
+<div style="font-size:22px;line-height:30px;font-weight:600">ปุ่ม · Button (สูง 52px)</div>
+<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+<button style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #004AAD;background:#004AAD;color:#fff;font:600 18px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="background:#003A8A;border-color:#003A8A">บันทึกรายการ</button>
+<button style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #E3E8EE;background:#fff;color:#0A2540;font:600 18px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="border-color:#8792A2">ยกเลิก</button>
+<button style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #0E9F6E;background:#0E9F6E;color:#fff;font:600 18px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="background:#0b8459">ยืนยันรับเงิน</button>
+<button style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #DF1B41;background:#fff;color:#DF1B41;font:600 18px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="background:#fdf2f4">ไม่อนุมัติ</button>
+<button disabled="{{ true }}" style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #E3E8EE;background:#F6F9FC;color:#8792A2;font:600 18px/1 'IBM Plex Sans Thai',sans-serif">ส่งอนุมัติ</button>
+<button style="height:52px;padding:0 22px;border-radius:10px;border:1px solid #004AAD;background:#fff;color:#004AAD;font:600 18px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer;outline:3px solid #004AAD;outline-offset:2px">focus ring 3px</button>
+</div>
+<div style="font-size:16px;line-height:24px;color:#425466">ทุกปุ่มมีข้อความกำกับเสมอ · ปุ่มบนมือถือสูง 56px · ปุ่มไอคอนเดี่ยวไม่อนุญาต</div>
+</section>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:20px">
+<div style="font-size:22px;line-height:30px;font-weight:600">อินพุต · Input</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;line-height:24px;color:#425466">จำนวนเงิน (บาท)</span><input value="12,000.00" style="height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:22px;font-weight:600;color:#0A2540;background:#fff"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;line-height:24px;color:#425466">วันที่เอกสาร</span><input value="01/09/2026" style="height:52px;border:1px solid #004AAD;border-radius:10px;padding:0 14px;font-size:18px;color:#0A2540;background:#fff;outline:3px solid #D6E4F7"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;line-height:24px;color:#425466">คู่ค้า / ผู้เช่า</span><input placeholder="พิมพ์ชื่อผู้เช่า" style="height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px;color:#0A2540;background:#fff"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;line-height:24px;color:#DF1B41">แนบหลักฐาน</span><input placeholder="ยังไม่มีไฟล์แนบ" style="height:52px;border:1px solid #DF1B41;border-radius:10px;padding:0 14px;font-size:18px;color:#0A2540;background:#fff"><span style="font-size:16px;line-height:24px;color:#DF1B41">รายการของบริษัทต้องแนบใบเสร็จหรือใบแจ้งหนี้ก่อนส่งอนุมัติ</span></label>
+</div>
+</section>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:20px">
+<div style="font-size:22px;line-height:30px;font-weight:600">Pill &amp; Badge</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+<sc-for list="{{ pills }}" as="p" hint-placeholder-count="6">
+<span style="display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:999px;font-size:16px;font-weight:600;background:{{ p.bg }};color:{{ p.fg }};border:1px solid {{ p.bd }}">{{ p.label }}</span>
+</sc-for>
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:16px;border-top:1px solid #E3E8EE">
+<sc-for list="{{ types }}" as="p" hint-placeholder-count="6">
+<span style="display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:999px;font-size:16px;font-weight:600;background:{{ p.bg }};color:{{ p.fg }};border:1px solid {{ p.bd }}">{{ p.label }}</span>
+</sc-for>
+</div>
+</section>
+
+<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:20px 22px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:16px;line-height:24px;color:#425466">มูลค่าทรัพย์สินสุทธิ <span style="color:#8792A2">NAV</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600">฿ 64.2M</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:16px;line-height:24px"><span style="color:#0E9F6E;font-weight:600">▲ 1.8%</span><span style="color:#8792A2">เทียบเดือนก่อน</span></div>
+<svg viewBox="0 0 200 40" preserveAspectRatio="none" style="width:100%;height:40px;margin-top:6px"><polyline points="0,32 18,30 36,31 54,26 72,27 90,22 108,20 126,21 144,16 162,13 180,10 200,6" fill="none" stroke="#004AAD" stroke-width="2"></polyline></svg>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:20px 22px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:16px;line-height:24px;color:#425466">รายได้ประจำต่อเดือน <span style="color:#8792A2">Passive income</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600">฿ 486,000</div>
+<div style="font-size:16px;line-height:24px;color:#425466">48.6% ของเป้า ฿ 1M</div>
+<div style="height:10px;border-radius:999px;background:#E3E8EE;overflow:hidden;margin-top:6px"><div style="width:48.6%;height:100%;background:#004AAD"></div></div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:20px 22px;display:flex;flex-direction:column;gap:10px">
+<div style="font-size:16px;line-height:24px;color:#425466">To-do (AI แนะนำ)</div>
+<div style="display:flex;gap:10px;align-items:flex-start">
+<span style="flex:none;display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;background:#FDF0E6;color:#8a5200;border:1px solid #F5A524;font-size:16px;font-weight:600">P1</span>
+<div><div style="font-size:18px;line-height:26px;font-weight:600">ติดตามดอกเบี้ยค้าง 3 งวด — คอนโดตัวอย่าง A</div><div style="font-size:16px;line-height:24px;color:#635BFF">✦ ค้าง 45 วัน ยอด ฿ 31,500 · สัญญาหมดแล้ว</div></div>
+</div>
+</div>
+</section>
+
+<section style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:24px;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:22px;line-height:30px;font-weight:600">ตัวเลข &amp; วันที่</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;font-size:18px;line-height:28px">
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px"><div style="font-size:16px;color:#8792A2">เงินเข้า</div><div style="font-weight:600;color:#0E9F6E">+12,000.00</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px"><div style="font-size:16px;color:#8792A2">เงินออก / ติดลบ</div><div style="font-weight:600;color:#DF1B41">(12,000.00)</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px"><div style="font-size:16px;color:#8792A2">ในตาราง</div><div style="font-weight:600">฿ 1,234,567.00</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px"><div style="font-size:16px;color:#8792A2">ใน KPI</div><div style="font-weight:600">฿ 12.5M</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px"><div style="font-size:16px;color:#8792A2">วันที่ · เดือน</div><div style="font-weight:600">17/09/2026 · ก.ย. 2026</div></div>
+</div>
+</section>
+
+<p style="font-size:16px;line-height:24px;color:#8792A2;margin:0">ต่อไป: ดู prototype กดใช้งานได้ที่ <a href="SRI OS.dc.html">SRI OS.dc.html</a></p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      colors: [
+        {token:'brand-600',hex:'#004AAD',use:'ปุ่มหลัก ลิงก์ แท็บ'},
+        {token:'brand-700',hex:'#003A8A',use:'hover / pressed'},
+        {token:'brand-100',hex:'#D6E4F7',use:'badge น้ำเงินอ่อน'},
+        {token:'brand-50',hex:'#EEF4FC',use:'แถวที่เลือก'},
+        {token:'ink-900',hex:'#0A2540',use:'ตัวอักษรหลัก'},
+        {token:'ink-600',hex:'#425466',use:'ตัวอักษรรอง'},
+        {token:'ink-400',hex:'#8792A2',use:'placeholder, label'},
+        {token:'line',hex:'#E3E8EE',use:'เส้นขอบ'},
+        {token:'bg',hex:'#F6F9FC',use:'พื้นหลังแอป'},
+        {token:'surface',hex:'#FFFFFF',use:'การ์ด'},
+        {token:'pos',hex:'#0E9F6E',use:'เงินเข้า / สำเร็จ'},
+        {token:'neg',hex:'#DF1B41',use:'เงินออก / ผิดพลาด'},
+        {token:'warn',hex:'#F5A524',use:'ใกล้ครบกำหนด'},
+        {token:'info',hex:'#635BFF',use:'AI แนะนำ (ใช้น้อย)'}
+      ],
+      pills: [
+        {label:'รออนุมัติ',bg:'#FDF3E4',fg:'#8a5200',bd:'#F5A524'},
+        {label:'บันทึกแล้ว',bg:'#EEF4FC',fg:'#004AAD',bd:'#D6E4F7'},
+        {label:'รับ/จ่ายแล้ว',bg:'#E7F7F0',fg:'#0b7a55',bd:'#0E9F6E'},
+        {label:'ค้าง',bg:'#fff',fg:'#DF1B41',bd:'#DF1B41'},
+        {label:'ยกเลิก',bg:'#F6F9FC',fg:'#8792A2',bd:'#E3E8EE'},
+        {label:'ราคาเก่า 9 วัน',bg:'#FDF3E4',fg:'#8a5200',bd:'#F5A524'}
+      ],
+      types: [
+        {label:'รายได้ +',bg:'#E7F7F0',fg:'#0b7a55',bd:'#b7e6d2'},
+        {label:'ค่าใช้จ่าย −',bg:'#FDF2F4',fg:'#b51232',bd:'#f6c2ce'},
+        {label:'ลงทุน −',bg:'#EEF4FC',fg:'#004AAD',bd:'#D6E4F7'},
+        {label:'ลงทุน +',bg:'#EEF4FC',fg:'#004AAD',bd:'#D6E4F7'},
+        {label:'จัดหาเงิน +/−',bg:'#F3F0FE',fg:'#5b3fd6',bd:'#ded6fd'},
+        {label:'โอนระหว่างบัญชี',bg:'#F6F9FC',fg:'#425466',bd:'#E3E8EE'}
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

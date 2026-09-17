@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet"><style>body{margin:0;background:#F6F9FC;color:#0A2540;font-family:'IBM Plex Sans Thai','IBM Plex Sans',system-ui,sans-serif;font-size:18px;line-height:1.55;font-variant-numeric:tabular-nums}*{box-sizing:border-box}a{color:#004AAD;text-decoration:none}a:hover{color:#003A8A;text-decoration:underline}input,button,select{font-family:inherit}button:focus-visible,input:focus-visible{outline:3px solid #004AAD;outline-offset:2px}@keyframes slidein{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}@keyframes fadein{from{opacity:0}to{opacity:1}}</style></helmet>
+
+<sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+<div style="min-height:100vh;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding:48px 24px">
+<img src="assets/sri-logo.png" alt="SRI Corporation" style="width:132px;height:132px;object-fit:contain">
+<div style="text-align:center">
+<div style="font-size:28px;line-height:36px;font-weight:600">เข้าสู่ระบบ SRI OS</div>
+<div style="font-size:18px;line-height:28px;color:#425466">บริษัท เอสอาร์ไอ คอร์ปอเรชั่น จำกัด</div>
+<div style="font-size:16px;line-height:24px;color:#8792A2">SRI Corporation Co., Ltd.</div>
+</div>
+<div style="width:100%;max-width:380px;display:flex;flex-direction:column;gap:12px">
+<button onClick="{{ goHome }}" style="height:52px;border-radius:10px;border:1px solid #004AAD;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">เข้าสู่ระบบด้วย Google</button>
+<button onClick="{{ goHome }}" style="height:52px;border-radius:10px;border:1px solid #E3E8EE;background:#fff;color:#0A2540;font-size:18px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">ส่งลิงก์เข้าอีเมล</button>
+</div>
+<div style="font-size:16px;line-height:24px;color:#8792A2">Sustainable Generations Wealth</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;min-height:100vh;align-items:flex-start;font-size:{{ baseFont }}">
+
+<nav style="width:256px;flex:none;background:#fff;border-right:1px solid #E3E8EE;min-height:100vh;position:sticky;top:0;padding:16px 12px 24px;display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;align-items:center;gap:10px;padding:8px 10px 18px">
+<img src="assets/sri-logo.png" alt="SRI" style="width:40px;height:40px;object-fit:contain">
+<div><div style="font-size:20px;font-weight:700;letter-spacing:.02em;color:#004AAD">SRI OS</div><div style="font-size:16px;line-height:18px;color:#8792A2">Company OS</div></div>
+</div>
+<sc-for list="{{ nav }}" as="n" hint-placeholder-count="5">
+<button onClick="{{ n.go }}" style="display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:0 12px;border:none;border-radius:10px;font-size:18px;font-weight:{{ n.fw }};text-align:left;cursor:pointer;background:{{ n.bg }};color:{{ n.fg }}" style-hover="background:#F6F9FC">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;flex:none"><path d="{{ n.d }}"></path><path d="{{ n.d2 }}"></path></svg>
+<span style="flex:1">{{ n.label }}</span>
+<sc-if value="{{ n.badge }}" hint-placeholder-val="{{ false }}"><span style="flex:none;min-width:28px;height:26px;padding:0 8px;border-radius:999px;background:#F5A524;color:#3d2600;font-size:16px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">{{ n.badge }}</span></sc-if>
+</button>
+</sc-for>
+<div style="margin-top:18px;padding:0 12px 6px;font-size:16px;color:#8792A2">มุมมองมือถือ</div>
+<button onClick="{{ goMHome }}" style="display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:0 12px;border:none;border-radius:10px;font-size:18px;text-align:left;cursor:pointer;background:transparent;color:#425466" style-hover="background:#F6F9FC">หน้าแรก (390)</button>
+<button onClick="{{ goMForm }}" style="display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:0 12px;border:none;border-radius:10px;font-size:18px;text-align:left;cursor:pointer;background:transparent;color:#425466" style-hover="background:#F6F9FC">บันทึกรายการ (390)</button>
+<div style="margin-top:18px;padding:0 12px 6px;font-size:16px;color:#8792A2">เร็วๆ นี้</div>
+<sc-for list="{{ soon }}" as="s" hint-placeholder-count="4">
+<div style="min-height:44px;display:flex;align-items:center;padding:0 12px;font-size:16px;color:#8792A2">{{ s }}</div>
+</sc-for>
+<button onClick="{{ goLogin }}" style="margin-top:18px;min-height:48px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;color:#425466;font-size:16px;cursor:pointer">ดูหน้าเข้าสู่ระบบ</button>
+</nav>
+
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+<header style="min-height:72px;background:#fff;border-bottom:1px solid #E3E8EE;position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:10px 24px;flex-wrap:wrap">
+<div style="font-size:22px;line-height:30px;font-weight:600;margin-right:auto">{{ pageTitle }}</div>
+
+<div style="position:relative">
+<button onClick="{{ toggleEntity }}" style="min-height:52px;display:flex;align-items:center;gap:10px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;color:#0A2540;cursor:pointer" style-hover="border-color:#8792A2">
+<span style="width:12px;height:12px;border-radius:999px;flex:none;background:{{ entityColor }}"></span>{{ entityName }}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="width:18px;height:18px;color:#8792A2"><path d="m6 9 6 6 6-6"></path></svg>
+</button>
+<sc-if value="{{ entityOpen }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;top:58px;right:0;width:300px;background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 4px 12px rgba(10,37,64,.12);padding:8px;z-index:30;animation:fadein .12s ease-out">
+<sc-for list="{{ entityMenu }}" as="e" hint-placeholder-count="7">
+<div>
+<sc-if value="{{ e.head }}" hint-placeholder-val="{{ false }}"><div style="padding:10px 12px 4px;font-size:16px;color:#8792A2">{{ e.head }}</div></sc-if>
+<button onClick="{{ e.pick }}" style="display:flex;align-items:center;gap:10px;width:100%;min-height:48px;padding:0 12px;border:none;border-radius:8px;background:{{ e.bg }};font-size:18px;color:#0A2540;text-align:left;cursor:pointer" style-hover="background:#F6F9FC"><span style="width:10px;height:10px;border-radius:999px;flex:none;background:{{ e.color }}"></span>{{ e.name }}</button>
+</div>
+</sc-for>
+</div>
+</sc-if>
+</div>
+
+<div style="display:flex;align-items:center;border:1px solid #E3E8EE;border-radius:10px;background:#fff;overflow:hidden">
+<button onClick="{{ prevMonth }}" aria-label="เดือนก่อน" style="width:48px;height:52px;border:none;background:#fff;cursor:pointer;color:#425466" style-hover="background:#F6F9FC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="m15 18-6-6 6-6"></path></svg></button>
+<div style="min-width:120px;text-align:center;font-size:18px;font-weight:600">{{ monthLabel }}</div>
+<button onClick="{{ nextMonth }}" aria-label="เดือนถัดไป" style="width:48px;height:52px;border:none;background:#fff;cursor:pointer;color:#425466" style-hover="background:#F6F9FC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="m9 18 6-6-6-6"></path></svg></button>
+</div>
+
+<button onClick="{{ openForm }}" style="min-height:52px;display:flex;align-items:center;gap:8px;padding:0 18px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A;border-color:#003A8A">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:20px;height:20px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>บันทึกรายการ</button>
+
+<button onClick="{{ goApprovals }}" style="min-height:52px;display:flex;align-items:center;gap:8px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;color:#0A2540;cursor:pointer" style-hover="border-color:#8792A2">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg>
+แจ้งเตือน <span style="min-width:26px;height:26px;padding:0 7px;border-radius:999px;background:#DF1B41;color:#fff;font-size:16px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">7</span></button>
+
+<div style="display:flex;align-items:center;gap:10px;padding-left:4px">
+<div style="width:44px;height:44px;border-radius:999px;background:#EEF4FC;color:#004AAD;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center">ธ</div>
+<div style="font-size:16px;line-height:20px"><div style="font-weight:600">ธนากร</div><div style="color:#8792A2">Management</div></div>
+</div>
+</header>
+
+<main style="padding:24px;max-width:1368px;width:100%">
+
+<sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+<sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:4px">
+<div style="font-size:16px;line-height:24px;color:#425466;min-height:48px">{{ k.label }} <span style="color:#8792A2">{{ k.en }}</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600;color:{{ k.color }}">{{ k.value }}</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:16px;line-height:24px"><span style="font-weight:600;color:{{ k.dColor }}">{{ k.delta }}</span><span style="color:#8792A2">{{ k.note }}</span></div>
+<svg viewBox="0 0 200 36" preserveAspectRatio="none" style="width:100%;height:36px;margin-top:4px"><polyline points="{{ k.spark }}" fill="none" stroke="{{ k.sparkColor }}" stroke-width="2"></polyline></svg>
+</div>
+</sc-for>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:16px;line-height:24px;color:#425466">กำไร/ขาดทุนเดือนนี้ <span style="color:#8792A2">P&amp;L</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600;color:#0E9F6E">฿ +412,300</div>
+<div style="font-size:16px;line-height:24px;color:#425466">รายได้ ฿ 1.42M · ค่าใช้จ่าย ฿ 1.01M</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:16px;line-height:24px;color:#425466">กระแสเงินสดสุทธิ <span style="color:#8792A2">Net cash flow</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600;color:#DF1B41">฿ −1.25M</div>
+<div style="display:flex;flex-direction:column;gap:2px;font-size:16px;line-height:24px;color:#425466">
+<div style="display:flex;justify-content:space-between;gap:12px"><span>ดำเนินงาน</span><span style="font-weight:600;color:#0E9F6E">+480K</span></div>
+<div style="display:flex;justify-content:space-between;gap:12px"><span>ลงทุน</span><span style="font-weight:600;color:#DF1B41">−1.8M</span></div>
+<div style="display:flex;justify-content:space-between;gap:12px"><span>จัดหาเงิน</span><span style="font-weight:600;color:#0E9F6E">+70K</span></div>
+</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:16px;line-height:24px;color:#425466">รายได้ประจำต่อเดือน <span style="color:#8792A2">Passive income</span></div>
+<div style="font-size:36px;line-height:44px;font-weight:600">฿ 486,000</div>
+<div style="font-size:16px;line-height:24px;color:#425466">48.6% ของเป้า ฿ 1M · คาดการณ์สิ้นปี ฿ 612,000</div>
+<div style="height:10px;border-radius:999px;background:#E3E8EE;position:relative;overflow:hidden;margin-top:4px"><div style="width:48.6%;height:100%;background:#004AAD"></div></div>
+<div style="height:10px;border-radius:999px;background:#EEF4FC;position:relative;overflow:hidden"><div style="width:61.2%;height:100%;background:repeating-linear-gradient(90deg,#8792A2 0 6px,transparent 6px 12px)"></div></div>
+</div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><div style="font-size:22px;line-height:30px;font-weight:600">ค้างรับ</div><div style="font-size:22px;font-weight:600;color:#DF1B41">฿ 131,500</div></div>
+<div style="display:flex;height:14px;border-radius:999px;overflow:hidden"><div style="width:42%;background:#0E9F6E"></div><div style="width:24%;background:#F5A524"></div><div style="width:19%;background:#DF1B41"></div><div style="width:15%;background:#8a0f28"></div></div>
+<div style="display:flex;justify-content:space-between;font-size:16px;color:#425466;flex-wrap:wrap;gap:8px"><span>0–30 วัน 55,200</span><span>31–60 31,500</span><span>61–90 25,000</span><span>90+ 19,800</span></div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><div style="font-size:22px;line-height:30px;font-weight:600">ค้างจ่าย</div><div style="font-size:22px;font-weight:600">฿ 58,200</div></div>
+<div style="display:flex;height:14px;border-radius:999px;overflow:hidden"><div style="width:61%;background:#0E9F6E"></div><div style="width:26%;background:#F5A524"></div><div style="width:13%;background:#DF1B41"></div></div>
+<div style="display:flex;justify-content:space-between;font-size:16px;color:#425466;flex-wrap:wrap;gap:8px"><span>0–30 วัน 35,500</span><span>31–60 15,200</span><span>61–90 7,500</span></div>
+</div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:22px;line-height:30px;font-weight:600">สัดส่วนทรัพย์สิน</div>
+<div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+<div style="width:150px;height:150px;border-radius:999px;flex:none;background:conic-gradient(#004AAD 0 48%,#0E9F6E 48% 86%,#F5A524 86% 95%,#8792A2 95% 100%);display:flex;align-items:center;justify-content:center"><div style="width:96px;height:96px;border-radius:999px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:16px;color:#8792A2">รวม</div><div style="font-size:20px;font-weight:600">฿ 82.9M</div></div></div>
+<div style="display:flex;flex-direction:column;gap:8px;font-size:18px">
+<div style="display:flex;align-items:center;gap:10px"><span style="width:12px;height:12px;border-radius:3px;background:#004AAD"></span>Real Estate <span style="font-weight:600;margin-left:auto">48%</span></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:12px;height:12px;border-radius:3px;background:#0E9F6E"></span>Finance <span style="font-weight:600;margin-left:auto">38%</span></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:12px;height:12px;border-radius:3px;background:#F5A524"></span>Investment <span style="font-weight:600;margin-left:auto">9%</span></div>
+<div style="display:flex;align-items:center;gap:10px"><span style="width:12px;height:12px;border-radius:3px;background:#8792A2"></span>Cash <span style="font-weight:600;margin-left:auto">5%</span></div>
+</div>
+</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:22px;line-height:30px;font-weight:600">สถานะทรัพย์สิน</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:14px"><div style="font-size:16px;color:#425466">Active</div><div style="font-size:28px;font-weight:600;color:#0E9F6E">41</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:14px"><div style="font-size:16px;color:#425466">Inactive</div><div style="font-size:28px;font-weight:600;color:#8792A2">6</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:10px;padding:14px"><div style="font-size:16px;color:#425466">ไม่มีรายได้</div><div style="font-size:28px;font-weight:600;color:#F5A524">3</div></div>
+</div>
+<button onClick="{{ goBalance }}" style="margin-top:auto;min-height:52px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;color:#004AAD;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#EEF4FC">ดูงบดุล &amp; ทรัพย์สิน</button>
+</div>
+</div>
+
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start" data-om-grid>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0">
+<div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:22px;line-height:30px;font-weight:600">ที่ควรทำก่อน</div><div style="font-size:16px;color:#635BFF">✦ AI แนะนำ</div></div>
+<sc-for list="{{ todos }}" as="t" hint-placeholder-count="5">
+<div style="display:flex;gap:14px;align-items:flex-start;padding:14px 0;border-top:1px solid #E3E8EE">
+<span style="flex:none;display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:700;background:{{ t.pBg }};color:{{ t.pFg }}">{{ t.p }}</span>
+<div style="flex:1;min-width:0">
+<div style="font-size:18px;line-height:26px;font-weight:600">{{ t.title }}</div>
+<div style="font-size:16px;line-height:24px;color:#635BFF">✦ {{ t.why }}</div>
+</div>
+<button onClick="{{ t.go }}" style="flex:none;min-height:48px;padding:0 16px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;color:#004AAD;font-size:16px;font-weight:600;cursor:pointer" style-hover="background:#EEF4FC">ดูรายละเอียด</button>
+</div>
+</sc-for>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+<sc-for list="{{ yields }}" as="y" hint-placeholder-count="2">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:16px;color:#425466">{{ y.label }} <span style="color:#8792A2">{{ y.en }}</span></div>
+<div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:36px;line-height:44px;font-weight:600;color:{{ y.color }}">{{ y.value }}</div><div style="font-size:16px;color:#425466">{{ y.target }}</div></div>
+<div style="height:10px;border-radius:999px;background:#E3E8EE;overflow:hidden;margin-top:8px"><div style="width:{{ y.bar }};height:100%;background:{{ y.color }}"></div></div>
+<div style="font-size:16px;color:#8792A2;margin-top:6px">{{ y.note }}</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:22px;line-height:30px;font-weight:600;margin-bottom:8px">ตารางงานทีมสัปดาห์นี้</div>
+<sc-for list="{{ tasks }}" as="t" hint-placeholder-count="4">
+<div style="display:flex;gap:12px;padding:10px 0;border-top:1px solid #E3E8EE;font-size:16px;line-height:24px">
+<div style="flex:none;width:96px;color:#425466">{{ t.when }}</div>
+<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:18px">{{ t.what }}</div><div style="color:#8792A2">{{ t.who }}</div></div>
+</div>
+</sc-for>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:22px;line-height:30px;font-weight:600;margin-bottom:8px">สัญญาใกล้หมด 90 วัน</div>
+<sc-for list="{{ contracts }}" as="c" hint-placeholder-count="3">
+<div style="display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid #E3E8EE;font-size:16px">
+<div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:600">{{ c.name }}</div><div style="color:#8792A2">หมด {{ c.date }} · {{ c.kind }}</div></div>
+<span style="flex:none;display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ c.bg }};color:{{ c.fg }}">{{ c.left }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+
+</div>
+</sc-if>
+
+<sc-if value="{{ isLedger }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:4px;border-bottom:1px solid #E3E8EE;flex-wrap:wrap">
+<sc-for list="{{ ledgerTabs }}" as="t" hint-placeholder-count="4">
+<button onClick="{{ t.go }}" style="min-height:52px;padding:0 18px;border:none;background:transparent;font-size:18px;font-weight:600;cursor:pointer;border-bottom:3px solid {{ t.bd }};color:{{ t.fg }}">{{ t.label }}</button>
+</sc-for>
+</div>
+
+<sc-if value="{{ tabList }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+<sc-for list="{{ filters }}" as="f" hint-placeholder-count="5">
+<button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:999px;background:#fff;font-size:16px;color:#425466;cursor:pointer;display:flex;align-items:center;gap:8px" style-hover="border-color:#8792A2"><span style="color:#8792A2">{{ f.label }}</span><b style="color:#0A2540">{{ f.value }}</b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="width:16px;height:16px"><path d="m6 9 6 6 6-6"></path></svg></button>
+</sc-for>
+<div style="display:flex;align-items:center;gap:8px;min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;min-width:220px">
+<svg viewBox="0 0 24 24" fill="none" stroke="#8792A2" stroke-width="1.75" stroke-linecap="round" style="width:18px;height:18px"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+<input placeholder="ค้นหารายละเอียด / คู่ค้า" style="border:none;outline:none;font-size:16px;width:100%">
+</div>
+<div style="margin-left:auto;display:flex;gap:10px">
+<button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">นำเข้า Excel</button>
+<button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">ส่งออก</button>
+<button onClick="{{ openForm }}" style="min-height:48px;padding:0 16px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:16px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">+ บันทึกรายการ</button>
+</div>
+</div>
+
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:1180px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC">
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap">วันที่เอกสาร</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap">วันที่เงินจริง</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap">ประเภท</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">รายละเอียด</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ทรัพย์ที่ผูก</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ถือในชื่อ</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">บัญชี</th>
+<th style="text-align:right;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">เงินเข้า</th>
+<th style="text-align:right;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">เงินออก</th>
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">สถานะ</th>
+<th style="text-align:center;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ไฟล์</th>
+</tr></thead>
+<tbody>
+<sc-for list="{{ rows }}" as="r" hint-placeholder-count="8">
+<tr onClick="{{ r.open }}" style="cursor:pointer;background:{{ r.zebra }};border-left:3px solid {{ r.entityColor }}" style-hover="background:#EEF4FC">
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap">{{ r.docDate }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap;color:#425466">{{ r.cashDate }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ r.tBg }};color:{{ r.tFg }};border:1px solid {{ r.tBd }}">{{ r.type }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE">{{ r.detail }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466">{{ r.asset }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:999px;background:{{ r.entityColor }}"></span>{{ r.entity }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466;white-space:nowrap">{{ r.account }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;font-weight:600;color:#0E9F6E;white-space:nowrap">{{ r.inAmt }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;font-weight:600;color:#DF1B41;white-space:nowrap">{{ r.outAmt }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ r.sBg }};color:{{ r.sFg }};border:1px solid {{ r.sBd }}">{{ r.status }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:center;color:#425466">{{ r.file }}</td>
+</tr>
+</sc-for>
+<tr style="background:#F6F9FC;font-weight:600">
+<td colspan="7" style="padding:14px 10px;border-top:1px solid #E3E8EE">รวม 8 รายการในเดือนนี้</td>
+<td style="padding:14px 10px;border-top:1px solid #E3E8EE;text-align:right;color:#0E9F6E">+1,196,500.00</td>
+<td style="padding:14px 10px;border-top:1px solid #E3E8EE;text-align:right;color:#DF1B41">(1,842,000.00)</td>
+<td colspan="2" style="padding:14px 10px;border-top:1px solid #E3E8EE"></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div style="font-size:16px;color:#8792A2">คลิกแถวเพื่อดูรายละเอียดและสิ่งที่ระบบบันทึกให้</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ tabPL }}" hint-placeholder-val="{{ false }}">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:1240px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC">
+<th style="text-align:left;font-size:16px;font-weight:600;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE;position:sticky;left:0;background:#F6F9FC">หมวด</th>
+<sc-for list="{{ months12 }}" as="m" hint-placeholder-count="12"><th style="text-align:right;font-size:16px;font-weight:600;color:#425466;padding:12px 8px;border-bottom:1px solid #E3E8EE;white-space:nowrap">{{ m }}</th></sc-for>
+<th style="text-align:right;font-size:16px;font-weight:600;color:#0A2540;padding:12px 10px;border-bottom:1px solid #E3E8EE">รวม</th>
+</tr></thead>
+<tbody>
+<sc-for list="{{ plRows }}" as="r" hint-placeholder-count="10">
+<tr style="background:{{ r.bg }}">
+<td style="padding:11px 10px;border-bottom:1px solid #E3E8EE;font-weight:{{ r.fw }};white-space:nowrap">{{ r.name }}</td>
+<sc-for list="{{ r.vals }}" as="v" hint-placeholder-count="12"><td style="padding:11px 8px;border-bottom:1px solid #E3E8EE;text-align:right;color:{{ r.color }};font-weight:{{ r.fw }};white-space:nowrap">{{ v }}</td></sc-for>
+<td style="padding:11px 10px;border-bottom:1px solid #E3E8EE;text-align:right;font-weight:600;color:{{ r.color }};white-space:nowrap">{{ r.total }}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</sc-if>
+
+<sc-if value="{{ tabCF }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<sc-for list="{{ cfGroups }}" as="g" hint-placeholder-count="3">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px"><div style="font-size:22px;font-weight:600">{{ g.name }}</div><div style="font-size:22px;font-weight:600;color:{{ g.color }}">{{ g.total }}</div></div>
+<sc-for list="{{ g.items }}" as="i" hint-placeholder-count="3">
+<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #E3E8EE;font-size:18px"><span>{{ i.name }}</span><span style="font-weight:600;color:{{ i.color }}">{{ i.amt }}</span></div>
+</sc-for>
+</div>
+</sc-for>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:720px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC"><th style="text-align:left;font-size:16px;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">บัญชีธนาคาร</th><th style="text-align:right;font-size:16px;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ยอดต้นงวด</th><th style="text-align:right;font-size:16px;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">เข้า</th><th style="text-align:right;font-size:16px;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ออก</th><th style="text-align:right;font-size:16px;color:#425466;padding:12px 10px;border-bottom:1px solid #E3E8EE">ยอดปลายงวด</th></tr></thead>
+<tbody>
+<sc-for list="{{ cfAccounts }}" as="a" hint-placeholder-count="4">
+<tr><td style="padding:12px 10px;border-bottom:1px solid #E3E8EE">{{ a.name }}</td><td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right">{{ a.open }}</td><td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;color:#0E9F6E;font-weight:600">{{ a.in }}</td><td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;color:#DF1B41;font-weight:600">{{ a.out }}</td><td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;font-weight:600">{{ a.close }}</td></tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ showConfirm }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+<div style="font-size:18px;color:#425466">รายการที่ครบกำหนดรับ-จ่ายในเดือนนี้ <b style="color:#0A2540">5 รายการ</b></div>
+<button onClick="{{ confirmCash }}" style="margin-left:auto;min-height:52px;padding:0 20px;border:1px solid #0E9F6E;border-radius:10px;background:#0E9F6E;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#0b8459">ยืนยัน 3 รายการที่เลือก</button>
+</div>
+<sc-for list="{{ cashGroups }}" as="g" hint-placeholder-count="2">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:hidden">
+<div style="padding:16px 20px;border-bottom:1px solid #E3E8EE;display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:#F6F9FC">
+<div><div style="font-size:20px;font-weight:600">{{ g.bank }}</div><div style="font-size:16px;color:#425466">ยอดในระบบ {{ g.system }}</div></div>
+<label style="margin-left:auto;display:flex;flex-direction:column;gap:4px"><span style="font-size:16px;color:#425466">ยอดตาม statement</span><input value="{{ g.stmt }}" style="min-height:52px;width:220px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px;font-weight:600;text-align:right"></label>
+<span style="display:inline-flex;align-items:center;height:40px;padding:0 14px;border-radius:999px;font-size:18px;font-weight:600;background:{{ g.bg }};color:{{ g.fg }};border:1px solid {{ g.bd }}">{{ g.match }}</span>
+</div>
+<table style="width:100%;min-width:900px;border-collapse:collapse;font-size:18px">
+<thead><tr><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">รายการ</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">ครบกำหนด</th><th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">ยอดคาด</th><th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">ยอดจริง (แก้ได้)</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">วันที่จริง</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">สลิป</th><th style="text-align:center;font-size:16px;color:#425466;font-weight:600;padding:10px 14px;border-bottom:1px solid #E3E8EE">ยืนยัน</th></tr></thead>
+<tbody>
+<sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+<tr>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><div style="font-weight:600">{{ r.name }}</div><div style="font-size:16px;color:#8792A2">{{ r.sub }}</div><sc-if value="{{ r.partial }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;height:30px;margin-top:4px;padding:0 10px;border-radius:999px;background:#FDF3E4;color:#8a5200;border:1px solid #F5A524;font-size:16px;font-weight:600">{{ r.partial }}</span></sc-if></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;color:#425466;white-space:nowrap">{{ r.due }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap">{{ r.expect }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;text-align:right"><input value="{{ r.actual }}" style="min-height:52px;width:160px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;font-weight:600;text-align:right"></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><input value="{{ r.date }}" style="min-height:52px;width:140px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px"></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><button style="min-height:48px;padding:0 12px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer">แนบสลิป</button></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;text-align:center"><input type="checkbox" checked="{{ r.checked }}" style="width:26px;height:26px"></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{ isApprovals }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px;padding-bottom:96px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+<div><div style="font-size:28px;line-height:36px;font-weight:600">รออนุมัติ 7 รายการ</div><div style="font-size:18px;color:#425466">รวม ฿ 186,500 · เก่าสุดรอมา 6 วัน</div></div>
+<div style="margin-left:auto;display:flex;gap:10px;flex-wrap:wrap">
+<button onClick="{{ selectAll }}" style="min-height:52px;padding:0 18px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">เลือกทั้งหมด</button>
+<button onClick="{{ askApproveAll }}" style="min-height:52px;padding:0 20px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">อนุมัติทั้งหมด</button>
+</div>
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+<sc-for list="{{ apFilters }}" as="f" hint-placeholder-count="3">
+<button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:999px;background:#fff;font-size:16px;color:#425466;cursor:pointer;display:flex;align-items:center;gap:8px"><span style="color:#8792A2">{{ f.label }}</span><b style="color:#0A2540">{{ f.value }}</b></button>
+</sc-for>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:1100px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC">
+<th style="width:56px;padding:12px 14px;border-bottom:1px solid #E3E8EE"></th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ประเภท</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">รายละเอียด</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ถือในชื่อ</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ยอด</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ผู้สร้าง</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">วันที่</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">การดำเนินการ</th>
+</tr></thead>
+<tbody>
+<sc-for list="{{ approvals }}" as="a" hint-placeholder-count="7">
+<tr style="background:{{ a.bg }}">
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><input type="checkbox" checked="{{ a.checked }}" onChange="{{ a.toggle }}" style="width:26px;height:26px"></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ a.tBg }};color:{{ a.tFg }};border:1px solid {{ a.tBd }}">{{ a.type }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE"><div style="font-weight:600">{{ a.detail }}</div><div style="font-size:16px;color:#8792A2">{{ a.source }}</div></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:999px;background:{{ a.ec }}"></span>{{ a.entity }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap"><div style="display:flex;align-items:center;gap:8px;justify-content:flex-end"><b>{{ a.amount }}</b><button style="min-height:44px;padding:0 10px;border:1px solid #E3E8EE;border-radius:8px;background:#fff;font-size:16px;color:#004AAD;cursor:pointer" style-hover="background:#EEF4FC">แก้ไข</button></div></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466;white-space:nowrap">{{ a.by }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466;white-space:nowrap">{{ a.date }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><div style="display:flex;gap:8px;justify-content:flex-end"><button onClick="{{ a.reject }}" style="min-height:48px;padding:0 14px;border:1px solid #DF1B41;border-radius:10px;background:#fff;color:#DF1B41;font-size:16px;font-weight:600;cursor:pointer" style-hover="background:#FDF2F4">ไม่อนุมัติ</button><button onClick="{{ a.approve }}" style="min-height:48px;padding:0 16px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:16px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">อนุมัติ</button></div></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:12px;padding:14px 18px;font-size:18px;line-height:28px">มุมมองของ User/Manager: รายการที่สร้างจะแสดงสถานะ <b>"รอ Management อนุมัติ"</b> จนกว่าจะมีการอนุมัติ</div>
+</div>
+<sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+<div style="position:fixed;left:280px;right:24px;bottom:24px;z-index:40;background:#0A2540;color:#fff;border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 8px 24px rgba(10,37,64,.28)">
+<div style="font-size:18px;font-weight:600">{{ selText }}</div>
+<div style="margin-left:auto;display:flex;gap:10px">
+<button onClick="{{ askReject }}" style="min-height:52px;padding:0 18px;border:1px solid rgba(255,255,255,.4);border-radius:10px;background:transparent;color:#fff;font-size:18px;font-weight:600;cursor:pointer">ไม่อนุมัติ</button>
+<button onClick="{{ askApprove }}" style="min-height:52px;padding:0 20px;border:1px solid #fff;border-radius:10px;background:#fff;color:#004AAD;font-size:18px;font-weight:600;cursor:pointer">อนุมัติที่เลือก</button>
+</div>
+</div>
+</sc-if>
+</sc-if>
+
+<sc-if value="{{ isBalance }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+<div style="display:flex;border:1px solid #E3E8EE;border-radius:10px;overflow:hidden;background:#fff">
+<sc-for list="{{ bsViews }}" as="v" hint-placeholder-count="3">
+<button onClick="{{ v.pick }}" style="min-height:52px;padding:0 18px;border:none;font-size:18px;font-weight:600;cursor:pointer;background:{{ v.bg }};color:{{ v.fg }}">{{ v.label }}</button>
+</sc-for>
+</div>
+<div style="margin-left:auto;display:flex;gap:10px;flex-wrap:wrap">
+<button style="min-height:52px;padding:0 18px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">อัปเดตราคาตอนนี้</button>
+<button style="min-height:52px;padding:0 18px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">+ เพิ่มทรัพย์</button>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:hidden;min-width:0">
+<div style="padding:12px 18px;background:#FDF3E4;border-bottom:1px solid #F5A524;font-size:16px;line-height:24px;color:#8a5200">มูลค่าตลาดใช้เพื่อการบริหาร ไม่ใช่งบการเงินตามกฎหมาย</div>
+<div style="overflow:auto">
+<table style="width:100%;min-width:1080px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC">
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">รายการ</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ถือในชื่อ</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">ต้นทุน</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">มูลค่าปัจจุบัน</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">แหล่งราคา</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">กำไรยังไม่รับรู้</th>
+<th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 10px;border-bottom:1px solid #E3E8EE">Yield/ปี</th>
+<th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">สถานะ</th>
+</tr></thead>
+<tbody>
+<sc-for list="{{ treeRows }}" as="r" hint-placeholder-count="12">
+<tr style="background:{{ r.bg }};cursor:{{ r.cursor }}" onClick="{{ r.click }}">
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;padding-left:{{ r.pad }}"><span style="font-weight:{{ r.fw }}">{{ r.caret }}{{ r.name }}</span></td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466;white-space:nowrap">{{ r.owner }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap;font-weight:{{ r.fw }}">{{ r.cost }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap;font-weight:{{ r.fw }}">{{ r.value }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;color:#425466;font-size:16px;white-space:nowrap">{{ r.src }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap;color:{{ r.glColor }};font-weight:{{ r.fw }}">{{ r.gl }}</td>
+<td style="padding:12px 10px;border-bottom:1px solid #E3E8EE;text-align:right;white-space:nowrap">{{ r.yield }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;white-space:nowrap"><sc-if value="{{ r.status }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ r.sBg }};color:{{ r.sFg }};border:1px solid {{ r.sBd }}">{{ r.status }}</span></sc-if></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;flex-direction:column;gap:12px;align-items:center">
+<div style="font-size:20px;font-weight:600;align-self:flex-start">สัดส่วนทรัพย์สิน</div>
+<div style="width:150px;height:150px;border-radius:999px;background:conic-gradient(#004AAD 0 48%,#0E9F6E 48% 86%,#F5A524 86% 95%,#8792A2 95% 100%);display:flex;align-items:center;justify-content:center"><div style="width:96px;height:96px;border-radius:999px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:16px;color:#8792A2">NAV</div><div style="font-size:20px;font-weight:600">฿ 64.2M</div></div></div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:20px;font-weight:600;margin-bottom:8px">NAV แยกตามชื่อผู้ถือ</div>
+<sc-for list="{{ navByEntity }}" as="n" hint-placeholder-count="5">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #E3E8EE;font-size:18px"><span style="width:10px;height:10px;border-radius:999px;background:{{ n.color }}"></span>{{ n.name }}<b style="margin-left:auto">{{ n.value }}</b></div>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isAsset }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<sc-if value="{{ editMode }}" hint-placeholder-val="{{ false }}">
+<div style="background:#FDF3E4;border:1px solid #F5A524;border-radius:10px;padding:14px 18px;font-size:18px;color:#8a5200">กำลังอยู่ในโหมดแก้ไข — การเปลี่ยนแปลงจะบันทึกเมื่อกดปุ่มบันทึก</div>
+</sc-if>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+<div>
+<div style="font-size:28px;line-height:36px;font-weight:600">คอนโดตัวอย่าง C</div>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+<span style="display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:999px;background:#EEF4FC;color:#004AAD;border:1px solid #D6E4F7;font-size:16px;font-weight:600">Real Estate · ปล่อยเช่า</span>
+<span style="display:inline-flex;align-items:center;gap:6px;font-size:16px;color:#425466"><span style="width:10px;height:10px;border-radius:999px;background:#7A5AF8"></span>ธนากร</span>
+<span style="display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:999px;background:#E7F7F0;color:#0b7a55;border:1px solid #0E9F6E;font-size:16px;font-weight:600">Active</span>
+</div>
+</div>
+<div style="margin-left:auto;display:flex;border:1px solid #E3E8EE;border-radius:10px;overflow:hidden">
+<button onClick="{{ viewMode }}" style="min-height:52px;padding:0 18px;border:none;font-size:18px;font-weight:600;cursor:pointer;background:{{ viewBg }};color:{{ viewFg }}">โหมดดู</button>
+<button onClick="{{ toEdit }}" style="min-height:52px;padding:0 18px;border:none;font-size:18px;font-weight:600;cursor:pointer;background:{{ editBg }};color:{{ editFg }}">แก้ไข</button>
+</div>
+</div>
+<div style="display:flex;gap:4px;border-bottom:1px solid #E3E8EE;flex-wrap:wrap">
+<sc-for list="{{ assetTabs }}" as="t" hint-placeholder-count="4">
+<button onClick="{{ t.pick }}" style="min-height:52px;padding:0 18px;border:none;background:transparent;font-size:18px;font-weight:600;cursor:pointer;border-bottom:3px solid {{ t.bd }};color:{{ t.fg }}">{{ t.label }}</button>
+</sc-for>
+</div>
+
+<sc-if value="{{ aOverview }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px"><div style="font-size:16px;color:#425466">ต้นทุน</div><div style="font-size:28px;font-weight:600">฿ 2,450,000</div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px"><div style="font-size:16px;color:#425466">มูลค่าปัจจุบัน</div><div style="font-size:28px;font-weight:600">฿ 2,780,000</div><div style="font-size:16px;color:#0E9F6E;font-weight:600">▲ กำไรยังไม่รับรู้ 330,000</div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px"><div style="font-size:16px;color:#425466">Yield จริง</div><div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:28px;font-weight:600;color:#F5A524">5.2%</div><div style="font-size:16px;color:#425466">เป้า 6.5%</div></div><div style="height:10px;border-radius:999px;background:#E3E8EE;overflow:hidden;margin-top:8px"><div style="width:80%;height:100%;background:#F5A524"></div></div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px"><div style="font-size:16px;color:#425466">รายรับ 12 เดือน</div><div style="font-size:28px;font-weight:600">฿ 144,000</div></div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:22px;font-weight:600;margin-bottom:12px">รายรับรายเดือน</div>
+<div style="display:flex;align-items:flex-end;gap:10px;height:160px">
+<sc-for list="{{ assetBars }}" as="b" hint-placeholder-count="12">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0">
+<div style="width:100%;border-radius:6px 6px 0 0;background:{{ b.color }};height:{{ b.h }}"></div>
+<div style="font-size:16px;color:#8792A2">{{ b.m }}</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+<div><div style="font-size:16px;color:#425466">ผู้เช่าปัจจุบัน</div><div style="font-size:22px;font-weight:600">คุณสมชาย ใจดี</div><div style="font-size:16px;color:#425466">฿ 12,000 / เดือน · ชำระทุกวันที่ 1 · สัญญาหมด 29/09/2026</div></div>
+<button style="margin-left:auto;min-height:52px;padding:0 18px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;color:#004AAD;cursor:pointer" style-hover="background:#EEF4FC">ดูข้อมูลผู้เช่า</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ aContract }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">คู่สัญญา</span><input value="คุณสมชาย ใจดี" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">ค่าเช่า / เดือน</span><input value="12,000.00" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันเริ่มสัญญา</span><input value="30/09/2025" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันสิ้นสุดสัญญา</span><input value="29/09/2026" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันชำระทุกเดือน</span><input value="วันที่ 1" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">เงินมัดจำ</span><input value="24,000.00" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#DF1B41">ช่วงส่ง Notice ต่อสัญญา</span><input placeholder="ยังไม่ได้กรอก" style="min-height:52px;border:1px solid #DF1B41;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#DF1B41">ผู้ค้ำประกัน</span><input placeholder="ยังไม่ได้กรอก" style="min-height:52px;border:1px solid #DF1B41;border-radius:10px;padding:0 14px;font-size:18px"></label>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<span style="display:inline-flex;align-items:center;height:34px;padding:0 12px;border-radius:999px;background:#FDF3E4;color:#8a5200;border:1px solid #F5A524;font-size:16px;font-weight:600">ขาด 2 ช่อง</span>
+<div style="font-size:16px;color:#425466;margin-top:8px">ระบบนี้เก็บข้อมูลสัญญา ไม่ใช่เครื่องมือร่างสัญญา</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:18px 20px">
+<div style="font-size:18px;font-weight:600;margin-bottom:8px">ไฟล์สัญญา (บังคับ)</div>
+<div style="display:flex;gap:12px;align-items:center;border:1px solid #E3E8EE;border-radius:10px;padding:12px">
+<div style="width:52px;height:64px;border:1px solid #E3E8EE;border-radius:6px;background:#F6F9FC;display:flex;align-items:center;justify-content:center;font-size:16px;color:#8792A2">PDF</div>
+<div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:600">lease-condoC.pdf</div><div style="font-size:16px;color:#8792A2">4 หน้า · 1.2 MB</div></div>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ aMoney }}" hint-placeholder-val="{{ false }}">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:720px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC"><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">วันที่</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">รายละเอียด</th><th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">เงินเข้า</th><th style="text-align:right;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">เงินออก</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">สถานะ</th></tr></thead>
+<tbody>
+<sc-for list="{{ assetLedger }}" as="r" hint-placeholder-count="5">
+<tr><td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;white-space:nowrap">{{ r.date }}</td><td style="padding:12px 14px;border-bottom:1px solid #E3E8EE">{{ r.detail }}</td><td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;text-align:right;color:#0E9F6E;font-weight:600">{{ r.in }}</td><td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;text-align:right;color:#DF1B41;font-weight:600">{{ r.out }}</td><td style="padding:12px 14px;border-bottom:1px solid #E3E8EE">{{ r.status }}</td></tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</sc-if>
+
+<sc-if value="{{ aDocs }}" hint-placeholder-val="{{ false }}">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+<sc-for list="{{ assetDocs }}" as="d" hint-placeholder-count="4">
+<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+<div style="height:120px;border-radius:8px;background:#F6F9FC;border:1px solid #E3E8EE;display:flex;align-items:center;justify-content:center;font-size:18px;color:#8792A2">{{ d.kind }}</div>
+<div style="font-size:18px;font-weight:600">{{ d.name }}</div>
+<div style="font-size:16px;color:#8792A2">{{ d.meta }}</div>
+</div>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ isSBank }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:start">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:10px">
+<sc-for list="{{ settingsMenu }}" as="m" hint-placeholder-count="10">
+<button onClick="{{ m.pick }}" style="display:block;width:100%;min-height:52px;padding:0 14px;border:none;border-radius:10px;text-align:left;font-size:18px;cursor:pointer;background:{{ m.bg }};color:{{ m.fg }};font-weight:{{ m.fw }}" style-hover="background:#F6F9FC">{{ m.label }}</button>
+</sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+<label style="display:flex;align-items:center;gap:10px;font-size:18px;min-height:52px"><input type="checkbox" checked="{{ showInactive }}" onChange="{{ toggleInactive }}" style="width:24px;height:24px">แสดงบัญชีที่ปิดใช้งาน</label>
+<div style="font-size:16px;color:#425466">ลำดับนี้คือลำดับที่แสดงในตัวเลือกบัญชีทุกฟอร์ม</div>
+<button style="margin-left:auto;min-height:52px;padding:0 18px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">+ เพิ่มบัญชี</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ banks }}" as="b" hint-placeholder-count="7">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:16px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;opacity:{{ b.op }}">
+<div style="display:flex;align-items:center;gap:8px;flex:none">
+<div style="display:flex;flex-direction:column;gap:2px">
+<button onClick="{{ b.up }}" disabled="{{ b.upDis }}" aria-label="เลื่อนขึ้น" style="width:36px;height:26px;border:1px solid #E3E8EE;border-radius:6px 6px 0 0;background:#fff;color:#425466;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="border-color:#004AAD;color:#004AAD"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="m18 15-6-6-6 6"></path></svg></button>
+<button onClick="{{ b.down }}" disabled="{{ b.downDis }}" aria-label="เลื่อนลง" style="width:36px;height:26px;border:1px solid #E3E8EE;border-top:none;border-radius:0 0 6px 6px;background:#fff;color:#425466;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="border-color:#004AAD;color:#004AAD"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="m6 9 6 6 6-6"></path></svg></button>
+</div>
+<div style="width:24px;font-size:16px;color:#8792A2;text-align:right">{{ b.pos }}</div>
+</div>
+<div style="width:52px;height:52px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;background:{{ b.color }}">{{ b.short }}</div>
+<div style="min-width:180px">
+<div style="font-size:20px;font-weight:600">{{ b.name }}</div>
+<div style="font-size:16px;color:#425466">{{ b.bank }} · เลขท้าย {{ b.last4 }}</div>
+</div>
+<div style="min-width:150px"><div style="font-size:16px;color:#8792A2">ถือในชื่อ</div><div style="font-size:18px;display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:999px;background:{{ b.ec }}"></span>{{ b.owner }}</div></div>
+<div style="min-width:160px;text-align:right"><div style="font-size:16px;color:#8792A2">ยอดตั้งต้น</div><div style="font-size:18px;font-weight:600">{{ b.opening }}</div></div>
+<div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+<div style="font-size:16px;color:#425466;max-width:220px">{{ b.note }}</div>
+<button onClick="{{ b.toggle }}" style="width:64px;height:36px;border-radius:999px;border:none;cursor:pointer;position:relative;background:{{ b.swBg }}" aria-label="เปิด/ปิดใช้งานบัญชี"><span style="position:absolute;top:4px;left:{{ b.swX }};width:28px;height:28px;border-radius:999px;background:#fff;transition:left .14s"></span></button>
+<div style="font-size:16px;font-weight:600;color:{{ b.swFg }};width:72px">{{ b.swLabel }}</div>
+<button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer" style-hover="border-color:#8792A2">แก้ไขชื่อ</button>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isSUsers }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:start">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);padding:10px">
+<sc-for list="{{ settingsMenu }}" as="m" hint-placeholder-count="10">
+<button onClick="{{ m.pick }}" style="display:block;width:100%;min-height:52px;padding:0 14px;border:none;border-radius:10px;text-align:left;font-size:18px;cursor:pointer;background:{{ m.bg }};color:{{ m.fg }};font-weight:{{ m.fw }}" style-hover="background:#F6F9FC">{{ m.label }}</button>
+</sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:12px;padding:16px 18px;font-size:18px;line-height:28px">User / Manager สร้างรายการได้ ต้องรอ Management อนุมัติ</div>
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:12px;padding:16px 18px;font-size:18px;line-height:28px">Management อนุมัติได้ และข้ามขั้นการอนุมัติได้เมื่อจำเป็น</div>
+</div>
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+<div style="font-size:18px;color:#425466">ผู้ใช้ทั้งหมด <b style="color:#0A2540">5 คน</b></div>
+<button style="margin-left:auto;min-height:52px;padding:0 18px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">เชิญผู้ใช้</button>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;box-shadow:0 1px 3px rgba(10,37,64,.08);overflow:auto">
+<table style="width:100%;min-width:900px;border-collapse:collapse;font-size:18px">
+<thead><tr style="background:#F6F9FC"><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">ชื่อ</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">อีเมล</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">สิทธิ์ (Role)</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">ผูกกับชื่อผู้ถือ</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">สถานะ</th><th style="text-align:left;font-size:16px;color:#425466;font-weight:600;padding:12px 14px;border-bottom:1px solid #E3E8EE">เข้าใช้ล่าสุด</th><th style="padding:12px 14px;border-bottom:1px solid #E3E8EE"></th></tr></thead>
+<tbody>
+<sc-for list="{{ users }}" as="u" hint-placeholder-count="5">
+<tr>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:999px;background:#EEF4FC;color:#004AAD;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:16px">{{ u.initial }}</div><b>{{ u.name }}</b></div></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;color:#425466">{{ u.email }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;font-size:16px;font-weight:600;background:{{ u.rBg }};color:{{ u.rFg }};border:1px solid {{ u.rBd }}">{{ u.role }}</span></td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;color:#425466">{{ u.owner }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE">{{ u.status }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE;color:#425466">{{ u.last }}</td>
+<td style="padding:12px 14px;border-bottom:1px solid #E3E8EE"><button style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer">แก้ไขสิทธิ์</button></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMHome }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;justify-content:center;padding:8px">
+<div style="width:390px;flex:none;background:#F6F9FC;border:1px solid #E3E8EE;border-radius:28px;overflow:hidden;box-shadow:0 8px 30px rgba(10,37,64,.14)">
+<div style="background:#fff;border-bottom:1px solid #E3E8EE;padding:14px 16px;display:flex;align-items:center;gap:10px">
+<img src="assets/sri-logo.png" alt="SRI" style="width:32px;height:32px;object-fit:contain">
+<div style="font-size:20px;font-weight:700;color:#004AAD;margin-right:auto">SRI OS</div>
+<div style="width:40px;height:40px;border-radius:999px;background:#EEF4FC;color:#004AAD;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:16px">ธ</div>
+</div>
+<div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:8px">
+<div style="flex:1;min-height:48px;border:1px solid #E3E8EE;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;font-weight:600"><span style="width:10px;height:10px;border-radius:999px;background:#0A2540"></span>รวมทั้งกลุ่ม</div>
+<div style="flex:none;min-width:120px;min-height:48px;border:1px solid #E3E8EE;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600">ก.ย. 2026</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:16px">
+<div style="font-size:16px;color:#425466">มูลค่าทรัพย์สินสุทธิ (NAV)</div>
+<div style="font-size:36px;line-height:44px;font-weight:600">฿ 64.2M</div>
+<div style="font-size:16px;color:#0E9F6E;font-weight:600">▲ 1.8% เทียบเดือนก่อน</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:14px"><div style="font-size:16px;color:#425466">กำไรเดือนนี้</div><div style="font-size:22px;font-weight:600;color:#0E9F6E">+412,300</div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:14px"><div style="font-size:16px;color:#425466">เงินสดสุทธิ</div><div style="font-size:22px;font-weight:600;color:#DF1B41">−1.25M</div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:14px"><div style="font-size:16px;color:#425466">ค้างรับ</div><div style="font-size:22px;font-weight:600">131,500</div></div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:14px"><div style="font-size:16px;color:#425466">ค้างจ่าย</div><div style="font-size:22px;font-weight:600">58,200</div></div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:16px">
+<div style="font-size:16px;color:#425466">รายได้ประจำ / เดือน</div>
+<div style="font-size:28px;font-weight:600">฿ 486,000</div>
+<div style="height:10px;border-radius:999px;background:#E3E8EE;overflow:hidden;margin:8px 0 4px"><div style="width:48.6%;height:100%;background:#004AAD"></div></div>
+<div style="font-size:16px;color:#425466">48.6% ของเป้า ฿ 1M</div>
+</div>
+<div style="background:#fff;border:1px solid #E3E8EE;border-radius:12px;padding:16px">
+<div style="font-size:20px;font-weight:600;margin-bottom:4px">ที่ควรทำก่อน</div>
+<sc-for list="{{ todos3 }}" as="t" hint-placeholder-count="3">
+<div style="padding:10px 0;border-top:1px solid #E3E8EE">
+<div style="display:flex;gap:8px;align-items:center"><span style="display:inline-flex;align-items:center;height:26px;padding:0 8px;border-radius:999px;font-size:16px;font-weight:700;background:{{ t.pBg }};color:{{ t.pFg }}">{{ t.p }}</span><span style="font-size:18px;font-weight:600;line-height:26px">{{ t.title }}</span></div>
+<div style="font-size:16px;color:#635BFF;line-height:24px">✦ {{ t.why }}</div>
+</div>
+</sc-for>
+</div>
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+<div style="font-size:18px;font-weight:600">มี 7 รายการรออนุมัติ · รวม ฿ 186,500</div>
+<button onClick="{{ goApprovals }}" style="min-height:56px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer">ไปอนุมัติ</button>
+</div>
+</div>
+<div style="background:#fff;border-top:1px solid #E3E8EE;padding:8px 8px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:4px;align-items:end">
+<div style="min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:16px;font-weight:600;color:#004AAD">หน้าแรก</div>
+<div style="min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:16px;color:#425466">อนุมัติ <span style="min-width:24px;height:22px;padding:0 6px;border-radius:999px;background:#F5A524;color:#3d2600;font-size:16px;font-weight:700">7</span></div>
+<button onClick="{{ goMForm }}" style="min-height:64px;border:none;border-radius:16px;background:#004AAD;color:#fff;font-size:16px;font-weight:700;cursor:pointer">＋ บันทึก</button>
+<div style="min-height:56px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#425466">ทรัพย์สิน</div>
+<div style="min-height:56px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#425466">เมนู</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMForm }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;justify-content:center;padding:8px">
+<div style="width:390px;flex:none;background:#fff;border:1px solid #E3E8EE;border-radius:28px;overflow:hidden;box-shadow:0 8px 30px rgba(10,37,64,.14);display:flex;flex-direction:column">
+<div style="padding:14px 16px;border-bottom:1px solid #E3E8EE;display:flex;align-items:center;gap:12px">
+<button onClick="{{ goMHome }}" style="min-height:48px;padding:0 12px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer">ย้อนกลับ</button>
+<div style="font-size:20px;font-weight:600">บันทึกรายการ</div>
+</div>
+<div style="padding:12px 16px;border-bottom:1px solid #E3E8EE;display:flex;gap:6px">
+<sc-for list="{{ mSteps }}" as="s" hint-placeholder-count="4">
+<div style="flex:1;display:flex;flex-direction:column;gap:6px;align-items:center">
+<div style="width:100%;height:6px;border-radius:999px;background:{{ s.bar }}"></div>
+<div style="font-size:16px;color:{{ s.fg }};font-weight:600">{{ s.n }}</div>
+</div>
+</sc-for>
+</div>
+<div style="padding:16px;display:flex;flex-direction:column;gap:12px;min-height:420px">
+<div style="font-size:22px;font-weight:600">{{ mStepTitle }}</div>
+<sc-if value="{{ mStep1 }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ txTypes }}" as="t" hint-placeholder-count="7">
+<button onClick="{{ mNext }}" style="text-align:left;min-height:64px;padding:12px 16px;border-radius:10px;border:1px solid {{ t.bd }};background:{{ t.bg }};cursor:pointer">
+<div style="font-size:18px;font-weight:600">{{ t.label }}</div>
+<div style="font-size:16px;color:#425466">{{ t.desc }}</div>
+</button>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{ mStep2 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="font-size:16px;color:#425466">อยู่ในชื่อใคร</div>
+<sc-for list="{{ formEntities }}" as="e" hint-placeholder-count="4">
+<button onClick="{{ e.pick }}" style="min-height:56px;border-radius:10px;border:1px solid {{ e.bd }};background:{{ e.bg }};font-size:18px;cursor:pointer;display:flex;align-items:center;gap:10px;padding:0 16px"><span style="width:10px;height:10px;border-radius:999px;background:{{ e.color }}"></span>{{ e.name }}</button>
+</sc-for>
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:10px;padding:12px 14px;font-size:16px;line-height:24px">{{ entityRule }}</div>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">บัญชีธนาคาร</span><select style="min-height:56px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><sc-for list="{{ bankOptions }}" as="o" hint-placeholder-count="5"><option>{{ o.name }}</option></sc-for></select></label>
+</div>
+</sc-if>
+<sc-if value="{{ mStep3 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:12px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">จำนวนเงิน (บาท)</span><input value="12,000.00" style="min-height:64px;border:1px solid #E3E8EE;border-radius:10px;padding:0 16px;font-size:28px;font-weight:600"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันที่เงินเข้าจริง</span><input value="03/09/2026" style="min-height:56px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;align-items:center;gap:10px;font-size:18px;min-height:56px"><input type="checkbox" style="width:24px;height:24px">ยังไม่ได้รับเงิน</label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">ทรัพย์ที่ผูก</span><select style="min-height:56px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><option>คอนโดตัวอย่าง C</option></select></label>
+</div>
+</sc-if>
+<sc-if value="{{ mStep4 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:12px">
+<button style="min-height:96px;border:2px dashed #E3E8EE;border-radius:12px;background:#F6F9FC;font-size:18px;font-weight:600;cursor:pointer">ถ่ายรูปสลิป / ใบเสร็จ</button>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:12px;padding:14px">
+<sc-for list="{{ summary }}" as="s" hint-placeholder-count="6">
+<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #E3E8EE;font-size:16px"><span style="color:#425466">{{ s.k }}</span><span style="font-weight:600;text-align:right">{{ s.v }}</span></div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+</div>
+<div style="padding:12px 16px 20px;border-top:1px solid #E3E8EE;display:flex;flex-direction:column;gap:8px">
+<button onClick="{{ mNext }}" style="min-height:56px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer">{{ mNextLabel }}</button>
+<button onClick="{{ mBack }}" style="min-height:56px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer">ย้อนกลับ</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+</main>
+</div>
+</div>
+
+<sc-if value="{{ dialog }}" hint-placeholder-val="{{ false }}">
+<div style="position:fixed;inset:0;background:rgba(10,37,64,.45);z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;animation:fadein .12s ease-out">
+<div style="width:100%;max-width:520px;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(10,37,64,.24);padding:24px;display:flex;flex-direction:column;gap:16px">
+<div style="font-size:22px;line-height:30px;font-weight:600">{{ dialog.title }}</div>
+<div style="font-size:18px;line-height:28px;color:#425466">{{ dialog.body }}</div>
+<sc-if value="{{ dialog.needReason }}" hint-placeholder-val="{{ false }}">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">เหตุผลที่ไม่อนุมัติ (จำเป็น)</span><input placeholder="เช่น ยอดไม่ตรงกับใบแจ้งหนี้" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+</sc-if>
+<div style="display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap">
+<button onClick="{{ closeDialog }}" style="min-height:52px;padding:0 20px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer">ยกเลิก</button>
+<button onClick="{{ dialog.confirm }}" style="min-height:52px;padding:0 22px;border:1px solid {{ dialog.color }};border-radius:10px;background:{{ dialog.color }};color:#fff;font-size:18px;font-weight:600;cursor:pointer">{{ dialog.cta }}</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ formOpen }}" hint-placeholder-val="{{ false }}">
+<div style="position:fixed;inset:0;background:rgba(10,37,64,.45);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;animation:fadein .12s ease-out">
+<div style="width:100%;max-width:720px;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(10,37,64,.24);overflow:hidden">
+<div style="padding:20px 24px;border-bottom:1px solid #E3E8EE;display:flex;align-items:center;gap:16px">
+<div style="font-size:22px;font-weight:600;margin-right:auto">บันทึกรายการ</div>
+<button onClick="{{ closeForm }}" style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer">ปิด</button>
+</div>
+<div style="display:flex;gap:8px;padding:16px 24px;border-bottom:1px solid #E3E8EE;flex-wrap:wrap">
+<sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:120px">
+<span style="width:32px;height:32px;flex:none;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:{{ s.bg }};color:{{ s.fg }};border:1px solid {{ s.bd }}">{{ s.n }}</span>
+<span style="font-size:16px;color:{{ s.tFg }}">{{ s.label }}</span>
+</div>
+</sc-for>
+</div>
+<div style="padding:24px;display:flex;flex-direction:column;gap:16px;min-height:280px">
+
+<sc-if value="{{ step1 }}" hint-placeholder-val="{{ true }}">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+<sc-for list="{{ txTypes }}" as="t" hint-placeholder-count="7">
+<button onClick="{{ t.pick }}" style="text-align:left;padding:16px;border-radius:10px;border:1px solid {{ t.bd }};background:{{ t.bg }};cursor:pointer;min-height:96px;display:flex;flex-direction:column;gap:4px" style-hover="border-color:#004AAD">
+<div style="font-size:18px;font-weight:600">{{ t.label }}</div>
+<div style="font-size:16px;line-height:22px;color:#425466">{{ t.desc }}</div>
+</button>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{ step2 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div>
+<div style="font-size:16px;color:#425466;margin-bottom:6px">รายการนี้อยู่ในชื่อใคร (ผู้ถือกรรมสิทธิ์)</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+<sc-for list="{{ formEntities }}" as="e" hint-placeholder-count="4">
+<button onClick="{{ e.pick }}" style="min-height:52px;padding:0 16px;border-radius:10px;border:1px solid {{ e.bd }};background:{{ e.bg }};font-size:18px;cursor:pointer;display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:999px;background:{{ e.color }}"></span>{{ e.name }}</button>
+</sc-for>
+</div>
+</div>
+<div style="background:#EEF4FC;border:1px solid #D6E4F7;border-radius:10px;padding:14px 16px;font-size:18px;line-height:28px">{{ entityRule }}</div>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">บัญชีธนาคาร</span><select style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><sc-for list="{{ bankOptions }}" as="o" hint-placeholder-count="5"><option>{{ o.name }}</option></sc-for></select></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">เหตุผลที่เลือกเจ้าของนี้</span><select style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><option>ทรัพย์ถือในชื่อบุคคล</option><option>สัญญาทำในชื่อบริษัท</option><option>ใช้เงินส่วนตัวจ่ายก่อน</option><option>โอนภายในกลุ่ม</option></select></label>
+</div>
+</sc-if>
+
+<sc-if value="{{ step3 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">จำนวนเงิน (บาท)</span><input value="12,000.00" style="min-height:64px;border:1px solid #E3E8EE;border-radius:10px;padding:0 16px;font-size:28px;font-weight:600"></label>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันที่เอกสาร</span><input value="01/09/2026" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">วันที่เงินเข้าจริง</span><input value="03/09/2026" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+</div>
+<label style="display:flex;align-items:center;gap:10px;font-size:18px;min-height:52px"><input type="checkbox" style="width:24px;height:24px">ยังไม่ได้รับเงิน (บันทึกเป็นค้างรับ)</label>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">หมวดย่อย</span><select style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><option>ค่าเช่า</option><option>ดอกเบี้ยรับ</option><option>เงินปันผล</option></select></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">ทรัพย์ที่ผูก</span><select style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 12px;font-size:18px;background:#fff"><option>คอนโดตัวอย่าง C</option><option>ทาวน์โฮมตัวอย่าง B</option><option>คอนโดตัวอย่าง A</option></select></label>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">คู่ค้า / ผู้เช่า</span><input value="คุณสมชาย (ผู้เช่า)" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+</div>
+<label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:16px;color:#425466">หมายเหตุ</span><input placeholder="ไม่จำเป็นต้องกรอก" style="min-height:52px;border:1px solid #E3E8EE;border-radius:10px;padding:0 14px;font-size:18px"></label>
+</div>
+</sc-if>
+
+<sc-if value="{{ step4 }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="border:2px dashed #E3E8EE;border-radius:12px;padding:24px;text-align:center;background:#F6F9FC">
+<div style="font-size:18px;font-weight:600">ลากไฟล์มาวาง หรือเลือกไฟล์</div>
+<div style="font-size:16px;color:#425466;margin:4px 0 12px">สลิปโอนเงิน · ใบเสร็จ · ใบแจ้งหนี้ (PDF/JPG)</div>
+<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+<button style="min-height:52px;padding:0 18px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer">เลือกไฟล์</button>
+<button style="min-height:52px;padding:0 18px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer">ถ่ายรูป</button>
+</div>
+</div>
+<div style="display:flex;gap:12px;align-items:center;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px">
+<div style="width:52px;height:64px;border:1px solid #E3E8EE;border-radius:6px;background:#F6F9FC;display:flex;align-items:center;justify-content:center;font-size:16px;color:#8792A2">PDF</div>
+<div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:600">slip-090326.pdf</div><div style="font-size:16px;color:#8792A2">182 KB · แนบแล้ว</div></div>
+<span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:999px;background:#E7F7F0;color:#0b7a55;border:1px solid #0E9F6E;font-size:16px;font-weight:600">จำเป็น ✓</span>
+</div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:12px;padding:16px">
+<div style="font-size:18px;font-weight:600;margin-bottom:8px">สรุปรายการ</div>
+<sc-for list="{{ summary }}" as="s" hint-placeholder-count="6">
+<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #E3E8EE;font-size:18px"><span style="color:#425466">{{ s.k }}</span><span style="font-weight:600;text-align:right">{{ s.v }}</span></div>
+</sc-for>
+</div>
+<label style="display:flex;align-items:flex-start;gap:12px;background:#EEF4FC;border:1px solid #D6E4F7;border-radius:10px;padding:14px;font-size:18px;line-height:26px"><input type="checkbox" style="width:24px;height:24px;margin-top:2px"><span>บันทึกเข้าสมุดบัญชีทันที (ข้ามการอนุมัติ) — เฉพาะ Management</span></label>
+</div>
+</sc-if>
+
+</div>
+<div style="padding:16px 24px;border-top:1px solid #E3E8EE;display:flex;gap:12px;justify-content:flex-end;background:#fff">
+<button onClick="{{ prevStep }}" style="min-height:52px;padding:0 20px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:18px;font-weight:600;cursor:pointer">ย้อนกลับ</button>
+<button onClick="{{ nextStep }}" style="min-height:52px;padding:0 24px;border:1px solid #004AAD;border-radius:10px;background:#004AAD;color:#fff;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#003A8A">{{ nextLabel }}</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ drawer }}" hint-placeholder-val="{{ false }}">
+<div style="position:fixed;inset:0;background:rgba(10,37,64,.35);z-index:50;display:flex;justify-content:flex-end">
+<div style="width:min(520px,100%);background:#fff;height:100%;overflow:auto;box-shadow:-8px 0 30px rgba(10,37,64,.18);animation:slidein .16s ease-out">
+<div style="padding:20px 24px;border-bottom:1px solid #E3E8EE;display:flex;align-items:center;gap:12px">
+<div style="font-size:22px;font-weight:600;margin-right:auto">รายละเอียดรายการ</div>
+<button onClick="{{ closeDrawer }}" style="min-height:48px;padding:0 14px;border:1px solid #E3E8EE;border-radius:10px;background:#fff;font-size:16px;font-weight:600;cursor:pointer">ปิด</button>
+</div>
+<div style="padding:24px;display:flex;flex-direction:column;gap:16px">
+<div><div style="font-size:16px;color:#425466">{{ drawer.detail }}</div><div style="font-size:36px;line-height:44px;font-weight:600;color:#0E9F6E">{{ drawer.big }}</div></div>
+<div style="background:#F6F9FC;border:1px solid #E3E8EE;border-radius:12px;padding:16px">
+<div style="font-size:18px;font-weight:600;margin-bottom:6px">ระบบบันทึกให้ดังนี้</div>
+<div style="font-size:18px;line-height:28px;color:#425466">เงินเข้าบัญชี {{ drawer.account }} เพิ่มขึ้น {{ drawer.big }}<br>รายได้ค่าเช่าเพิ่มขึ้น {{ drawer.big }}</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<sc-for list="{{ drawerFields }}" as="f" hint-placeholder-count="6">
+<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #E3E8EE;font-size:18px"><span style="color:#425466">{{ f.k }}</span><span style="font-weight:600;text-align:right">{{ f.v }}</span></div>
+</sc-for>
+</div>
+<div style="display:flex;gap:12px;align-items:center;border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px">
+<div style="width:48px;height:60px;border:1px solid #E3E8EE;border-radius:6px;background:#F6F9FC;display:flex;align-items:center;justify-content:center;font-size:16px;color:#8792A2">PDF</div>
+<div style="flex:1"><div style="font-size:18px;font-weight:600">invoice-sep.pdf</div><div style="font-size:16px;color:#8792A2">แนบเมื่อ 03/09/2026</div></div>
+</div>
+<div style="font-size:16px;color:#8792A2">ประวัติการแก้ไข: สร้างโดย มาวิน 01/09/2026 · อนุมัติโดย ธนกร 02/09/2026</div>
+<button style="min-height:52px;border:1px solid #DF1B41;border-radius:10px;background:#fff;color:#DF1B41;font-size:18px;font-weight:600;cursor:pointer" style-hover="background:#FDF2F4">กลับรายการ (Reverse)</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+<div style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:80;background:#0A2540;color:#fff;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:16px;box-shadow:0 8px 24px rgba(10,37,64,.28);animation:fadein .12s ease-out">
+<span style="font-size:18px">{{ toast }}</span>
+<button onClick="{{ undo }}" style="min-height:44px;padding:0 14px;border:1px solid rgba(255,255,255,.35);border-radius:8px;background:transparent;color:#fff;font-size:16px;font-weight:600;cursor:pointer">เลิกทำ</button>
+</div>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1000},&quot;largeText&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;การเข้าถึง&quot;}}">
+const ENTITIES = [
+  {name:'SRI Family (รวมทุกชื่อ)', color:'#0A2540', group:'กองกลางครอบครัว'},
+  {name:'SRI Corporation', color:'#004AAD', group:'ถือในชื่อนิติบุคคล'},
+  {name:'ธนากร', color:'#7A5AF8', group:'ถือในชื่อบุคคล (ยังเป็นกองกลาง)'},
+  {name:'ธนวินท์', color:'#7A5AF8'},
+  {name:'เบ็ญจพร', color:'#7A5AF8'}
+];
+const MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const PILL = {
+  wait:{bg:'#FDF3E4',fg:'#8a5200',bd:'#F5A524'},
+  saved:{bg:'#EEF4FC',fg:'#004AAD',bd:'#D6E4F7'},
+  done:{bg:'#E7F7F0',fg:'#0b7a55',bd:'#0E9F6E'},
+  late:{bg:'#fff',fg:'#DF1B41',bd:'#DF1B41'},
+  off:{bg:'#F6F9FC',fg:'#8792A2',bd:'#E3E8EE'}
+};
+const TYPE = {
+  inc:{bg:'#E7F7F0',fg:'#0b7a55',bd:'#b7e6d2'},
+  exp:{bg:'#FDF2F4',fg:'#b51232',bd:'#f6c2ce'},
+  inv:{bg:'#EEF4FC',fg:'#004AAD',bd:'#D6E4F7'},
+  fin:{bg:'#F3F0FE',fg:'#5b3fd6',bd:'#ded6fd'},
+  trf:{bg:'#F6F9FC',fg:'#425466',bd:'#E3E8EE'}
+};
+const LEDGER = [
+  {docDate:'01/09/2026',cashDate:'03/09/2026',type:'รายได้ + ค่าเช่า',t:'inc',detail:'ค่าเช่า ก.ย.',asset:'คอนโดตัวอย่าง C',entity:'ธนากร',ec:'#7A5AF8',account:'ธนากร - BBL 888',inAmt:'+12,000.00',outAmt:'–',status:'รับแล้ว',s:'done',file:'📎'},
+  {docDate:'02/09/2026',cashDate:'02/09/2026',type:'รายได้ + ดอกเบี้ย',t:'inc',detail:'ดอกเบี้ยขายฝาก งวด 8',asset:'ทาวน์โฮมตัวอย่าง B',entity:'SRI Corporation',ec:'#004AAD',account:'SRI - SCB',inAmt:'+45,000.00',outAmt:'–',status:'รับแล้ว',s:'done',file:'📎'},
+  {docDate:'04/09/2026',cashDate:'—',type:'รายได้ + ค่าเช่า',t:'inc',detail:'ค่าเช่า ก.ย. (ยังไม่ได้รับ)',asset:'คอนโดตัวอย่าง A',entity:'SRI Corporation',ec:'#004AAD',account:'SRI - SCB',inAmt:'+31,500.00',outAmt:'–',status:'ค้าง',s:'late',file:'—'},
+  {docDate:'05/09/2026',cashDate:'05/09/2026',type:'ค่าใช้จ่าย −',t:'exp',detail:'ค่าส่วนกลาง Q3',asset:'คอนโดตัวอย่าง C',entity:'ธนากร',ec:'#7A5AF8',account:'ธนากร - BBL 888',inAmt:'–',outAmt:'(9,800.00)',status:'จ่ายแล้ว',s:'done',file:'📎'},
+  {docDate:'08/09/2026',cashDate:'08/09/2026',type:'ลงทุน −',t:'inv',detail:'ปล่อยเงินขายฝากรายใหม่',asset:'ที่ดินตัวอย่าง D',entity:'SRI Corporation',ec:'#004AAD',account:'SRI - SCB',inAmt:'–',outAmt:'(1,800,000.00)',status:'บันทึกแล้ว',s:'saved',file:'📎'},
+  {docDate:'10/09/2026',cashDate:'—',type:'ค่าใช้จ่าย −',t:'exp',detail:'ค่าซ่อมแอร์ 2 ห้อง',asset:'คอนโดตัวอย่าง A',entity:'SRI Corporation',ec:'#004AAD',account:'SRI - SCB',inAmt:'–',outAmt:'(12,400.00)',status:'รออนุมัติ',s:'wait',file:'📎'},
+  {docDate:'12/09/2026',cashDate:'12/09/2026',type:'จัดหาเงิน +',t:'fin',detail:'เงินกู้ยืมกรรมการเพิ่ม',asset:'—',entity:'SRI Corporation',ec:'#004AAD',account:'SRI - SCB',inAmt:'+70,000.00',outAmt:'–',status:'บันทึกแล้ว',s:'saved',file:'—'},
+  {docDate:'15/09/2026',cashDate:'15/09/2026',type:'โอนระหว่างบัญชี',t:'trf',detail:'โอนเข้าบัญชีบริษัท',asset:'—',entity:'ธนวินท์',ec:'#7A5AF8',account:'ธนวินท์ - KBANK',inAmt:'–',outAmt:'(20,000.00)',status:'บันทึกแล้ว',s:'saved',file:'📎'}
+];
+
+class Component extends DCLogic {
+  state = {screen:'home', tab:'list', entity:0, entityOpen:false, month:8, formOpen:false, step:1, formEntity:1, drawer:null, toast:null,
+    sel:{}, dialog:null, bsView:'consol', expanded:{assets:true, cash:true, re:true, rent:true, liab:true, eq:true}, assetTab:'overview', editMode:false, showInactive:true, bankOff:{}, bankOrder:null, mstep:1};
+
+  set(o){ this.setState(o); }
+  moveBank(id, dir) {
+    const order = (this.state.bankOrder || BANKS.map(b => b.id)).slice();
+    const i = order.indexOf(id), j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    order[i] = order[j]; order[j] = id;
+    this.setState({bankOrder: order});
+  }
+  go(screen){ return () => this.setState({screen, entityOpen:false}); }
+  toast(msg){ this.setState({toast:msg}); clearTimeout(this._t); this._t = setTimeout(()=>this.setState({toast:null}), 5000); }
+
+  renderVals() {
+    const s = this.state;
+    const big = (this.props.largeText ?? false);
+    const ent = ENTITIES[s.entity];
+    const titles = {home:'หน้าแรก', ledger:'สมุดบัญชี (Ledger)', approvals:'คิวอนุมัติ', balance:'งบดุล & ทรัพย์สิน', asset:'คอนโดตัวอย่าง C', sbank:'ตั้งค่า · บัญชีธนาคาร', susers:'ตั้งค่า · ผู้ใช้ & สิทธิ์', mhome:'หน้าแรก (มือถือ 390)', mform:'บันทึกรายการ (มือถือ 390)'};
+    const navDef = [
+      {key:'home', label:'หน้าแรก', d:'m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', d2:'M9 22V12h6v10'},
+      {key:'ledger', label:'สมุดบัญชี', d:'M12 7v14', d2:'M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z'},
+      {key:'approvals', label:'คิวอนุมัติ', badge:'7', d:'M22 11.08V12a10 10 0 1 1-5.93-9.14', d2:'m9 11 3 3L22 4'},
+      {key:'balance', label:'งบดุล & ทรัพย์สิน', d:'M12 3v18', d2:'M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2'},
+      {key:'sbank', label:'ตั้งค่า', d:'M20 7h-9', d2:'M14 17H5'}
+    ];
+    const nav = navDef.map(n => {
+      const active = s.screen === n.key || (n.key==='sbank' && s.screen==='susers') || (n.key==='balance' && s.screen==='asset');
+      return {...n, go:this.go(n.key), bg: active ? '#EEF4FC' : 'transparent', fg: active ? '#004AAD' : '#425466', fw: active ? 600 : 400};
+    });
+    const entityMenu = ENTITIES.map((e,i) => ({name:e.name, color:e.color, head:e.group || '', bg: i===s.entity ? '#EEF4FC' : 'transparent', pick: () => this.setState({entity:i, entityOpen:false})}));
+    const tabs = [['list','รายการ'],['confirm','ยืนยันรับ-จ่าย'],['pl','กำไรขาดทุน (PL)'],['cf','กระแสเงินสด (CF)']];
+    const mn = MONTHS.map(m => m.replace('.',''));
+
+    const plMake = (name, vals, kind) => {
+      const fmt = n => n===0 ? '–' : (kind==='exp' ? '('+Math.abs(n).toLocaleString('en-US')+')' : n.toLocaleString('en-US'));
+      const total = vals.reduce((a,b)=>a+b,0);
+      return {name, vals: vals.map(fmt), total: fmt(total), color: kind==='exp' ? '#DF1B41' : '#0A2540', fw: kind==='sum' ? 600 : 400, bg: kind==='sum' ? '#F6F9FC' : '#fff'};
+    };
+    const rent = [412,412,424,424,436,436,448,448,486,486,486,486].map(v=>v*1000);
+    const interest = [180,180,195,195,210,210,225,225,240,240,240,240].map(v=>v*1000);
+    const div0 = [0,0,64,0,0,72,0,0,68,0,0,80].map(v=>v*1000);
+    const gain = [0,0,0,320,0,0,0,0,0,0,0,0].map(v=>v*1000);
+    const admin = [-180,-180,-186,-186,-192,-192,-198,-198,-204,-204,-204,-204].map(v=>v*1000);
+    const repair = [-42,-38,-51,-47,-62,-58,-44,-49,-66,-52,-48,-55].map(v=>v*1000);
+    const intExp = [-310,-310,-310,-305,-305,-305,-300,-300,-300,-295,-295,-295].map(v=>v*1000);
+    const tax = [-28,-28,-34,-31,-36,-38,-33,-35,-40,-37,-36,-39].map(v=>v*1000);
+    const sumOf = (...arrs) => arrs[0].map((_,i)=>arrs.reduce((a,x)=>a+x[i],0));
+    const plRows = [
+      plMake('รายได้ค่าเช่า', rent),
+      plMake('ดอกเบี้ยรับ', interest),
+      plMake('เงินปันผล', div0),
+      plMake('กำไรจากการขายทรัพย์', gain),
+      plMake('รวมรายได้', sumOf(rent,interest,div0,gain), 'sum'),
+      plMake('ค่าบริหารจัดการ', admin, 'exp'),
+      plMake('ซ่อมบำรุง', repair, 'exp'),
+      plMake('ดอกเบี้ยจ่าย', intExp, 'exp'),
+      plMake('ภาษี & ค่าธรรมเนียม', tax, 'exp'),
+      plMake('รวมค่าใช้จ่าย', sumOf(admin,repair,intExp,tax), 'exp'),
+      plMake('กำไรสุทธิ', sumOf(rent,interest,div0,gain,admin,repair,intExp,tax), 'sum')
+    ];
+
+    const order = s.bankOrder || BANKS.map(b => b.id);
+    const ordered = order.map(id => BANKS.find(b => b.id === id)).filter(Boolean);
+    const selIds = APPROVALS.filter(a => s.sel[a.id]).map(a => a.id);
+    const selSum = APPROVALS.filter(a => s.sel[a.id]).reduce((t,a) => t + a.raw, 0);
+
+    const money = n => n === null ? '' : (n < 0 ? '('+Math.abs(n).toLocaleString('en-US')+'.00)' : n.toLocaleString('en-US')+'.00');
+    const treeRows = [];
+    const walk = (nodes, level) => nodes.forEach(n => {
+      const open = s.expanded[n.id] ?? false;
+      const leaf = !n.children;
+      treeRows.push({
+        name: n.name, owner: n.owner || '', cost: n.cost == null ? '–' : money(n.cost), value: money(n.value),
+        src: n.src || '', gl: n.gl == null ? '' : (n.gl > 0 ? '+'+n.gl.toLocaleString('en-US') : money(n.gl)),
+        glColor: n.gl > 0 ? '#0E9F6E' : '#DF1B41', yield: n.y || '', status: n.status || '',
+        sBg: (PILL[n.sp] || PILL.off).bg, sFg: (PILL[n.sp] || PILL.off).fg, sBd: (PILL[n.sp] || PILL.off).bd,
+        pad: (14 + level*22) + 'px', fw: level === 0 ? 700 : (level === 1 ? 600 : 400),
+        bg: level === 0 ? '#F6F9FC' : (level === 1 ? '#FCFDFE' : '#fff'),
+        caret: leaf ? '' : (open ? '▾ ' : '▸ '),
+        cursor: leaf ? 'default' : 'pointer',
+        click: leaf ? (n.asset ? this.go('asset') : (() => {})) : (() => this.setState({expanded: {...s.expanded, [n.id]: !open}}))
+      });
+      if (open && n.children) walk(n.children, level + 1);
+    });
+    walk(TREE, 0);
+
+    return {
+      isLogin: s.screen === 'login',
+      isApp: s.screen !== 'login',
+      baseFont: big ? '20px' : '18px',
+      pageTitle: titles[s.screen] || 'SRI OS',
+      nav,
+      soon: ['บริหารทรัพย์','บอร์ดงาน / Ticket','ผู้ติดต่อ','เบิกจ่าย','HR','Broker Portal','Investment Tips'],
+      goHome: this.go('home'), goLogin: this.go('login'), goApprovals: this.go('approvals'),
+      goBalance: this.go('balance'), goMHome: this.go('mhome'), goMForm: this.go('mform'),
+      goCash: () => this.setState({screen:'ledger', tab:'confirm'}),
+      entityName: ent.name, entityColor: ent.color, entityOpen: s.entityOpen, entityMenu,
+      toggleEntity: () => this.setState({entityOpen: !s.entityOpen}),
+      monthLabel: MONTHS[s.month] + ' 2026',
+      prevMonth: () => this.setState({month: (s.month+11)%12}),
+      nextMonth: () => this.setState({month: (s.month+1)%12}),
+
+      isHome: s.screen === 'home',
+      isLedger: s.screen === 'ledger',
+      kpis: [
+        {label:'สินทรัพย์รวม', en:'Total assets', value:'฿ 82.9M', delta:'▲ 1.2%', note:'เทียบเดือนก่อน', color:'#0A2540', dColor:'#0E9F6E', spark:'0,30 18,29 36,27 54,28 72,24 90,23 108,22 126,19 144,18 162,14 180,12 200,8', sparkColor:'#004AAD'},
+        {label:'หนี้สิน', en:'Liabilities', value:'฿ 18.7M', delta:'▼ 0.4%', note:'ลดลง ดีขึ้น', color:'#0A2540', dColor:'#0E9F6E', spark:'0,10 18,11 36,12 54,12 72,14 90,15 108,15 126,17 144,18 162,19 180,20 200,22', sparkColor:'#8792A2'},
+        {label:'ส่วนของเจ้าของ', en:'Equity · NAV', value:'฿ 64.2M', delta:'▲ 1.8%', note:'เทียบเดือนก่อน', color:'#0A2540', dColor:'#0E9F6E', spark:'0,31 18,29 36,30 54,25 72,26 90,21 108,20 126,20 144,15 162,12 180,9 200,6', sparkColor:'#004AAD'},
+        {label:'ผลตอบแทนเฉลี่ยทั้งพอร์ต', en:'(ก่อนหักต้นทุนทางการเงิน)', value:'7.03%', delta:'▲ 0.15 จุด', note:'', color:'#0A2540', dColor:'#0E9F6E', spark:'0,26 18,25 36,24 54,24 72,22 90,21 108,20 126,19 144,17 162,15 180,13 200,11', sparkColor:'#004AAD'}
+      ],
+      yields: [
+        {label:'Yield อสังหาปล่อยเช่า', en:'Rental', value:'5.9%', target:'เป้า 6.5%', bar:'90%', color:'#F5A524', note:'ห้องว่าง 1 ห้องฉุดลง 0.4 จุด'},
+        {label:'ผลตอบแทนพอร์ตหุ้น', en:'Equities YTD', value:'+11.2%', target:'SET +4.1%', bar:'100%', color:'#0E9F6E', note:'กำไรยังไม่รับรู้ ฿ 850,000'}
+      ],
+      todos: [
+        {p:'P1', pBg:'#FDF2F4', pFg:'#b51232', title:'ติดตามดอกเบี้ยค้าง 3 งวด — คอนโดตัวอย่าง A', why:'ค้าง 45 วัน ยอด ฿ 31,500 · สัญญาหมดแล้ว', go:this.go('asset')},
+        {p:'P1', pBg:'#FDF2F4', pFg:'#b51232', title:'ส่ง Notice ขายฝาก — ทาวน์โฮมตัวอย่าง B', why:'เหลือ 20 วันก่อนหมดช่วงส่ง', go:this.go('asset')},
+        {p:'P2', pBg:'#FDF3E4', pFg:'#8a5200', title:'สัญญาเช่าหมด 29/09/2026 — คอนโดตัวอย่าง C', why:'ยังไม่มีการต่อสัญญา', go:this.go('asset')},
+        {p:'P2', pBg:'#FDF3E4', pFg:'#8a5200', title:'อนุมัติรายการรอ 7 รายการ', why:'รวม ฿ 186,500', go:this.go('approvals')},
+        {p:'P3', pBg:'#EEF4FC', pFg:'#004AAD', title:'ราคาหุ้นไม่อัปเดต 9 วัน', why:'แหล่งราคาฟรีดึงไม่สำเร็จ', go:this.go('balance')}
+      ],
+      tasks: [
+        {when:'จ. 21/09 10:00', what:'ตรวจงานปรับปรุงคอนโด A', who:'มาวิน'},
+        {when:'อ. 22/09 14:00', what:'นัดผู้เช่ารายใหม่ดูห้อง', who:'แพทตี้'},
+        {when:'พ. 23/09 09:30', what:'ยื่นเอกสารไถ่ถอน ที่ดิน D', who:'มาวิน'},
+        {when:'ศ. 25/09 16:00', what:'ปิดยอดสัปดาห์ + ตรวจ statement', who:'ธนกร'}
+      ],
+      contracts: [
+        {name:'คอนโดตัวอย่าง C', date:'29/09/2026', kind:'สัญญาเช่า', left:'เหลือ 12 วัน', bg:'#FDF2F4', fg:'#b51232'},
+        {name:'ทาวน์โฮมตัวอย่าง B', date:'07/10/2026', kind:'ขายฝาก', left:'เหลือ 20 วัน', bg:'#FDF3E4', fg:'#8a5200'},
+        {name:'อาคารพาณิชย์ตัวอย่าง E', date:'30/11/2026', kind:'สัญญาเช่า', left:'เหลือ 74 วัน', bg:'#F6F9FC', fg:'#425466'}
+      ],
+      ledgerTabs: tabs.map(([k,label]) => ({label, go: () => this.setState({tab:k}), bd: s.tab===k ? '#004AAD' : 'transparent', fg: s.tab===k ? '#004AAD' : '#425466'})),
+      tabList: s.tab === 'list', tabConfirm: s.tab === 'confirm', tabPL: s.tab === 'pl', tabCF: s.tab === 'cf',
+      filters: [
+        {label:'ช่วงวันที่', value:'ก.ย. 2026'},
+        {label:'เจ้าของ', value:ent.name},
+        {label:'บัญชี', value:'ทุกบัญชี'},
+        {label:'กลุ่มรายการ', value:'ทั้งหมด'},
+        {label:'สถานะ', value:'ทั้งหมด'}
+      ],
+      rows: LEDGER.map((r,i) => ({...r, zebra: i%2 ? '#FCFDFE' : '#fff', entityColor: r.ec,
+        tBg:TYPE[r.t].bg, tFg:TYPE[r.t].fg, tBd:TYPE[r.t].bd,
+        sBg:PILL[r.s].bg, sFg:PILL[r.s].fg, sBd:PILL[r.s].bd,
+        open: () => this.setState({drawer:{detail:r.detail+' · '+r.asset, big:(r.inAmt!=='–'?r.inAmt:r.outAmt), account:r.account}})})),
+      months12: mn,
+      plRows,
+      cfGroups: [
+        {name:'ดำเนินงาน', total:'+480,000', color:'#0E9F6E', items:[{name:'รับค่าเช่าและดอกเบี้ย', amt:'+1,126,500', color:'#0E9F6E'},{name:'ค่าบริหาร & ซ่อมบำรุง', amt:'(316,500)', color:'#DF1B41'},{name:'ดอกเบี้ยจ่าย & ภาษี', amt:'(330,000)', color:'#DF1B41'}]},
+        {name:'ลงทุน', total:'−1,800,000', color:'#DF1B41', items:[{name:'ปล่อยเงินขายฝากรายใหม่', amt:'(1,800,000)', color:'#DF1B41'}]},
+        {name:'จัดหาเงิน', total:'+70,000', color:'#0E9F6E', items:[{name:'เงินกู้ยืมกรรมการเพิ่ม', amt:'+70,000', color:'#0E9F6E'}]}
+      ],
+      cfAccounts: [
+        {name:'SRI - SCB', open:'4,102,120.00', in:'+146,500.00', out:'(1,908,500.00)', close:'2,340,120.00'},
+        {name:'ธนากร - BBL 888', open:'1,284,300.00', in:'+12,000.00', out:'(9,800.00)', close:'1,286,500.00'},
+        {name:'ธนวินท์ - KBANK', open:'612,400.00', in:'–', out:'(20,000.00)', close:'592,400.00'},
+        {name:'เบ็ญจพร - BBL', open:'318,900.00', in:'+8,000.00', out:'–', close:'326,900.00'}
+      ],
+
+      formOpen: s.formOpen,
+      openForm: () => this.setState({formOpen:true, step:1}),
+      closeForm: () => this.setState({formOpen:false}),
+      steps: [1,2,3,4].map(n => ({n, label:['เลือกประเภท','เจ้าของ & บัญชี','รายละเอียด','แนบไฟล์ & ยืนยัน'][n-1],
+        bg: n===s.step ? '#004AAD' : (n<s.step ? '#EEF4FC' : '#fff'), fg: n===s.step ? '#fff' : (n<s.step ? '#004AAD' : '#8792A2'),
+        bd: n<=s.step ? '#004AAD' : '#E3E8EE', tFg: n===s.step ? '#0A2540' : '#8792A2'})),
+      step1: s.step===1, step2: s.step===2, step3: s.step===3, step4: s.step===4,
+      nextLabel: s.step===4 ? 'ส่งอนุมัติ' : 'ถัดไป',
+      prevStep: () => s.step>1 ? this.setState({step:s.step-1}) : this.setState({formOpen:false}),
+      nextStep: () => { if (s.step<4) this.setState({step:s.step+1}); else { this.setState({formOpen:false, step:1}); this.toast('ส่งอนุมัติแล้ว 1 รายการ'); } },
+      txTypes: [
+        {label:'รายได้', desc:'ค่าเช่า ดอกเบี้ยรับ เงินปันผล'},
+        {label:'ค่าใช้จ่าย', desc:'ซ่อมบำรุง ค่าส่วนกลาง ค่าบริหาร'},
+        {label:'ลงทุน (ซื้อ/ปล่อยเงิน)', desc:'ซื้อทรัพย์ ปล่อยเงินขายฝาก'},
+        {label:'ลงทุน (ขาย/รับคืน)', desc:'ขายทรัพย์ รับคืนเงินต้น'},
+        {label:'กู้/เพิ่มทุน', desc:'เงินกู้ธนาคาร กรรมการ เพิ่มทุน'},
+        {label:'คืนเงินกู้/จ่ายผลตอบแทน', desc:'ชำระเงินต้น ดอกเบี้ย ปันผล'},
+        {label:'โอนระหว่างบัญชี', desc:'ย้ายเงินในกลุ่ม ไม่กระทบกำไร'}
+      ].map((t,i) => ({...t, bg: i===0 ? '#EEF4FC' : '#fff', bd: i===0 ? '#004AAD' : '#E3E8EE', pick: () => this.setState({step:2})})),
+      formEntities: [1,2,3,4].map(i => ({name: ENTITIES[i].name, color: ENTITIES[i].color,
+        bg: s.formEntity===i ? '#EEF4FC' : '#fff', bd: s.formEntity===i ? '#004AAD' : '#E3E8EE',
+        pick: () => this.setState({formEntity:i})})),
+      entityRule: s.formEntity >= 2 ? 'ถือในชื่อบุคคล: เงินยังเป็นกองกลางของครอบครัว แนบหลักฐานภายหลังได้ แต่ต้องระบุคู่ค้าเพื่อการติดตาม' : 'ถือในชื่อนิติบุคคล: ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้) และระบุคู่ค้าก่อนส่งอนุมัติ',
+      summary: [
+        {k:'ประเภท', v:'รายได้ · ค่าเช่า'},
+        {k:'เจ้าของ', v:ENTITIES[s.formEntity].name},
+        {k:'บัญชีรับเงิน', v:'ธนากร - BBL 888'},
+        {k:'จำนวนเงิน', v:'฿ 12,000.00'},
+        {k:'วันที่เอกสาร / เงินเข้าจริง', v:'01/09/2026 · 03/09/2026'},
+        {k:'ทรัพย์ที่ผูก', v:'คอนโดตัวอย่าง C'}
+      ],
+
+      showConfirm: s.screen==='ledger' && s.tab==='confirm',
+      cashGroups: CASH,
+      confirmCash: () => this.toast('ยืนยันรับ-จ่าย 3 รายการแล้ว'),
+      isApprovals: s.screen==='approvals',
+      apFilters: [{label:'ที่มา', value:'ทั้งหมด'},{label:'เจ้าของ', value:ent.name},{label:'ผู้สร้าง', value:'ทุกคน'}],
+      approvals: APPROVALS.map(a => ({...a, ec: a.entity.indexOf('SRI')===0 ? '#004AAD' : '#7A5AF8',
+        tBg:TYPE[a.t].bg, tFg:TYPE[a.t].fg, tBd:TYPE[a.t].bd,
+        checked: !!s.sel[a.id], bg: s.sel[a.id] ? '#EEF4FC' : '#fff',
+        toggle: () => this.setState({sel: {...s.sel, [a.id]: !s.sel[a.id]}}),
+        approve: () => this.setState({dialog:{title:'ยืนยันอนุมัติรายการนี้', body:'ยืนยันอนุมัติ "'+a.detail+'" ยอด ฿ '+a.amount.replace(/[()−+]/g,'')+' เข้าสมุดบัญชีใช่หรือไม่', cta:'ยืนยันอนุมัติ', color:'#004AAD', confirm: () => {this.setState({dialog:null}); this.toast('อนุมัติแล้ว 1 รายการ');}}}),
+        reject: () => this.setState({dialog:{title:'ไม่อนุมัติรายการนี้', body:'รายการ "'+a.detail+'" จะถูกส่งกลับให้ '+a.by+' แก้ไข', cta:'ยืนยันไม่อนุมัติ', color:'#DF1B41', needReason:true, confirm: () => {this.setState({dialog:null}); this.toast('ส่งกลับให้แก้ไขแล้ว');}}})
+      })),
+      hasSel: selIds.length > 0,
+      selText: 'เลือก ' + selIds.length + ' รายการ ฿ ' + selSum.toLocaleString('en-US'),
+      selectAll: () => this.setState({sel: Object.fromEntries(APPROVALS.map(a=>[a.id,true]))}),
+      askApprove: () => this.setState({dialog:{title:'ยืนยันอนุมัติรายการที่เลือก', body:'ยืนยันอนุมัติ '+selIds.length+' รายการ รวม ฿ '+selSum.toLocaleString('en-US')+' เข้าสมุดบัญชีใช่หรือไม่', cta:'ยืนยันอนุมัติ', color:'#004AAD', confirm: () => {this.setState({dialog:null, sel:{}}); this.toast('อนุมัติแล้ว '+selIds.length+' รายการ');}}}),
+      askApproveAll: () => this.setState({dialog:{title:'ยืนยันอนุมัติทั้งหมด', body:'ยืนยันอนุมัติ 7 รายการ รวม ฿ 186,500 เข้าสมุดบัญชีใช่หรือไม่', cta:'ยืนยันอนุมัติ', color:'#004AAD', confirm: () => {this.setState({dialog:null, sel:{}}); this.toast('อนุมัติแล้ว 7 รายการ');}}}),
+      askReject: () => this.setState({dialog:{title:'ไม่อนุมัติรายการที่เลือก', body:selIds.length+' รายการจะถูกส่งกลับให้ผู้สร้างแก้ไข', cta:'ยืนยันไม่อนุมัติ', color:'#DF1B41', needReason:true, confirm: () => {this.setState({dialog:null, sel:{}}); this.toast('ส่งกลับให้แก้ไขแล้ว');}}}),
+      dialog: s.dialog,
+      closeDialog: () => this.setState({dialog:null}),
+
+      isBalance: s.screen==='balance',
+      bsViews: [['consol','รวมกองกลาง (ตัดรายการระหว่างกัน)'],['class','ตามหมวด'],['owner','ตามชื่อผู้ถือ']].map(([k,label]) => ({label, pick: () => this.setState({bsView:k}), bg: s.bsView===k ? '#004AAD' : '#fff', fg: s.bsView===k ? '#fff' : '#425466'})),
+      treeRows,
+      navByEntity: [
+        {name:'SRI Corporation', color:'#004AAD', value:'฿ 48.8M'},
+        {name:'ธนากร', color:'#7A5AF8', value:'฿ 9.8M'},
+        {name:'ธนวินท์', color:'#7A5AF8', value:'฿ 3.6M'},
+        {name:'เบ็ญจพร', color:'#7A5AF8', value:'฿ 2.0M'}
+      ],
+
+      isAsset: s.screen==='asset',
+      editMode: s.editMode,
+      viewMode: () => this.setState({editMode:false}),
+      toEdit: () => this.setState({editMode:true}),
+      viewBg: s.editMode ? '#fff' : '#004AAD', viewFg: s.editMode ? '#425466' : '#fff',
+      editBg: s.editMode ? '#F5A524' : '#fff', editFg: s.editMode ? '#3d2600' : '#425466',
+      assetTabs: [['overview','ภาพรวม'],['contract','ข้อมูลสัญญา'],['money','รายการเงิน'],['docs','เอกสาร']].map(([k,label]) => ({label, pick: () => this.setState({assetTab:k}), bd: s.assetTab===k ? '#004AAD' : 'transparent', fg: s.assetTab===k ? '#004AAD' : '#425466'})),
+      aOverview: s.assetTab==='overview', aContract: s.assetTab==='contract', aMoney: s.assetTab==='money', aDocs: s.assetTab==='docs',
+      assetBars: [12,12,12,12,0,12,12,12,12,12,12,12].map((v,i) => ({m:mn[i], h: v ? Math.round(v/12*130)+'px' : '4px', color: v ? '#004AAD' : '#E3E8EE'})),
+      assetLedger: [
+        {date:'01/09/2026', detail:'ค่าเช่า ก.ย.', in:'+12,000.00', out:'–', status:'รับแล้ว'},
+        {date:'05/09/2026', detail:'ค่าส่วนกลาง Q3', in:'–', out:'(9,800.00)', status:'จ่ายแล้ว'},
+        {date:'01/08/2026', detail:'ค่าเช่า ส.ค.', in:'+12,000.00', out:'–', status:'รับแล้ว'},
+        {date:'12/07/2026', detail:'ค่าซ่อมเครื่องทำน้ำอุ่น', in:'–', out:'(3,200.00)', status:'จ่ายแล้ว'},
+        {date:'01/07/2026', detail:'ค่าเช่า ก.ค.', in:'+12,000.00', out:'–', status:'รับแล้ว'}
+      ],
+      assetDocs: [
+        {kind:'PDF', name:'lease-condoC.pdf', meta:'สัญญาเช่า · 1.2 MB'},
+        {kind:'PDF', name:'title-deed.pdf', meta:'โฉนด · 820 KB'},
+        {kind:'รูป', name:'room-photo-01.jpg', meta:'สภาพห้อง 08/2026'},
+        {kind:'PDF', name:'insurance-2026.pdf', meta:'ประกันอัคคีภัย'}
+      ],
+
+      isSBank: s.screen==='sbank', isSUsers: s.screen==='susers',
+      settingsMenu: SETTINGS_MENU.map(m => ({label:m.label, pick: m.key ? this.go(m.key) : (() => this.toast('ส่วนนี้จะออกแบบรอบถัดไป')),
+        bg: m.key===s.screen ? '#EEF4FC' : 'transparent', fg: m.key===s.screen ? '#004AAD' : (m.key ? '#425466' : '#8792A2'), fw: m.key===s.screen ? 600 : 400})),
+      showInactive: s.showInactive,
+      toggleInactive: () => this.setState({showInactive: !s.showInactive}),
+      banks: ordered.filter(b => s.showInactive || !(s.bankOff[b.id] ?? b.off)).map((b,i) => {
+        const off = s.bankOff[b.id] ?? b.off;
+        return {...b, op: off ? 0.55 : 1, note: off ? 'ซ่อนจากตัวเลือก ยังอยู่ในรายงานย้อนหลัง' : '',
+          pos: (i+1) + '.',
+          swBg: off ? '#E3E8EE' : '#0E9F6E', swX: off ? '4px' : '32px', swLabel: off ? 'ปิดใช้งาน' : 'ใช้งาน', swFg: off ? '#8792A2' : '#0b7a55',
+          upDis: i === 0, downDis: i === ordered.length - 1,
+          up: () => this.moveBank(b.id, -1), down: () => this.moveBank(b.id, 1),
+          toggle: () => this.setState({bankOff: {...s.bankOff, [b.id]: !off}})};
+      }),
+      bankOptions: ordered.filter(b => !(s.bankOff[b.id] ?? b.off)).map(b => ({name: b.name})),
+      users: USERS,
+
+      isMHome: s.screen==='mhome', isMForm: s.screen==='mform',
+      todos3: [
+        {p:'P1', pBg:'#FDF2F4', pFg:'#b51232', title:'ติดตามดอกเบี้ยค้าง 3 งวด — คอนโด A', why:'ค้าง 45 วัน ยอด ฿ 31,500'},
+        {p:'P1', pBg:'#FDF2F4', pFg:'#b51232', title:'ส่ง Notice ขายฝาก — ทาวน์โฮม B', why:'เหลือ 20 วันก่อนหมดช่วงส่ง'},
+        {p:'P2', pBg:'#FDF3E4', pFg:'#8a5200', title:'สัญญาเช่าหมด 29/09/2026 — คอนโด C', why:'ยังไม่มีการต่อสัญญา'}
+      ],
+      mSteps: [1,2,3,4].map(n => ({n, bar: n<=s.mstep ? '#004AAD' : '#E3E8EE', fg: n<=s.mstep ? '#004AAD' : '#8792A2'})),
+      mStep1: s.mstep===1, mStep2: s.mstep===2, mStep3: s.mstep===3, mStep4: s.mstep===4,
+      mStepTitle: ['เลือกประเภทรายการ','เจ้าของ & บัญชี','รายละเอียด','แนบไฟล์ & ยืนยัน'][s.mstep-1],
+      mNextLabel: s.mstep===4 ? 'ส่งอนุมัติ' : 'ถัดไป',
+      mNext: () => { if (s.mstep<4) this.setState({mstep:s.mstep+1}); else { this.setState({mstep:1}); this.toast('ส่งอนุมัติแล้ว 1 รายการ'); } },
+      mBack: () => s.mstep>1 ? this.setState({mstep:s.mstep-1}) : this.setState({screen:'mhome'}),
+
+      drawer: s.drawer,
+      closeDrawer: () => this.setState({drawer:null}),
+      drawerFields: [
+        {k:'ประเภท', v:'รายได้ · ค่าเช่า'},
+        {k:'วันที่เอกสาร', v:'01/09/2026'},
+        {k:'วันที่เงินเข้าจริง', v:'03/09/2026'},
+        {k:'เจ้าของ', v:'ธนากร (Personal)'},
+        {k:'คู่ค้า', v:'คุณสมชาย (ผู้เช่า)'},
+        {k:'สถานะ', v:'รับแล้ว'}
+      ],
+      toast: s.toast,
+      undo: () => { this.setState({toast:null}); }
+    };
+  }
+}
+
+const APPROVALS = [
+  {id:'a1', type:'ค่าใช้จ่าย −', t:'exp', detail:'ค่าซ่อมแอร์ 2 ห้อง', source:'คีย์มือ · คอนโดตัวอย่าง A', entity:'SRI Corporation', amount:'(12,400)', raw:12400, by:'มาวิน', date:'10/09/2026'},
+  {id:'a2', type:'ค่าใช้จ่าย −', t:'exp', detail:'ค่าน้ำ-ไฟส่วนกลาง', source:'ตารางงวด', entity:'SRI Corporation', amount:'(8,600)', raw:8600, by:'ระบบ', date:'11/09/2026'},
+  {id:'a3', type:'รายได้ +', t:'inc', detail:'ค่าเช่าเดือน ก.ย.', source:'ตารางงวด · คอนโดตัวอย่าง C', entity:'ธนากร', amount:'+12,000', raw:12000, by:'ระบบ', date:'11/09/2026'},
+  {id:'a4', type:'ค่าใช้จ่าย −', t:'exp', detail:'เบิกค่าเดินทางดูทรัพย์', source:'เบิกจ่าย', entity:'SRI Corporation', amount:'(3,500)', raw:3500, by:'แพทตี้', date:'12/09/2026'},
+  {id:'a5', type:'ค่าใช้จ่าย −', t:'exp', detail:'เงินเดือนทีมดูแลอาคาร', source:'เงินเดือน', entity:'SRI Corporation', amount:'(96,000)', raw:96000, by:'ระบบ', date:'15/09/2026'},
+  {id:'a6', type:'ลงทุน −', t:'inv', detail:'ค่าธรรมเนียมจดจำนอง', source:'คีย์มือ · ที่ดินตัวอย่าง D', entity:'SRI Corporation', amount:'(18,000)', raw:18000, by:'มาวิน', date:'15/09/2026'},
+  {id:'a7', type:'รายได้ +', t:'inc', detail:'ดอกเบี้ยขายฝาก งวด 9', source:'ตารางงวด · ทาวน์โฮมตัวอย่าง B', entity:'SRI Corporation', amount:'+36,000', raw:36000, by:'ระบบ', date:'16/09/2026'}
+];
+
+const CASH = [
+  {bank:'SRI - SCB', system:'฿ 2,340,120.00', stmt:'2,340,120.00', match:'✓ ตรงกัน', bg:'#E7F7F0', fg:'#0b7a55', bd:'#0E9F6E', rows:[
+    {name:'ดอกเบี้ยขายฝาก งวด 9', sub:'ทาวน์โฮมตัวอย่าง B', due:'16/09/2026', expect:'+36,000.00', actual:'36,000.00', date:'16/09/2026', checked:true, partial:''},
+    {name:'ค่าน้ำ-ไฟส่วนกลาง', sub:'SRI Corporation', due:'15/09/2026', expect:'(8,600.00)', actual:'8,600.00', date:'15/09/2026', checked:true, partial:''},
+    {name:'ค่าเช่าอาคารพาณิชย์ E', sub:'SRI Corporation', due:'05/09/2026', expect:'+45,000.00', actual:'30,000.00', date:'12/09/2026', checked:false, partial:'รับบางส่วน คงค้าง ฿ 15,000'}
+  ]},
+  {bank:'ธนากร - BBL 888', system:'฿ 1,286,500.00', stmt:'1,274,500.00', match:'⚠ ต่าง ฿ 12,000', bg:'#FDF3E4', fg:'#8a5200', bd:'#F5A524', rows:[
+    {name:'ค่าเช่าคอนโดตัวอย่าง C', sub:'คุณสมชาย (ผู้เช่า)', due:'01/09/2026', expect:'+12,000.00', actual:'12,000.00', date:'03/09/2026', checked:true, partial:''},
+    {name:'ค่าส่วนกลาง Q3', sub:'คอนโดตัวอย่าง C', due:'05/09/2026', expect:'(9,800.00)', actual:'9,800.00', date:'05/09/2026', checked:false, partial:''}
+  ]}
+];
+
+const BANKS = [
+  {id:'b1', name:'SRI - SCB', bank:'ไทยพาณิชย์', last4:'4412', owner:'SRI Corporation', ec:'#004AAD', opening:'฿ 3,800,000.00', short:'SCB', color:'#4E2A84', off:false},
+  {id:'b2', name:'SRI - BBL', bank:'กรุงเทพ', last4:'7781', owner:'SRI Corporation', ec:'#004AAD', opening:'฿ 0.00', short:'BBL', color:'#1E4598', off:true},
+  {id:'b3', name:'SRI - BAY', bank:'กรุงศรีอยุธยา', last4:'2093', owner:'SRI Corporation', ec:'#004AAD', opening:'฿ 0.00', short:'BAY', color:'#8a6200', off:true},
+  {id:'b4', name:'ธนากร - BBL 888', bank:'กรุงเทพ', last4:'8888', owner:'ธนากร', ec:'#7A5AF8', opening:'฿ 1,200,000.00', short:'BBL', color:'#1E4598', off:false},
+  {id:'b5', name:'ธนวินท์ - KBANK', bank:'กสิกรไทย', last4:'5520', owner:'ธนวินท์', ec:'#7A5AF8', opening:'฿ 600,000.00', short:'KB', color:'#0A8F3C', off:false},
+  {id:'b6', name:'ธนวินท์ - BBL', bank:'กรุงเทพ', last4:'3317', owner:'ธนวินท์', ec:'#7A5AF8', opening:'฿ 150,000.00', short:'BBL', color:'#1E4598', off:false},
+  {id:'b7', name:'เบ็ญจพร - BBL', bank:'กรุงเทพ', last4:'6045', owner:'เบ็ญจพร', ec:'#7A5AF8', opening:'฿ 300,000.00', short:'BBL', color:'#1E4598', off:false}
+];
+
+const ROLE = {m:{rBg:'#EEF4FC', rFg:'#004AAD', rBd:'#D6E4F7'}, mg:{rBg:'#F3F0FE', rFg:'#5b3fd6', rBd:'#ded6fd'}, u:{rBg:'#F6F9FC', rFg:'#425466', rBd:'#E3E8EE'}};
+const USERS = [
+  {initial:'ธก', name:'ธนกร (ลูกพี่)', email:'thanakorn@sri.co.th', role:'Management', ...ROLE.m, owner:'ธนากร', status:'ใช้งาน', last:'วันนี้ 09:12'},
+  {initial:'อก', name:'อากง', email:'grandpa@sri.co.th', role:'Management', ...ROLE.m, owner:'—', status:'ใช้งาน', last:'16/09/2026'},
+  {initial:'ธว', name:'ธนวินท์', email:'thanawin@sri.co.th', role:'Manager', ...ROLE.mg, owner:'ธนวินท์', status:'ใช้งาน', last:'วันนี้ 08:40'},
+  {initial:'มว', name:'มาวิน', email:'mavin@sri.co.th', role:'Manager', ...ROLE.mg, owner:'—', status:'ใช้งาน', last:'เมื่อวาน 18:05'},
+  {initial:'พต', name:'แพทตี้', email:'patty@sri.co.th', role:'User', ...ROLE.u, owner:'เบ็ญจพร', status:'รอยืนยันอีเมล', last:'—'}
+];
+
+const SETTINGS_MENU = [
+  {label:'บัญชีธนาคาร', key:'sbank'},
+  {label:'ผู้ใช้ & สิทธิ์', key:'susers'},
+  {label:'Entity'},
+  {label:'ผังบัญชี & ประเภทรายการ'},
+  {label:'หมวดทรัพย์'},
+  {label:'Automation'},
+  {label:'AI / LLM'},
+  {label:'แจ้งเตือน'},
+  {label:'เป้าหมาย'},
+  {label:'ปิดงวด'},
+  {label:'นำเข้า / ส่งออก'}
+];
+
+const TREE = [
+  {id:'assets', name:'สินทรัพย์', value:82945920, cost:null, children:[
+    {id:'cash', name:'เงินสดและเงินฝาก', value:4545920, cost:null, children:[
+      {id:'c1', name:'SRI - SCB', owner:'SRI Corporation', value:2340120, cost:null, src:'ยอดธนาคาร 17/09'},
+      {id:'c2', name:'ธนากร - BBL 888', owner:'ธนากร', value:1286500, cost:null, src:'ยอดธนาคาร 17/09'},
+      {id:'c3', name:'ธนวินท์ - KBANK', owner:'ธนวินท์', value:592400, cost:null, src:'ยอดธนาคาร 17/09'},
+      {id:'c4', name:'เบ็ญจพร - BBL', owner:'เบ็ญจพร', value:326900, cost:null, src:'ยอดธนาคาร 17/09'}
+    ]},
+    {id:'re', name:'Real Estate', value:39800000, cost:34600000, gl:5200000, children:[
+      {id:'re1', name:'RE รอขาย', owner:'SRI Corporation', value:8500000, cost:7400000, gl:1100000, src:'ประเมินภายใน 08/2026', status:'Active', sp:'saved'},
+      {id:'rent', name:'RE ปล่อยเช่า', owner:'หลายเจ้าของ', value:12300000, cost:10800000, gl:1500000, y:'5.9%', children:[
+        {id:'rent1', name:'คอนโดตัวอย่าง C', owner:'ธนากร', value:2780000, cost:2450000, gl:330000, y:'5.2%', src:'ประเมินภายใน 07/2026', status:'Active', sp:'done', asset:true},
+        {id:'rent2', name:'คอนโดตัวอย่าง A', owner:'SRI Corporation', value:3120000, cost:2900000, gl:220000, y:'0.0%', src:'ประเมินภายใน 07/2026', status:'ไม่มีรายได้', sp:'wait'},
+        {id:'rent3', name:'อาคารพาณิชย์ตัวอย่าง E', owner:'SRI Corporation', value:6400000, cost:5450000, gl:950000, y:'6.8%', src:'ประเมินภายใน 06/2026', status:'Active', sp:'done'}
+      ]},
+      {id:'re3', name:'RE รับจำนอง-ขายฝาก (ลูกหนี้)', owner:'SRI Corporation', value:14200000, cost:14200000, gl:0, y:'14.2%', src:'มูลค่าตามสัญญา', status:'Active', sp:'done'},
+      {id:'re4', name:'RE Project', owner:'SRI Corporation', value:3200000, cost:2900000, gl:300000, src:'ต้นทุนงานระหว่างทำ', status:'Active', sp:'saved'},
+      {id:'re5', name:'RE รอปรับปรุง', owner:'SRI Corporation', value:1600000, cost:1300000, gl:300000, src:'ประเมินภายใน 05/2026', status:'Inactive', sp:'off'}
+    ]},
+    {id:'fin', name:'Finance', value:31500000, cost:30100000, gl:1400000, children:[
+      {id:'f1', name:'Business (เงินลงทุนในกิจการ)', owner:'SRI Corporation', value:18000000, cost:17000000, gl:1000000, y:'8.2%', src:'มูลค่าตามบัญชี'},
+      {id:'f2', name:'Bond', owner:'SRI Corporation', value:6500000, cost:6300000, gl:200000, y:'3.1%', src:'ราคาตลาด 16/09'},
+      {id:'f3', name:'Loan Agreement', owner:'SRI Corporation', value:7000000, cost:6800000, gl:200000, y:'9.0%', src:'มูลค่าตามสัญญา'}
+    ]},
+    {id:'inv', name:'Investment', value:7100000, cost:6250000, gl:850000, children:[
+      {id:'i1', name:'หุ้นไทย', owner:'ธนากร', value:2400000, cost:2150000, gl:250000, src:'ราคาปิด 08/09', status:'ราคาเก่า 9 วัน', sp:'wait'},
+      {id:'i2', name:'หุ้น US', owner:'ธนากร', value:1850000, cost:1500000, gl:350000, src:'ราคาปิด 16/09'},
+      {id:'i3', name:'ETF', owner:'ธนากร', value:900000, cost:820000, gl:80000, src:'ราคาปิด 16/09'},
+      {id:'i4', name:'กองทุน', owner:'ธนากร', value:1100000, cost:1050000, gl:50000, src:'NAV 15/09'},
+      {id:'i5', name:'Crypto', owner:'ธนากร', value:350000, cost:280000, gl:70000, src:'ราคาตลาด 17/09'},
+      {id:'i6', name:'ทองคำ', owner:'ธนากร', value:500000, cost:450000, gl:50000, src:'ราคาสมาคม 17/09'}
+    ]}
+  ]},
+  {id:'liab', name:'หนี้สิน', value:18700000, cost:null, children:[
+    {id:'l1', name:'เงินกู้ธนาคาร', owner:'SRI Corporation', value:12400000, cost:null, src:'ยอดคงเหลือ 17/09'},
+    {id:'l2', name:'เงินกู้ยืมกรรมการ', owner:'SRI Corporation', value:4300000, cost:null, src:'ยอดคงเหลือ 17/09'},
+    {id:'l3', name:'เงินมัดจำผู้เช่า', owner:'หลายเจ้าของ', value:1142000, cost:null, src:'ตามสัญญาเช่า'},
+    {id:'l4', name:'เจ้าหนี้ค้างจ่าย', owner:'หลายเจ้าของ', value:858000, cost:null, src:'ค้างจ่าย 58,200 + ค่าใช้จ่ายรอจ่าย'}
+  ]},
+  {id:'eq', name:'ส่วนของเจ้าของ', value:64245920, cost:null, children:[
+    {id:'e1', name:'ทุน', value:30000000, cost:null},
+    {id:'e2', name:'กำไรสะสม', value:28900000, cost:null},
+    {id:'e3', name:'ส่วนเปลี่ยนแปลงมูลค่ายุติธรรม (ยังไม่รับรู้)', value:5345920, cost:null, src:'จากราคาประเมิน/ราคาตลาด'}
+  ]}
+];</script>
+</body>
+</html>
