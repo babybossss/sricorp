@@ -54,7 +54,7 @@ export default function TxRulesPage() {
                 </thead>
                 <tbody>
                   {t.subs.map((s) => {
-                    const { pl, bs } = effectsOf(s);
+                    const { pl, bs, conditionalPl } = effectsOf(s);
                     return (
                       <tr key={s.code} className="align-top">
                         <Td className="p-[12px_14px]">
@@ -85,6 +85,15 @@ export default function TxRulesPage() {
                               {pl.kind === "expense" ? "ค่าใช้จ่าย" : "รายได้"}
                               <br />
                               <span className="text-sm text-ink-600">{pl.line}</span>
+                            </span>
+                          ) : conditionalPl ? (
+                            // กระทบเฉพาะบางกรณี — บอกเงื่อนไขด้วย ไม่งั้นจะเข้าใจผิดว่าไม่กระทบเลย
+                            <span className={conditionalPl.kind === "expense" ? "text-neg" : "text-pos"}>
+                              กระทบบางส่วน
+                              <br />
+                              <span className="text-sm text-ink-600">{conditionalPl.line}</span>
+                              <br />
+                              <span className="text-sm text-ink-400">{conditionalPl.when}</span>
                             </span>
                           ) : (
                             <span className="text-ink-400">ไม่กระทบ</span>

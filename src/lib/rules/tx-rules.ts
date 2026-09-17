@@ -59,6 +59,15 @@ export type SubCategory = {
   dr: string;
   /** รหัสบัญชีฝั่งเครดิต */
   cr: string;
+  /**
+   * บัญชีรับรู้กำไรจากการขาย (เฉพาะหมวดที่ `requires: capitalGain`)
+   * แยกตามชนิดทรัพย์ เพราะกำไรขายอสังหาฯ กับขายหลักทรัพย์ไปคนละบรรทัดใน P&L
+   */
+  gainCoa?: string;
+  /** บัญชีรับรู้ขาดทุนจากการขาย */
+  lossCoa?: string;
+  /** บัญชีดอกเบี้ยจ่าย (เฉพาะหมวดที่ `requires: principalInterestSplit`) */
+  interestCoa?: string;
   requires?: FormRequirement[];
   /** หมายเหตุกฎ — แสดงในหน้าตารางกฎเพื่อกันการลงผิดหมวด */
   caution?: string;
@@ -474,6 +483,8 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1500",
+        gainCoa: "4300",
+        lossCoa: "5900",
         requires: ["asset", "capitalGain"],
         caution: "กำไรยังไม่รับรู้ (unrealized) ของทรัพย์ชิ้นนี้ต้องถูกล้างออกพร้อมกัน (Backlog ข้อ 4)",
       },
@@ -486,8 +497,10 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1400",
-        requires: ["asset", "contact"],
-        caution: "ส่วนที่เป็นดอกเบี้ยให้แยกบันทึกที่ รายได้ › ดอกเบี้ยรับ — ขายฝาก",
+        // ดอกเบี้ยรับเป็น "รายได้" ไม่ใช่ค่าใช้จ่าย — engine จะลงเป็นเครดิต
+        interestCoa: "4100",
+        requires: ["asset", "contact", "principalInterestSplit"],
+        caution: "รับพร้อมดอกเบี้ยได้ในรายการเดียว แต่ต้องแยกยอดให้ชัด — เงินต้นลดลูกหนี้ ดอกเบี้ยเป็นรายได้",
       },
       {
         code: "inv.mortgage_redeem",
@@ -498,8 +511,9 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1410",
-        requires: ["asset", "contact"],
-        caution: "ส่วนที่เป็นดอกเบี้ยให้แยกบันทึกที่ รายได้ › ดอกเบี้ยรับ — จำนอง",
+        interestCoa: "4110",
+        requires: ["asset", "contact", "principalInterestSplit"],
+        caution: "รับพร้อมดอกเบี้ยได้ในรายการเดียว แต่ต้องแยกยอดให้ชัด — เงินต้นลดลูกหนี้ ดอกเบี้ยเป็นรายได้",
       },
       {
         code: "inv.loan_back",
@@ -510,8 +524,9 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1300",
-        requires: ["contact"],
-        caution: "ส่วนที่เป็นดอกเบี้ยให้แยกบันทึกที่ รายได้ › ดอกเบี้ยรับ — เงินให้กู้ยืม",
+        interestCoa: "4120",
+        requires: ["contact", "principalInterestSplit"],
+        caution: "รับพร้อมดอกเบี้ยได้ในรายการเดียว แต่ต้องแยกยอดให้ชัด — เงินต้นลดลูกหนี้ ดอกเบี้ยเป็นรายได้",
       },
       {
         code: "inv.sell_securities",
@@ -522,6 +537,8 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1700",
+        gainCoa: "4900",
+        lossCoa: "5900",
         requires: ["capitalGain"],
       },
       {
@@ -620,6 +637,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "2410",
         cr: CASH,
+        interestCoa: "5400",
         requires: ["contact", "principalInterestSplit"],
         caution: "เงินต้นไม่ใช่ค่าใช้จ่าย ต้องแยกออกจากดอกเบี้ยเสมอ (Backlog ข้อ 5)",
       },
@@ -632,6 +650,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "2300",
         cr: CASH,
+        interestCoa: "5400",
         requires: ["contact", "principalInterestSplit"],
         caution: "เงินต้นไม่ใช่ค่าใช้จ่าย ต้องแยกออกจากดอกเบี้ยเสมอ (Backlog ข้อ 5)",
       },
@@ -743,14 +762,46 @@ function effectOf(account: CoaAccount, side: "dr" | "cr"): { pl?: PLEffect; bs?:
   }
 }
 
-export type SubEffects = { pl?: PLEffect; bs: BSEffect[] };
+export type SubEffects = {
+  pl?: PLEffect;
+  bs: BSEffect[];
+  /**
+   * กระทบ P&L เฉพาะบางกรณี — ขายทรัพย์กระทบก็ต่อเมื่อมีกำไรหรือขาดทุน
+   * และการคืนเงินกู้กระทบเฉพาะส่วนดอกเบี้ย ส่วนเงินต้นไม่กระทบ
+   */
+  conditionalPl?: PLEffect & { when: string };
+};
 
-/** ผลกระทบต่องบของหมวดย่อยนี้ คำนวณจาก dr/cr */
+/** ผลกระทบต่องบของหมวดย่อยนี้ คำนวณจาก dr/cr ไม่ได้พิมพ์มือ */
 export function effectsOf(sub: SubCategory): SubEffects {
   const d = effectOf(coa(sub.dr), "dr");
   const c = effectOf(coa(sub.cr), "cr");
   const bs = [d.bs, c.bs].filter(Boolean) as BSEffect[];
-  return { pl: d.pl ?? c.pl, bs };
+  const pl = d.pl ?? c.pl;
+
+  // บรรทัดที่ engine เพิ่มให้เฉพาะบางกรณี ไม่ได้อยู่ในคู่บัญชีหลัก
+  let conditionalPl: SubEffects["conditionalPl"];
+  if (sub.gainCoa) {
+    conditionalPl = {
+      line: `${coa(sub.gainCoa).nameTh} / ${coa(sub.lossCoa ?? sub.gainCoa).nameTh}`,
+      kind: "revenue",
+      when: "เมื่อขายได้กำไรหรือขาดทุน",
+    };
+  } else if (sub.interestCoa) {
+    conditionalPl = {
+      line: coa(sub.interestCoa).nameTh,
+      kind: "expense",
+      when: "เฉพาะส่วนดอกเบี้ย เงินต้นไม่กระทบ",
+    };
+  }
+
+  return { pl, bs, conditionalPl };
+}
+
+/** กระทบงบกำไรขาดทุนไหม — รวมกรณีที่กระทบเฉพาะบางเงื่อนไข */
+export function affectsPL(sub: SubCategory): boolean {
+  const { pl, conditionalPl } = effectsOf(sub);
+  return !!pl || !!conditionalPl;
 }
 
 const TYPE_BY_KEY = new Map(TX_TYPES.map((t) => [t.key, t]));
