@@ -29,6 +29,9 @@ export const COA: CoaAccount[] = [
   { code: "1600", nameTh: "เงินมัดจำจ่าย", nameEn: "Deposits paid", type: "asset" },
   // เพิ่มจากแม่บท: พอร์ตหลักทรัพย์ยังไม่มีรหัสใน Excel เดิม
   { code: "1700", nameTh: "เงินลงทุนในหลักทรัพย์", nameEn: "Investment in securities", type: "asset" },
+  // รายการระหว่างกันในกองกลาง — แยกจากพอร์ตจริง ไม่งั้นต้นทุนเฉลี่ยและ NAV เพี้ยน
+  { code: "1310", nameTh: "ลูกหนี้ระหว่างกัน (ในกองกลาง)", nameEn: "Intercompany receivable", type: "asset" },
+  { code: "1710", nameTh: "เงินลงทุนในบริษัทในเครือ", nameEn: "Investment in related company", type: "asset" },
 
   // ---------- หนี้สิน 2xxx ----------
   { code: "2100", nameTh: "เจ้าหนี้การค้า-เจ้าหนี้อื่น", nameEn: "Trade & other payables", type: "liability" },
@@ -37,6 +40,7 @@ export const COA: CoaAccount[] = [
   { code: "2400", nameTh: "เงินกู้ยืมอื่น", nameEn: "Other loans", type: "liability" },
   // เพิ่มจากแม่บท: แยกเงินกู้ธนาคารออกจากเงินกู้ยืมอื่น
   { code: "2410", nameTh: "เงินกู้ธนาคาร", nameEn: "Bank borrowing", type: "liability" },
+  { code: "2310", nameTh: "เจ้าหนี้ระหว่างกัน (ในกองกลาง)", nameEn: "Intercompany payable", type: "liability" },
 
   // ---------- ส่วนของเจ้าของ 3xxx ----------
   { code: "3100", nameTh: "ทุนตั้งต้น", nameEn: "Paid-in capital", type: "equity" },

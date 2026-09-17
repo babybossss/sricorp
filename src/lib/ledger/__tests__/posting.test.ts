@@ -410,6 +410,9 @@ describe("โอนข้าม owner ต้องระบุลักษณะ
       amount: 20_000,
       transferToBankAccountId: "b1",
       intercompanyNature: "loan",
+      // ปลายทางเป็นนิติบุคคล ขาของฝ่ายนั้นจึงต้องมีหลักฐานและคู่ค้าด้วย
+      attachments: ["slip.pdf"],
+      contactId: "c1",
     });
     expect(r.transactions).toHaveLength(2);
     // แต่ละรายการต้องสมดุลในตัวเอง เพราะ DB ตรวจต่อ transaction
@@ -430,6 +433,21 @@ describe("โอนข้าม owner ต้องระบุลักษณะ
         transferToBankAccountId: "b1",
       })
     ).toThrow(/ข้ามผู้ถือ/);
+  });
+
+  it("โอนไปหานิติบุคคลโดยไม่แนบหลักฐาน ต้องถูกปฏิเสธตั้งแต่ต้น", () => {
+    // ขาที่สองเป็นของ corporate_strict — ถ้าไม่ดักที่นี่จะไปตายที่ DB ตอน post
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        amount: 20_000,
+        transferToBankAccountId: "b1",
+        intercompanyNature: "loan",
+        contactId: "c1",
+      })
+    ).toThrow(/หลักฐาน/);
   });
 
   it("ปันผลข้ามผู้ถือ: ฝ่ายจ่ายลดส่วนของเจ้าของ ฝ่ายรับได้รายได้", () => {
@@ -493,5 +511,121 @@ describe("Corporate strict — ดักก่อนให้ผู้ใช้�
       contactId: "c1",
     });
     assertBalanced(allLines(r));
+  });
+});
+
+
+describe("หมวดกระแสเงินสดของรายการข้ามผู้ถือ", () => {
+  const lend = () =>
+    buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 500_000,
+      transferToBankAccountId: "b4",
+      intercompanyNature: "loan",
+      attachments: ["slip.pdf"],
+      contactId: "c1",
+    });
+
+  it("ปล่อยกู้เป็น Investing ของฝ่ายจ่าย · Financing ของฝ่ายรับ", () => {
+    const r = lend();
+    const payer = r.transactions.find((t) => t.ownerId === "corp")!;
+    const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    expect(payer.lines.every((l) => l.cfCategory === "investing")).toBe(true);
+    expect(receiver.lines.every((l) => l.cfCategory === "financing")).toBe(true);
+  });
+
+  it("เงินระหว่างกันไม่ปนกับพอร์ตจริง", () => {
+    const r = lend();
+    const payer = r.transactions.find((t) => t.ownerId === "corp")!;
+    // 1310 ลูกหนี้ระหว่างกัน ไม่ใช่ 1300 เงินให้กู้ยืมของจริง
+    expect(payer.lines.some((l) => l.coaCode === "1310")).toBe(true);
+    expect(payer.lines.some((l) => l.coaCode === "1300")).toBe(false);
+  });
+
+  it("เพิ่มทุนในเครือไม่ปนกับพอร์ตหลักทรัพย์", () => {
+    const r = buildPosting({
+      ownerId: "thanakorn",
+      bankAccountId: "b4",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 1_000_000,
+      transferToBankAccountId: "b1",
+      intercompanyNature: "capital",
+      attachments: ["doc.pdf"],
+      contactId: "c1",
+    });
+    const payer = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    // 1710 เงินลงทุนในบริษัทในเครือ ไม่ใช่ 1700 พอร์ตหลักทรัพย์
+    expect(payer.lines.some((l) => l.coaCode === "1710")).toBe(true);
+    expect(payer.lines.some((l) => l.coaCode === "1700")).toBe(false);
+  });
+
+  it("ปันผลรับเป็น Operating ของฝ่ายรับ ตรงกับหมวด inc.dividend", () => {
+    const r = buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 100_000,
+      transferToBankAccountId: "b4",
+      intercompanyNature: "dividend",
+      attachments: ["slip.pdf"],
+      contactId: "c1",
+    });
+    const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    expect(receiver.lines.every((l) => l.cfCategory === "operating")).toBe(true);
+  });
+});
+
+describe("รับคืนเงินต้นพร้อมดอกเบี้ย — แยกหมวดกระแสเงินสด", () => {
+  const redeem = () =>
+    buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "invest_sell",
+      subCode: "inv.srr_redeem",
+      assetId: "th_b",
+      contactId: "c4",
+      attachments: ["slip.pdf"],
+      amount: 1_100_000,
+      repayment: { principal: 1_000_000, interest: 100_000 },
+    });
+
+  it("เงินต้นเป็น Investing · ดอกเบี้ยเป็น Operating ไม่รวมเป็นก้อนเดียว", () => {
+    const lines = allLines(redeem());
+    const cash = lines.filter((l) => l.coaCode === "1100");
+    expect(cash).toHaveLength(2);
+    expect(cash.find((l) => l.debit === 1_000_000)!.cfCategory).toBe("investing");
+    expect(cash.find((l) => l.debit === 100_000)!.cfCategory).toBe("operating");
+  });
+
+  it("ดอกเบี้ยรับลงเป็นรายได้ ไม่ใช่ค่าใช้จ่าย", () => {
+    const lines = allLines(redeem());
+    const interest = lines.find((l) => l.coaCode === "4100")!;
+    expect(interest.credit).toBe(100_000);
+    expect(interest.debit).toBe(0);
+  });
+
+  it("รับแต่ดอกเบี้ยล้วน ต้องบอกให้ไปใช้หมวดรายได้แทน", () => {
+    expect(() =>
+      buildPosting({
+        ownerId: "corp",
+        bankAccountId: "b1",
+        typeKey: "invest_sell",
+        subCode: "inv.srr_redeem",
+        assetId: "th_b",
+        contactId: "c4",
+        attachments: ["slip.pdf"],
+        amount: 100_000,
+        repayment: { principal: 0, interest: 100_000 },
+      })
+    ).toThrow(/ดอกเบี้ยรับ/);
+  });
+
+  it("ยังสมดุลแม้แตกเป็นสี่บรรทัด", () => {
+    assertBalanced(allLines(redeem()));
   });
 });

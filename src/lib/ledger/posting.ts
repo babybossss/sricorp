@@ -13,11 +13,11 @@
 
 import { findSub, isValidPair, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
+import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { entityById } from "@/lib/mock/entities";
 import { BANKS } from "@/lib/mock/banks";
 import {
   PostingError,
-  type IntercompanyNature,
   type PostingInput,
   type PostingLine,
   type PostingResult,
@@ -99,8 +99,8 @@ function assertRequirements(sub: SubCategory, input: PostingInput): void {
  * Corporate strict — ดักตั้งแต่ที่นี่เพื่อให้ผู้ใช้เห็นข้อความที่เข้าใจได้
  * (DB มี trigger กันอีกชั้นอยู่แล้ว ที่นี่ไม่ได้แทนที่ แต่ช่วยให้รู้ตัวก่อนกดส่ง)
  */
-function assertOwnerPolicy(input: PostingInput): void {
-  const owner = entityById(input.ownerId);
+function assertOwnerPolicy(input: PostingInput, ownerId: string = input.ownerId): void {
+  const owner = entityById(ownerId);
   if (!owner.selectableAsHolder) {
     throw new PostingError(`"${owner.name}" เป็นมุมมองรวม เลือกเป็นผู้ถือของรายการไม่ได้`);
   }
@@ -112,35 +112,6 @@ function assertOwnerPolicy(input: PostingInput): void {
   }
   if (!input.contactId) {
     throw new PostingError(`${owner.name} เป็นนิติบุคคล ต้องระบุคู่ค้าทุกรายการ`);
-  }
-}
-
-const NATURE_TH: Record<IntercompanyNature, string> = {
-  advance: "เงินทดรอง",
-  loan: "กู้ยืมระหว่างกัน",
-  capital: "เพิ่มทุน",
-  dividend: "ปันผล",
-};
-
-/**
- * คู่บัญชีของขาที่ไม่ใช่เงินสด ในรายการข้ามผู้ถือ
- *
- * ฝ่ายจ่าย = ผู้ถือที่เงินออก · ฝ่ายรับ = ผู้ถือที่เงินเข้า
- * ทั้งสองฝ่ายต้องลงบัญชีที่สะท้อนความสัมพันธ์จริง ไม่ใช่แค่ย้ายเงินสด
- */
-function intercompanyAccounts(nature: IntercompanyNature): { payer: string; receiver: string } {
-  switch (nature) {
-    case "advance":
-      // ผู้จ่ายออกเงินแทน → เกิดลูกหนี้ · ผู้รับติดหนี้
-      return { payer: "1300", receiver: "2400" };
-    case "loan":
-      return { payer: "1300", receiver: "2400" };
-    case "capital":
-      // ผู้จ่ายลงทุนเพิ่มในกิจการ → ผู้รับส่วนของเจ้าของเพิ่ม
-      return { payer: "1700", receiver: "3100" };
-    case "dividend":
-      // ผู้จ่ายลดส่วนของเจ้าของ · ผู้รับได้เงินปันผลเป็นรายได้
-      return { payer: "3200", receiver: "4410" };
   }
 }
 
@@ -207,35 +178,40 @@ export function buildPosting(input: PostingInput): PostingResult {
             "ต้องระบุลักษณะ (เงินทดรอง / กู้ยืม / เพิ่มทุน / ปันผล)"
         );
       }
-      const acct = intercompanyAccounts(nature);
+      // ขาของอีกฝ่ายก็ต้องผ่านกติกาของผู้ถือฝ่ายนั้นด้วย
+      // ไม่งั้นรายการจะไปตายที่ DB trigger ตอน post ขาที่สอง
+      assertOwnerPolicy(input, targetOwner);
 
-      // ฝ่ายจ่าย: เงินสดออก · อีกขาตามลักษณะของรายการ
+      const rule = INTERCOMPANY_RULES[nature];
+
+      // ฝ่ายจ่ายกับฝ่ายรับอยู่คนละหมวดกระแสเงินสด — ปล่อยกู้เป็น Investing ของฝ่ายจ่าย
+      // ส่วนฝ่ายที่กู้เข้ามาเป็น Financing (กฎเหล็กข้อ 8)
       transactions.push({
         ownerId: input.ownerId,
         counterOwnerId: targetOwner,
         intercompanyNature: nature,
         lines: [
-          line({ coaCode: acct.payer, debit: amount, cfCategory: "financing", memo: NATURE_TH[nature] }),
-          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, credit: amount, cfCategory: "financing" }),
+          line({ coaCode: rule.payer.coa, debit: amount, cfCategory: rule.payer.cashflow, memo: rule.label }),
+          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, credit: amount, cfCategory: rule.payer.cashflow }),
         ],
       });
 
-      // ฝ่ายรับ: เงินสดเข้า · อีกขาตรงข้าม
       transactions.push({
         ownerId: targetOwner,
         counterOwnerId: input.ownerId,
         intercompanyNature: nature,
         lines: [
-          line({ coaCode: CASH_COA, bankAccountId: to, debit: amount, cfCategory: "financing" }),
-          line({ coaCode: acct.receiver, credit: amount, cfCategory: "financing", memo: NATURE_TH[nature] }),
+          line({ coaCode: CASH_COA, bankAccountId: to, debit: amount, cfCategory: rule.receiver.cashflow }),
+          line({ coaCode: rule.receiver.coa, credit: amount, cfCategory: rule.receiver.cashflow, memo: rule.label }),
         ],
       });
 
       summary.push(
-        `ข้ามผู้ถือ (${NATURE_TH[nature]}) — สร้างสองรายการคู่กัน: ` +
-          `${entityById(input.ownerId).name} ลง ${coa(acct.payer).nameTh} · ` +
-          `${entityById(targetOwner).name} ลง ${coa(acct.receiver).nameTh}`
+        `ข้ามผู้ถือ (${rule.label}) — สร้างสองรายการคู่กัน: ` +
+          `${entityById(input.ownerId).name} ลง ${coa(rule.payer.coa).nameTh} · ` +
+          `${entityById(targetOwner).name} ลง ${coa(rule.receiver.coa).nameTh}`
       );
+      summary.push(rule.note);
       summary.push("งบรวมจะตัดรายการระหว่างกันออก ยอดกองกลางจึงไม่เปลี่ยน");
     }
   } else if (sub.requires?.includes("capitalGain")) {
@@ -297,12 +273,21 @@ export function buildPosting(input: PostingInput): PostingResult {
     const lines: PostingLine[] = [];
 
     if (isInflow) {
-      // เงินสดเข้าเต็มจำนวน · เงินต้นลดลูกหนี้ · ดอกเบี้ยเป็นรายได้
-      lines.push(line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: amount, cfCategory: sub.cashflow }));
-      if (principal > 0) {
-        lines.push(line({ coaCode: sub.cr, assetId: input.assetId, credit: principal, cfCategory: sub.cashflow, memo: "เงินต้น" }));
+      if (principal === 0) {
+        throw new PostingError(
+          `หมวด "${sub.label}" ไว้สำหรับรับคืนเงินต้น — ถ้ารับแต่ดอกเบี้ย ให้ใช้หมวด รายได้ › ${coa(sub.interestCoa).nameTh}`
+        );
       }
+      // แตกบรรทัดเงินสดตามหมวดกระแสเงินสด: เงินต้นเป็น Investing · ดอกเบี้ยเป็น Operating
+      // ถ้ารวมเป็นบรรทัดเดียว CF ลงทุนจะบวมเท่าดอกเบี้ย และดำเนินงานจะขาดไปเท่ากัน
+      lines.push(
+        line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: principal, cfCategory: sub.cashflow, memo: "รับคืนเงินต้น" })
+      );
+      lines.push(line({ coaCode: sub.cr, assetId: input.assetId, credit: principal, cfCategory: sub.cashflow, memo: "เงินต้น" }));
       if (interest > 0) {
+        lines.push(
+          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: interest, cfCategory: "operating", memo: "รับดอกเบี้ย" })
+        );
         lines.push(line({ coaCode: sub.interestCoa, credit: interest, cfCategory: "operating", memo: "ดอกเบี้ยรับ" }));
       }
       summary.push(

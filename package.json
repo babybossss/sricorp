@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.mts",
     "test:watch": "vitest --config vitest.config.mts",
-    "sync:rules": "tsx scripts/sync-txn-types.ts"
+    "sync:rules": "tsx scripts/sync-txn-types.ts > supabase/migrations/seed_txn_types.sql && echo 'เขียนแล้ว: supabase/migrations/seed_txn_types.sql'"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.4",
