@@ -16,6 +16,7 @@ import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { entityById } from "@/lib/mock/entities";
 import { BANKS } from "@/lib/mock/banks";
+import { computeDisposal } from "@/lib/disposal/capital-gain";
 import {
   PostingError,
   type PostingInput,
@@ -96,14 +97,25 @@ function assertRequirements(sub: SubCategory, input: PostingInput): void {
 }
 
 /**
- * Corporate strict — ดักตั้งแต่ที่นี่เพื่อให้ผู้ใช้เห็นข้อความที่เข้าใจได้
- * (DB มี trigger กันอีกชั้นอยู่แล้ว ที่นี่ไม่ได้แทนที่ แต่ช่วยให้รู้ตัวก่อนกดส่ง)
+ * ผู้ถือต้องเป็นตัวตนที่ถือทรัพย์ได้จริง — "SRI Family (รวม)" เป็นมุมมองรวม ไม่ใช่เจ้าของ
+ * เป็นเงื่อนไขเชิงโครงสร้าง ไม่ใช่นโยบายเอกสาร จึงตรวจตั้งแต่ตอนสร้างบรรทัด
  */
-function assertOwnerPolicy(input: PostingInput, ownerId: string = input.ownerId): void {
+function assertOwnerSelectable(ownerId: string): void {
   const owner = entityById(ownerId);
   if (!owner.selectableAsHolder) {
     throw new PostingError(`"${owner.name}" เป็นมุมมองรวม เลือกเป็นผู้ถือของรายการไม่ได้`);
   }
+}
+
+/**
+ * Corporate strict — ดักตั้งแต่ที่นี่เพื่อให้ผู้ใช้เห็นข้อความที่เข้าใจได้
+ * (DB มี trigger กันอีกชั้นอยู่แล้ว ที่นี่ไม่ได้แทนที่ แต่ช่วยให้รู้ตัวก่อนกดส่ง)
+ *
+ * แยกออกจากการสร้างบรรทัดโดยตั้งใจ: เอกสารหลักฐานไม่ได้เปลี่ยนคู่บัญชี
+ * พรีวิวจึงแสดงบรรทัดได้ทั้งที่ยังไม่แนบไฟล์ แต่ `buildPosting()` จะไม่ยอมปล่อยผ่าน
+ */
+function assertEvidencePolicy(input: PostingInput, ownerId: string): void {
+  const owner = entityById(ownerId);
   if (owner.policy !== "corporate_strict") return;
   if ((input.attachments?.length ?? 0) === 0) {
     throw new PostingError(
@@ -124,7 +136,7 @@ function assertOwnerPolicy(input: PostingInput, ownerId: string = input.ownerId)
  * - โอนภายในผู้ถือเดียวกัน → สองบรรทัดเงินสด คนละบัญชี
  * - โอนข้ามผู้ถือ → **สอง transaction คู่กัน** ฝ่ายละหนึ่ง (Money Invariant 3)
  */
-export function buildPosting(input: PostingInput): PostingResult {
+export function buildPostingDraft(input: PostingInput): PostingResult {
   const found = findSub(input.subCode);
   if (!found) throw new PostingError(`ไม่พบหมวดย่อย ${input.subCode} ในตารางกฎ`);
   if (!isValidPair(input.typeKey, input.subCode)) {
@@ -136,6 +148,9 @@ export function buildPosting(input: PostingInput): PostingResult {
   if (amount === 0) throw new PostingError("จำนวนเงินต้องมากกว่า 0");
   if (!input.bankAccountId) throw new PostingError("ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก");
 
+  // ผู้ถือต้องถือทรัพย์ได้จริงก่อน ไม่งั้นข้อความจะไปโผล่เป็น "บัญชีไม่ตรงผู้ถือ" ซึ่งชี้ผิดจุด
+  assertOwnerSelectable(input.ownerId);
+
   // ตรวจว่าบัญชีมีอยู่จริง และเป็นของผู้ถือที่ระบุ
   const sourceOwner = bankOwner(input.bankAccountId);
   if (sourceOwner !== input.ownerId) {
@@ -145,7 +160,6 @@ export function buildPosting(input: PostingInput): PostingResult {
   }
 
   assertRequirements(sub, input);
-  assertOwnerPolicy(input);
 
   const summary: string[] = [sub.plain];
   const transactions: PostingTransaction[] = [];
@@ -178,9 +192,7 @@ export function buildPosting(input: PostingInput): PostingResult {
             "ต้องระบุลักษณะ (เงินทดรอง / กู้ยืม / เพิ่มทุน / ปันผล)"
         );
       }
-      // ขาของอีกฝ่ายก็ต้องผ่านกติกาของผู้ถือฝ่ายนั้นด้วย
-      // ไม่งั้นรายการจะไปตายที่ DB trigger ตอน post ขาที่สอง
-      assertOwnerPolicy(input, targetOwner);
+      assertOwnerSelectable(targetOwner);
 
       const rule = INTERCOMPANY_RULES[nature];
 
@@ -217,16 +229,20 @@ export function buildPosting(input: PostingInput): PostingResult {
   } else if (sub.requires?.includes("capitalGain")) {
     // ---------- ขายทรัพย์ / ขายหลักทรัพย์ ----------
     const d = input.disposal!;
-    const costBasis = money(d.costBasis, "ต้นทุน");
-    const salePrice = money(d.salePrice, "ราคาขาย");
-    const sellingCosts = money(d.sellingCosts ?? 0, "ค่าใช้จ่ายในการขาย");
+    // ตัวเลขคำนวณที่ `lib/disposal/capital-gain.ts` ที่เดียว ที่นี่แปลงเป็นบรรทัดบัญชีอย่างเดียว
+    // money() ดักค่าที่คำนวณต่อไม่ได้ก่อน เพื่อให้ได้ข้อความภาษาคนแทน error ดิบ
+    const r = computeDisposal({
+      costBasis: money(d.costBasis, "ต้นทุน"),
+      salePrice: money(d.salePrice, "ราคาขาย"),
+      sellingCosts: money(d.sellingCosts ?? 0, "ค่าใช้จ่ายในการขาย"),
+    });
+    const { costBasis, netProceeds, capitalGain: gain } = r;
 
     if (costBasis === 0) throw new PostingError("ต้นทุนต้องมากกว่า 0 — ทรัพย์ที่ไม่มีต้นทุนตัดออกไม่ได้");
 
-    const netProceeds = round2(salePrice - sellingCosts);
     if (!(netProceeds > 0)) {
       throw new PostingError(
-        `เงินที่ได้สุทธิต้องมากกว่า 0 (ราคาขาย ${salePrice} − ค่าใช้จ่าย ${sellingCosts} = ${netProceeds})`
+        `เงินที่ได้สุทธิต้องมากกว่า 0 (ราคาขาย ${r.salePrice} − ค่าใช้จ่าย ${r.sellingCosts} = ${netProceeds})`
       );
     }
     if (netProceeds !== amount) {
@@ -235,7 +251,6 @@ export function buildPosting(input: PostingInput): PostingResult {
       );
     }
 
-    const gain = round2(netProceeds - costBasis);
     const lines: PostingLine[] = [
       line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: netProceeds, cfCategory: sub.cashflow }),
       // ตัดทรัพย์ออก "ตามต้นทุน" ไม่ใช่ราคาขาย
@@ -347,6 +362,21 @@ export function buildPosting(input: PostingInput): PostingResult {
   }
 
   return { transactions, summary };
+}
+
+/**
+ * สร้างรายการบัญชีที่ **พร้อมบันทึกจริง**
+ *
+ * ต่างจาก `buildPostingDraft()` ตรงที่บังคับกติกาเอกสารของผู้ถือทุกฝ่ายที่รายการแตะ
+ * ไล่จาก transaction ที่สร้างได้จริง ไม่ใช่จากฟิลด์ที่ผู้ใช้กรอก —
+ * รายการข้ามผู้ถือจึงถูกตรวจทั้งสองขาเสมอ โดยไม่ต้องจำว่าสาขาไหนต้องเรียกเพิ่ม
+ *
+ * ทุกเส้นทางที่จะ post ลงฐานข้อมูลต้องผ่านฟังก์ชันนี้ ห้ามเรียก draft ตรงๆ
+ */
+export function buildPosting(input: PostingInput): PostingResult {
+  const result = buildPostingDraft(input);
+  for (const t of result.transactions) assertEvidencePolicy(input, t.ownerId);
+  return result;
 }
 
 /** รวมทุกบรรทัดจากทุกรายการ — ใช้ตอนแสดงผลรวมหรือทดสอบ */

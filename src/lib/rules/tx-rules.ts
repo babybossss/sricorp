@@ -769,7 +769,11 @@ export type SubEffects = {
    * กระทบ P&L เฉพาะบางกรณี — ขายทรัพย์กระทบก็ต่อเมื่อมีกำไรหรือขาดทุน
    * และการคืนเงินกู้กระทบเฉพาะส่วนดอกเบี้ย ส่วนเงินต้นไม่กระทบ
    */
-  conditionalPl?: PLEffect & { when: string };
+  conditionalPl?: PLEffect & {
+    when: string;
+    /** บางกรณีเป็นได้ทั้งสองทาง — ขายทรัพย์เป็นรายได้ถ้ากำไร เป็นค่าใช้จ่ายถ้าขาดทุน */
+    kindAlt?: PLEffect["kind"];
+  };
 };
 
 /** ผลกระทบต่องบของหมวดย่อยนี้ คำนวณจาก dr/cr ไม่ได้พิมพ์มือ */
@@ -782,15 +786,18 @@ export function effectsOf(sub: SubCategory): SubEffects {
   // บรรทัดที่ engine เพิ่มให้เฉพาะบางกรณี ไม่ได้อยู่ในคู่บัญชีหลัก
   let conditionalPl: SubEffects["conditionalPl"];
   if (sub.gainCoa) {
+    // ขายทรัพย์ลงบัญชีกำไรเมื่อได้กำไร และลงบัญชีขาดทุนเมื่อขาดทุน — บอกทั้งสองทาง ไม่ใช่ทางเดียว
     conditionalPl = {
       line: `${coa(sub.gainCoa).nameTh} / ${coa(sub.lossCoa ?? sub.gainCoa).nameTh}`,
       kind: "revenue",
+      kindAlt: sub.lossCoa ? "expense" : undefined,
       when: "เมื่อขายได้กำไรหรือขาดทุน",
     };
   } else if (sub.interestCoa) {
+    // รับดอกเบี้ยเป็น "รายได้" · จ่ายดอกเบี้ยเป็น "ค่าใช้จ่าย" — อ่านจากประเภทบัญชี ไม่เดาจากทิศเงิน
     conditionalPl = {
       line: coa(sub.interestCoa).nameTh,
-      kind: "expense",
+      kind: coa(sub.interestCoa).type === "income" ? "revenue" : "expense",
       when: "เฉพาะส่วนดอกเบี้ย เงินต้นไม่กระทบ",
     };
   }
@@ -834,18 +841,26 @@ export function isValidPair(key: TxTypeKey, code: string): boolean {
 
 /** คำอธิบายผลกระทบต่องบ แบบภาษาคน สำหรับแสดงก่อนยืนยันในฟอร์ม */
 export function impactLines(sub: SubCategory): string[] {
-  const { pl, bs } = effectsOf(sub);
+  const { pl, bs, conditionalPl } = effectsOf(sub);
   const out: string[] = [];
+  const plWord = (k: PLEffect["kind"]) => (k === "revenue" ? "รายได้" : "ค่าใช้จ่าย");
 
   for (const b of bs) {
     out.push(`งบดุล · ${SIDE_TH[b.side]} — ${b.line} ${b.direction === "increase" ? "เพิ่มขึ้น" : "ลดลง"}`);
   }
 
-  out.push(
-    pl
-      ? `กำไรขาดทุน · ${pl.kind === "revenue" ? "รายได้" : "ค่าใช้จ่าย"} — ${pl.line}`
-      : "กำไรขาดทุน · ไม่กระทบ"
-  );
+  if (pl) {
+    out.push(`กำไรขาดทุน · ${plWord(pl.kind)} — ${pl.line}`);
+  } else if (conditionalPl) {
+    // ขายทรัพย์/คืนเงินกู้ไม่มีบัญชี P&L ในคู่หลัก แต่ engine เติมบรรทัดให้เสมอเมื่อเข้าเงื่อนไข
+    // ถ้าขึ้นว่า "ไม่กระทบ" ผู้ใช้จะเข้าใจผิดว่าขายทรัพย์แล้วกำไรไม่เข้างบ
+    const kinds = conditionalPl.kindAlt
+      ? `${plWord(conditionalPl.kind)}หรือ${plWord(conditionalPl.kindAlt)}`
+      : plWord(conditionalPl.kind);
+    out.push(`กำไรขาดทุน · ${kinds} — ${conditionalPl.line} (${conditionalPl.when})`);
+  } else {
+    out.push("กำไรขาดทุน · ไม่กระทบ");
+  }
 
   const dir = sub.cash === "in" ? "เงินเข้า" : sub.cash === "out" ? "เงินออก" : "ย้ายระหว่างบัญชี";
   out.push(`กระแสเงินสด · ${CF_TH[sub.cashflow]} — ${dir}`);

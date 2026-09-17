@@ -8,6 +8,9 @@
  *
  * และ **กำไรยังไม่รับรู้ (unrealized) ของทรัพย์ชิ้นนั้นต้องถูกล้างออกพร้อมกัน**
  * ไม่งั้นจะนับกำไรซ้ำสองรอบ — รอบแรกตอนตีราคา รอบสองตอนขายจริง
+ *
+ * ไฟล์นี้คำนวณตัวเลขอย่างเดียว **ไม่ประกอบบรรทัดบัญชี** —
+ * คู่บัญชีอยู่ที่ `lib/ledger/posting.ts` ที่เดียว ซึ่งเรียก `computeDisposal()` ตัวนี้ต่อ
  */
 
 export type DisposalInput = {
@@ -64,29 +67,4 @@ export function computeDisposal(input: DisposalInput): DisposalResult {
     // เงินเข้าบัญชีคือราคาขายหักค่าใช้จ่ายที่จ่ายไปพร้อมกัน
     cashIn: netProceeds,
   };
-}
-
-/** บรรทัดบัญชีที่ระบบจะลงให้ — แสดงในฟอร์มก่อนยืนยัน */
-export type JournalPreviewLine = { account: string; label: string; debit: number; credit: number };
-
-export function disposalJournal(r: DisposalResult, assetCoa: string, assetName: string): JournalPreviewLine[] {
-  const lines: JournalPreviewLine[] = [
-    { account: "1100", label: "เงินสดและเงินฝากธนาคาร", debit: r.cashIn, credit: 0 },
-    { account: assetCoa, label: assetName, debit: 0, credit: r.costBasis },
-  ];
-
-  if (r.capitalGain > 0) {
-    lines.push({ account: "4300", label: "กำไรจากการขายทรัพย์", debit: 0, credit: r.capitalGain });
-  } else if (r.capitalGain < 0) {
-    lines.push({ account: "5900", label: "ขาดทุนจากการขายทรัพย์", debit: Math.abs(r.capitalGain), credit: 0 });
-  }
-
-  return lines;
-}
-
-/** ตรวจว่าบรรทัดที่จะลงสมดุล — กันไม่ให้ส่งรายการที่ DB จะปฏิเสธอยู่ดี */
-export function isBalanced(lines: JournalPreviewLine[]): boolean {
-  const dr = round2(lines.reduce((t, l) => t + l.debit, 0));
-  const cr = round2(lines.reduce((t, l) => t + l.credit, 0));
-  return dr === cr;
 }

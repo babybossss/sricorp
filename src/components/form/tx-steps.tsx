@@ -11,7 +11,6 @@ import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
-import { coa } from "@/lib/rules/coa";
 import { TYPE_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import { ContactPicker } from "./contact-picker";
@@ -50,8 +49,11 @@ export function StepType({ api, onPicked, narrow }: { api: TxFormApi; onPicked?:
 
 /** ขั้น 2 — ผู้ถือกรรมสิทธิ์ & บัญชี */
 export function StepHolder({ api }: { api: TxFormApi }) {
-  const banks = useOrderedBanks(true);
+  const allBanks = useOrderedBanks(true);
   const isCorp = api.draft.holderId === "corp";
+
+  // เห็นเฉพาะบัญชีของผู้ถือที่เลือก — บัญชีของคนอื่นเลือกไม่ได้ตั้งแต่ต้น
+  const banks = allBanks.filter((b) => b.ownerId === api.draft.holderId);
 
   React.useEffect(() => {
     if (!api.draft.bankId && banks.length) api.patch({ bankId: banks[0].id });
@@ -68,7 +70,7 @@ export function StepHolder({ api }: { api: TxFormApi }) {
               <button
                 key={e.id}
                 type="button"
-                onClick={() => api.patch({ holderId: e.id })}
+                onClick={() => api.pickHolder(e.id)}
                 className={cn(
                   "flex min-h-control items-center gap-2 rounded border px-4 text-base",
                   active ? "border-brand-600 bg-brand-50" : "border-line bg-surface"
@@ -88,8 +90,13 @@ export function StepHolder({ api }: { api: TxFormApi }) {
           : "ถือในชื่อบุคคล: เงินยังเป็นกองกลางของครอบครัว แนบหลักฐานภายหลังได้ แต่ต้องระบุคู่ค้าเพื่อการติดตาม"}
       </div>
 
-      <Field label="บัญชีธนาคาร" hint="เรียงตามลำดับที่ตั้งไว้ใน ตั้งค่า › บัญชีธนาคาร">
-        <Select value={api.draft.bankId} onChange={(e) => api.patch({ bankId: e.target.value })}>
+      <Field
+        label="บัญชีธนาคาร"
+        required
+        hint="เห็นเฉพาะบัญชีของผู้ถือที่เลือก · เรียงตามลำดับที่ตั้งไว้ใน ตั้งค่า › บัญชีธนาคาร"
+        error={banks.length === 0 ? "ผู้ถือรายนี้ยังไม่มีบัญชีที่เปิดใช้งาน" : undefined}
+      >
+        <Select value={api.draft.bankId} onChange={(e) => api.patch({ bankId: e.target.value })} disabled={banks.length === 0}>
           {banks.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -115,11 +122,23 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
   const { draft, sub, subs, requires, patch } = api;
   const needsContact = requires("contact");
   const needsAsset = requires("asset");
+  // ขายทรัพย์: ยอดเงินมาจาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงด้านล่าง ไม่ให้พิมพ์ทับ
+  const amountDerived = requires("capitalGain");
 
   return (
     <div className="flex flex-col gap-4">
-      <Field label="จำนวนเงิน (บาท)" required>
-        <AmountInput value={draft.amount} onChange={(e) => patch({ amount: e.target.value })} placeholder="0.00" />
+      <Field
+        label="จำนวนเงิน (บาท)"
+        required
+        hint={amountDerived ? "คำนวณให้จาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงคำนวณกำไร/ขาดทุน" : undefined}
+      >
+        <AmountInput
+          value={draft.amount}
+          onChange={(e) => patch({ amount: e.target.value })}
+          placeholder="0.00"
+          readOnly={amountDerived}
+          className={amountDerived ? "bg-canvas text-ink-600" : undefined}
+        />
       </Field>
 
       <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
@@ -191,8 +210,8 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         <DisposalPanel
           value={draft.disposal}
           onChange={(v) => patch({ disposal: v })}
-          assetCoa={sub?.cr ?? "1500"}
-          assetName={sub ? coa(sub.cr).nameTh : "ทรัพย์"}
+          context={api.postingContext}
+          onDerivedAmount={api.setDerivedAmount}
         />
       ) : null}
 
@@ -202,8 +221,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           value={draft.repayment}
           onChange={(v) => patch({ repayment: v })}
           installment={draft.loanTerms.schedule[0]}
-          liabilityCoa={sub?.dr ?? "2410"}
-          liabilityName={sub ? coa(sub.dr).nameTh : "เงินกู้"}
+          context={api.postingContext}
         />
       ) : null}
 

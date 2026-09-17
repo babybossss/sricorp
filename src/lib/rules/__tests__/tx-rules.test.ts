@@ -6,6 +6,7 @@ import {
   isValidPair,
   effectsOf,
   impactLines,
+  affectsPL,
   type TxTypeKey,
 } from "../tx-rules";
 import { COA, coa, isCashAccount } from "../coa";
@@ -152,6 +153,29 @@ describe("ข้อมูลตัวอย่างต้องตรงกั�
       const sub = findSub(r.subCode)!.sub;
       if (sub.cash === "in") expect(r.inAmt, r.id).not.toBeNull();
       if (sub.cash === "out") expect(r.outAmt, r.id).not.toBeNull();
+    }
+  });
+});
+
+/**
+ * ตารางผลกระทบที่โชว์ในฟอร์ม ต้องตรงกับบรรทัดที่ engine ลงจริง
+ * ถ้าไม่ตรง ผู้ใช้จะตัดสินใจจากข้อมูลที่ผิด ทั้งที่ตัวเลขในบัญชีถูก
+ */
+describe("คำอธิบายผลกระทบต้องตรงกับที่ engine ลงจริง", () => {
+  it("หมวดที่ engine เติมบรรทัด P&L ให้ ต้องไม่ขึ้นว่า “ไม่กระทบ”", () => {
+    for (const s of allSubs) {
+      if (!affectsPL(s)) continue;
+      const pl = impactLines(s).find((l) => l.startsWith("กำไรขาดทุน"));
+      expect(pl, s.code).not.toBe("กำไรขาดทุน · ไม่กระทบ");
+    }
+  });
+
+  it("ดอกเบี้ยรับต้องขึ้นเป็นรายได้ ไม่ใช่ค่าใช้จ่าย", () => {
+    // เคยฮาร์ดโค้ดเป็น expense ทุกกรณี — รับไถ่ถอนขายฝากจึงโชว์ดอกเบี้ยรับเป็นค่าใช้จ่าย
+    for (const s of allSubs) {
+      if (!s.interestCoa) continue;
+      const kind = effectsOf(s).conditionalPl?.kind;
+      expect(kind, s.code).toBe(coa(s.interestCoa).type === "income" ? "revenue" : "expense");
     }
   });
 });

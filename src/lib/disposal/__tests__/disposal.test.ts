@@ -1,7 +1,44 @@
 import { describe, it, expect } from "vitest";
-import { computeDisposal, disposalJournal, isBalanced } from "../capital-gain";
-import { splitRepayment, repaymentJournal } from "../repayment";
+import { computeDisposal } from "../capital-gain";
+import { splitRepayment } from "../repayment";
 import { buildSchedule } from "@/lib/loan/schedule";
+import { buildPosting, allLines, totalDebit, totalCredit } from "@/lib/ledger/posting";
+
+/**
+ * บรรทัดบัญชีไม่ได้สร้างในไฟล์ `lib/disposal/` แล้ว — engine เดียวคือ `lib/ledger/posting.ts`
+ * เทสต์ด้านล่างจึงยิงผ่าน `buildPosting()` เพื่อยืนยันว่าตัวเลขจากเครื่องคิดเลข
+ * ไปโผล่ในบรรทัดบัญชีจริงถูกที่ ไม่ใช่แค่ถูกในฟังก์ชันที่ไม่มีใครเรียก
+ */
+const owner = { ownerId: "thanakorn", bankAccountId: "b4" };
+
+/** ขายอสังหาฯ: ยอดเงินของรายการ = ราคาขาย − ค่าใช้จ่ายในการขาย */
+function sellRealEstate(d: { costBasis: number; salePrice: number; sellingCosts?: number }) {
+  const r = computeDisposal(d);
+  return allLines(
+    buildPosting({
+      ...owner,
+      typeKey: "invest_sell" as const,
+      subCode: "inv.sell_re",
+      amount: r.netProceeds,
+      assetId: "rent1",
+      disposal: d,
+    })
+  );
+}
+
+/** ชำระคืนเงินกู้ธนาคาร: เงินต้น + ดอกเบี้ย = ยอดที่จ่าย */
+function repayBankLoan(split: { principal: number; interest: number }) {
+  return allLines(
+    buildPosting({
+      ...owner,
+      typeKey: "finance_out" as const,
+      subCode: "fin.repay_bank",
+      amount: Math.round((split.principal + split.interest) * 100) / 100,
+      contactId: "c3",
+      repayment: split,
+    })
+  );
+}
 
 describe("Backlog ข้อ 4 — กำไร/ขาดทุนจากการขาย", () => {
   it("ขายได้กำไร: กำไร = เงินสุทธิ − ต้นทุน", () => {
@@ -38,25 +75,38 @@ describe("Backlog ข้อ 4 — กำไร/ขาดทุนจากกา
   });
 
   it("ตัดทรัพย์ออกตามต้นทุน ไม่ใช่ราคาขาย", () => {
-    const r = computeDisposal({ costBasis: 2_450_000, salePrice: 3_000_000 });
-    const lines = disposalJournal(r, "1500", "อสังหาริมทรัพย์เพื่อการลงทุน");
-    const assetLine = lines.find((l) => l.account === "1500")!;
+    const lines = sellRealEstate({ costBasis: 2_450_000, salePrice: 3_000_000 });
+    const assetLine = lines.find((l) => l.coaCode === "1500")!;
     expect(assetLine.credit).toBe(2_450_000);
   });
 
   it("บรรทัดบัญชีสมดุลเสมอ ทั้งกรณีกำไรและขาดทุน", () => {
     for (const salePrice of [3_000_000, 2_450_000, 1_800_000]) {
-      const r = computeDisposal({ costBasis: 2_450_000, salePrice, sellingCosts: 20_000 });
-      expect(isBalanced(disposalJournal(r, "1500", "ทรัพย์")), `ราคาขาย ${salePrice}`).toBe(true);
+      const lines = sellRealEstate({ costBasis: 2_450_000, salePrice, sellingCosts: 20_000 });
+      expect(totalDebit(lines), `ราคาขาย ${salePrice}`).toBe(totalCredit(lines));
     }
   });
 
   it("กำไรเข้า 4300 · ขาดทุนเข้า 5900", () => {
-    const gain = disposalJournal(computeDisposal({ costBasis: 100, salePrice: 150 }), "1500", "ทรัพย์");
-    expect(gain.some((l) => l.account === "4300" && l.credit === 50)).toBe(true);
+    const gain = sellRealEstate({ costBasis: 1_000_000, salePrice: 1_500_000 });
+    expect(gain.some((l) => l.coaCode === "4300" && l.credit === 500_000)).toBe(true);
 
-    const loss = disposalJournal(computeDisposal({ costBasis: 100, salePrice: 60 }), "1500", "ทรัพย์");
-    expect(loss.some((l) => l.account === "5900" && l.debit === 40)).toBe(true);
+    const loss = sellRealEstate({ costBasis: 1_000_000, salePrice: 600_000 });
+    expect(loss.some((l) => l.coaCode === "5900" && l.debit === 400_000)).toBe(true);
+  });
+
+  it("ยอดเงินของรายการต้องเท่ากับเงินสุทธิ ไม่ใช่ราคาขายเต็ม", () => {
+    // ถ้ากรอกราคาขายเต็มลงช่องจำนวนเงิน เงินสดจะเข้าเกินจริงเท่าค่าธรรมเนียม
+    expect(() =>
+      buildPosting({
+        ...owner,
+        typeKey: "invest_sell",
+        subCode: "inv.sell_re",
+        amount: 3_000_000,
+        assetId: "rent1",
+        disposal: { costBasis: 2_450_000, salePrice: 3_000_000, sellingCosts: 50_000 },
+      })
+    ).toThrow(/ราคาขาย − ค่าใช้จ่ายในการขาย/);
   });
 
   it("ค่าติดลบรับไม่ได้", () => {
@@ -130,12 +180,12 @@ describe("Backlog ข้อ 5 — แยกเงินต้น/ดอกเบ
 
   it("เงินต้นลดหนี้สิน ดอกเบี้ยเป็นค่าใช้จ่าย ไม่ปนกัน", () => {
     const s = splitRepayment({ amountPaid: first.total, installment: first });
-    const lines = repaymentJournal(s, "2410", "เงินกู้ธนาคาร");
+    const lines = repayBankLoan(s);
 
-    const liability = lines.find((l) => l.account === "2410")!;
+    const liability = lines.find((l) => l.coaCode === "2410")!;
     expect(liability.debit).toBe(s.principal);
 
-    const interestLine = lines.find((l) => l.account === "5400")!;
+    const interestLine = lines.find((l) => l.coaCode === "5400")!;
     expect(interestLine.debit).toBe(s.interest);
 
     // เงินต้นต้องไม่โผล่ในบรรทัดค่าใช้จ่าย
@@ -145,7 +195,8 @@ describe("Backlog ข้อ 5 — แยกเงินต้น/ดอกเบ
   it("บรรทัดบัญชีของการคืนเงินกู้สมดุล", () => {
     for (const paid of [first.interest, first.total, first.total + 1_000]) {
       const s = splitRepayment({ amountPaid: paid, installment: first });
-      expect(isBalanced(repaymentJournal(s, "2410", "เงินกู้ธนาคาร")), `จ่าย ${paid}`).toBe(true);
+      const lines = repayBankLoan(s);
+      expect(totalDebit(lines), `จ่าย ${paid}`).toBe(totalCredit(lines));
     }
   });
 

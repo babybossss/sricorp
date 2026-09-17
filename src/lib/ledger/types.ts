@@ -50,6 +50,14 @@ export type PostingInput = {
 export type IntercompanyNature = "advance" | "loan" | "capital" | "dividend";
 
 /**
+ * ส่วนของรายการที่ฟอร์มรู้อยู่แล้วก่อนถึงแผงเฉพาะทาง
+ *
+ * แผงขายทรัพย์/คืนเงินกู้จะเติม `disposal` หรือ `repayment` ให้ครบเอง
+ * แล้วส่งเข้า engine ตัวจริง — ไม่มีใครประกอบคู่บัญชีเองในคอมโพเนนต์
+ */
+export type PostingContext = Omit<PostingInput, "disposal" | "repayment">;
+
+/**
  * หนึ่ง transaction = หนึ่งผู้ถือกรรมสิทธิ์
  * ตรงกับ schema: `sri_os.transactions.owner_id` อยู่ระดับหัวรายการ
  * ส่วน `transaction_lines` ไม่มีคอลัมน์ owner

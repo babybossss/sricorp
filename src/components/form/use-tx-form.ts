@@ -3,8 +3,11 @@
 import * as React from "react";
 import { allowedSubs, findSub, isValidPair, type TxTypeKey, type SubCategory } from "@/lib/rules/tx-rules";
 import { HOLDERS } from "@/lib/mock/entities";
+import { BANKS } from "@/lib/mock/banks";
+import { parseAmount } from "@/lib/format";
+import type { PostingContext } from "@/lib/ledger/types";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
-import { EMPTY_DISPOSAL, EMPTY_REPAYMENT, type DisposalValue, type RepaymentValue } from "./disposal-panel";
+import { EMPTY_DISPOSAL, EMPTY_REPAYMENT, isManualSplit, type DisposalValue, type RepaymentValue } from "./disposal-panel";
 
 export type TxDraft = {
   typeKey: TxTypeKey | null;
@@ -72,6 +75,19 @@ export function useTxForm() {
     }));
   }, []);
 
+  /**
+   * เลือกผู้ถือ → บังคับให้บัญชีธนาคารเป็นของผู้ถือรายนั้น
+   *
+   * ปล่อยให้เลือกข้ามกันไม่ได้: engine ปฏิเสธรายการที่บัญชีกับผู้ถือไม่ตรงกันอยู่แล้ว
+   * (เงินของคนหนึ่งจะไปโผล่ในงบของอีกคน) ฟอร์มจึงต้องไม่เปิดให้เข้าสู่สถานะนั้นเลย
+   */
+  const pickHolder = React.useCallback((holderId: string) => {
+    setDraft((d) => {
+      const bank = BANKS.find((b) => b.id === d.bankId);
+      return { ...d, holderId, bankId: bank?.ownerId === holderId ? d.bankId : "" };
+    });
+  }, []);
+
   const sub: SubCategory | undefined = draft.subCode ? findSub(draft.subCode)?.sub : undefined;
   const subs = draft.typeKey ? allowedSubs(draft.typeKey) : [];
 
@@ -91,9 +107,14 @@ export function useTxForm() {
     if (requires("capitalGain") && (!draft.disposal.costBasis.trim() || !draft.disposal.salePrice.trim())) {
       out.push("ต้นทุนและราคาขาย");
     }
-    // Backlog ข้อ 5: คืนเงินกู้ต้องแยกเงินต้น/ดอกเบี้ยก่อน
-    if (requires("principalInterestSplit") && !draft.repayment.amountPaid.trim()) {
-      out.push("ยอดที่จ่ายจริง (แยกเงินต้น/ดอกเบี้ย)");
+    // Backlog ข้อ 5: ถ้าไม่มีตารางงวดอ้างอิง ต้องระบุเงินต้น/ดอกเบี้ยเอง ระบบไม่เดาให้
+    if (
+      requires("principalInterestSplit") &&
+      isManualSplit(draft.repayment, draft.loanTerms.schedule.length > 0) &&
+      !draft.repayment.manualPrincipal.trim() &&
+      !draft.repayment.manualInterest.trim()
+    ) {
+      out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
   }, [draft, requires]);
@@ -103,7 +124,46 @@ export function useTxForm() {
     setStep(1);
   }, []);
 
-  return { step, setStep, draft, patch, pickType, sub, subs, requires, missing, reset };
+  /**
+   * แปลงฟอร์มเป็น input ของ ledger engine — **ที่เดียว** ที่ทำหน้าที่นี้
+   *
+   * ทั้งพรีวิวบรรทัดบัญชีและการบันทึกจริงต้องอ่านจากตัวนี้
+   * ส่วน `disposal` / `repayment` แผงเฉพาะทางเติมเองเพราะมันถือค่าที่กรอกไว้
+   */
+  const postingContext: PostingContext | null = React.useMemo(() => {
+    if (!draft.typeKey || !draft.subCode) return null;
+    return {
+      typeKey: draft.typeKey,
+      subCode: draft.subCode,
+      amount: parseAmount(draft.amount),
+      ownerId: draft.holderId,
+      bankAccountId: draft.bankId,
+      assetId: draft.assetId || undefined,
+      contactId: draft.contactId || undefined,
+      memo: draft.note || undefined,
+    };
+  }, [draft]);
+
+  /** ยอดสุทธิที่แผงขายทรัพย์คำนวณได้ ต้องเป็นจำนวนเงินของรายการเสมอ */
+  const setDerivedAmount = React.useCallback((n: number) => {
+    setDraft((d) => (parseAmount(d.amount) === n ? d : { ...d, amount: n.toFixed(2) }));
+  }, []);
+
+  return {
+    step,
+    setStep,
+    draft,
+    patch,
+    pickType,
+    pickHolder,
+    sub,
+    subs,
+    requires,
+    missing,
+    reset,
+    postingContext,
+    setDerivedAmount,
+  };
 }
 
 export type TxFormApi = ReturnType<typeof useTxForm>;

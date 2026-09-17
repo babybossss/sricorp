@@ -6,10 +6,11 @@
  *
  * ถ้ารวมเป็นก้อนเดียวแล้วลงเป็นค่าใช้จ่ายทั้งหมด จะได้กำไรต่ำกว่าจริง
  * และหนี้สินในงบดุลไม่ลดลงตามที่จ่ายไป — ผิดทั้งสองงบ
+ *
+ * ไฟล์นี้แยกตัวเลขอย่างเดียว **ไม่ประกอบบรรทัดบัญชี** — คู่บัญชีอยู่ที่ `lib/ledger/posting.ts`
  */
 
 import type { Installment } from "@/lib/loan/schedule";
-import type { JournalPreviewLine } from "./capital-gain";
 
 export type RepaymentInput = {
   /** ยอดที่จ่ายจริงงวดนี้ */
@@ -92,26 +93,4 @@ export function splitRepayment(input: RepaymentInput): RepaymentSplit {
         ? `จ่ายน้อยกว่างวด ${round2(installment.total - amountPaid)} บาท — ตัดดอกเบี้ยก่อน ที่เหลือเป็นเงินต้น`
         : `จ่ายเกินงวด ${round2(amountPaid - installment.total)} บาท — ส่วนเกินตัดเป็นเงินต้น`,
   };
-}
-
-/** บรรทัดบัญชีของการคืนเงินกู้ */
-export function repaymentJournal(
-  split: RepaymentSplit,
-  liabilityCoa: string,
-  liabilityName: string
-): JournalPreviewLine[] {
-  const lines: JournalPreviewLine[] = [];
-
-  if (split.principal > 0) {
-    // เงินต้นลดหนี้สิน ไม่ใช่ค่าใช้จ่าย
-    lines.push({ account: liabilityCoa, label: liabilityName, debit: split.principal, credit: 0 });
-  }
-  if (split.interest > 0) {
-    // ดอกเบี้ยเป็นค่าใช้จ่ายใน P&L
-    lines.push({ account: "5400", label: "ดอกเบี้ยจ่าย", debit: split.interest, credit: 0 });
-  }
-
-  lines.push({ account: "1100", label: "เงินสดและเงินฝากธนาคาร", debit: 0, credit: split.total });
-
-  return lines;
 }

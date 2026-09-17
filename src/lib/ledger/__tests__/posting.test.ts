@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPosting, assertBalanced, totalDebit, totalCredit, allLines } from "../posting";
+import { buildPosting, buildPostingDraft, assertBalanced, totalDebit, totalCredit, allLines } from "../posting";
 import { PostingError } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
 import { TX_TYPES, findSub } from "@/lib/rules/tx-rules";
@@ -627,5 +627,61 @@ describe("รับคืนเงินต้นพร้อมดอกเบ�
 
   it("ยังสมดุลแม้แตกเป็นสี่บรรทัด", () => {
     assertBalanced(allLines(redeem()));
+  });
+});
+
+/**
+ * `buildPostingDraft()` มีไว้ให้ฟอร์มพรีวิวบรรทัดก่อนแนบไฟล์
+ * จึงต้องพิสูจน์ว่า **ตัวที่ใช้บันทึกจริงยังบังคับครบ** ไม่มีทางลัด
+ */
+describe("พรีวิวผ่อนได้ แต่ทางที่บันทึกจริงต้องไม่ผ่อน", () => {
+  const corpSale = {
+    typeKey: "invest_sell" as const,
+    subCode: "inv.sell_re",
+    ownerId: "corp",
+    bankAccountId: "b1",
+    assetId: "rent1",
+    contactId: "c1",
+    amount: 3_000_000,
+    disposal: { costBasis: 2_450_000, salePrice: 3_000_000 },
+  };
+
+  it("นิติบุคคลยังไม่แนบไฟล์: พรีวิวเห็นบรรทัดได้", () => {
+    const r = buildPostingDraft(corpSale);
+    assertBalanced(allLines(r));
+    expect(allLines(r).some((l) => l.coaCode === "4300")).toBe(true);
+  });
+
+  it("นิติบุคคลยังไม่แนบไฟล์: บันทึกจริงไม่ได้", () => {
+    expect(() => buildPosting(corpSale)).toThrow(/ต้องแนบหลักฐาน/);
+    expect(() => buildPosting({ ...corpSale, attachments: ["deed.pdf"] })).not.toThrow();
+  });
+
+  it("นิติบุคคลไม่ระบุคู่ค้า: บันทึกจริงไม่ได้แม้แนบไฟล์แล้ว", () => {
+    expect(() =>
+      buildPosting({ ...corpSale, contactId: undefined, attachments: ["deed.pdf"] })
+    ).toThrow(/ต้องระบุคู่ค้า/);
+  });
+
+  it("โอนข้ามผู้ถือไปหานิติบุคคล: ขาที่สองก็ต้องผ่านกติกาของนิติบุคคล", () => {
+    // ผู้ถือต้นทางเป็นบุคคล จึงไม่มีอะไรดักถ้าตรวจแค่ input.ownerId
+    const crossToCorp = {
+      ...base,
+      typeKey: "transfer" as const,
+      subCode: "trf.internal",
+      transferToBankAccountId: "b1",
+      intercompanyNature: "loan" as const,
+    };
+    expect(buildPostingDraft(crossToCorp).transactions).toHaveLength(2);
+    expect(() => buildPosting(crossToCorp)).toThrow(/ต้องแนบหลักฐาน/);
+    expect(() =>
+      buildPosting({ ...crossToCorp, attachments: ["contract.pdf"], contactId: "c3" })
+    ).not.toThrow();
+  });
+
+  it("มุมมองรวมเลือกเป็นผู้ถือไม่ได้ ตั้งแต่ตอนพรีวิว", () => {
+    expect(() =>
+      buildPostingDraft({ ...base, ownerId: "family", typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" })
+    ).toThrow(/มุมมองรวม/);
   });
 });

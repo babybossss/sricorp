@@ -5,25 +5,42 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
 import { money, parseAmount } from "@/lib/format";
-import { computeDisposal, disposalJournal, isBalanced } from "@/lib/disposal/capital-gain";
-import { splitRepayment, repaymentJournal } from "@/lib/disposal/repayment";
+import { computeDisposal } from "@/lib/disposal/capital-gain";
+import { splitRepayment } from "@/lib/disposal/repayment";
+import { previewPosting } from "@/lib/ledger/preview";
+import type { PostingContext, PostingInput } from "@/lib/ledger/types";
 import type { Installment } from "@/lib/loan/schedule";
 import { cn } from "@/lib/utils";
 
-/** ตารางบรรทัดบัญชีที่ระบบจะลงให้ — ใช้ร่วมกันทั้งสองแผง */
-function JournalPreview({
-  lines,
-}: {
-  lines: { account: string; label: string; debit: number; credit: number }[];
-}) {
-  const balanced = isBalanced(lines);
+/**
+ * ตารางบรรทัดบัญชีที่ระบบจะลงให้
+ *
+ * ดึงจาก `previewPosting()` ซึ่งเรียก engine ตัวเดียวกับที่ใช้ลงบัญชีจริง
+ * ไม่คำนวณคู่บัญชีเอง — สิ่งที่เห็นตรงนี้คือสิ่งที่จะถูกบันทึกจริง
+ */
+function JournalPreview({ input }: { input: PostingInput | null }) {
+  const preview = input ? previewPosting(input) : null;
+
+  if (!preview) return null;
+
+  if (!preview.ok) {
+    return (
+      <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
+        ยังแสดงบรรทัดบัญชีไม่ได้: {preview.reason}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="text-sm font-semibold text-ink-600">ระบบจะลงบัญชีให้ดังนี้</div>
-        <Pill className={balanced ? "border-pos bg-pos-bg text-pos-fg" : "border-neg bg-neg-bg text-neg-fg"}>
-          {balanced ? "สมดุล ✓" : "ไม่สมดุล"}
-        </Pill>
+        <Pill className="border-pos bg-pos-bg text-pos-fg">สมดุล ✓</Pill>
+        {preview.transactionCount > 1 ? (
+          <Pill className="border-brand-100 bg-brand-50 text-brand-600">
+            {preview.transactionCount} รายการคู่กัน
+          </Pill>
+        ) : null}
       </div>
       <div className="overflow-hidden rounded border border-line">
         <table className="w-full border-collapse text-sm">
@@ -35,10 +52,11 @@ function JournalPreview({
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => (
-              <tr key={`${l.account}-${i}`} className="border-t border-line">
+            {preview.lines.map((l, i) => (
+              <tr key={`${l.coaCode}-${i}`} className="border-t border-line">
                 <td className="p-[8px_10px]">
-                  <span className="text-ink-400">{l.account}</span> {l.label}
+                  <span className="text-ink-400">{l.coaCode}</span> {l.label}
+                  {l.memo ? <span className="text-ink-400"> · {l.memo}</span> : null}
                 </td>
                 <td className="p-[8px_10px] text-right">{l.debit ? money(l.debit) : "–"}</td>
                 <td className="p-[8px_10px] text-right">{l.credit ? money(l.credit) : "–"}</td>
@@ -68,17 +86,22 @@ export const EMPTY_DISPOSAL: DisposalValue = {
 /**
  * Backlog ข้อ 4 — แผงคำนวณกำไร/ขาดทุนจากการขาย
  * ต้นทุนดึงมาให้ (ในระบบจริงมาจาก ledger) แก้ค่าธรรมเนียมได้ก่อนยืนยัน
+ *
+ * ยอดเงินของรายการนี้ **คำนวณจากราคาขาย − ค่าใช้จ่ายในการขาย** ไม่ให้พิมพ์เอง
+ * เพราะถ้าพิมพ์เองได้ ช่องจำนวนเงินกับตัวเลขในแผงนี้จะขัดกันเมื่อไรก็ได้
  */
 export function DisposalPanel({
   value,
   onChange,
-  assetCoa = "1500",
-  assetName = "อสังหาริมทรัพย์เพื่อการลงทุน",
+  context,
+  onDerivedAmount,
 }: {
   value: DisposalValue;
   onChange: (v: DisposalValue) => void;
-  assetCoa?: string;
-  assetName?: string;
+  /** ข้อมูลรายการที่ฟอร์มรู้แล้ว — ใช้เรียก engine ตัวจริงมาพรีวิว */
+  context: PostingContext | null;
+  /** ส่งยอดสุทธิที่คำนวณได้กลับไปให้ฟอร์ม เพื่อให้ช่องจำนวนเงินตรงกันเสมอ */
+  onDerivedAmount: (amount: number) => void;
 }) {
   const patch = (p: Partial<DisposalValue>) => onChange({ ...value, ...p });
 
@@ -94,6 +117,27 @@ export function DisposalPanel({
         unrealizedGain: parseAmount(value.unrealizedGain),
       })
     : null;
+
+  // ยอดสุทธิเปลี่ยนเมื่อไร ช่องจำนวนเงินของฟอร์มต้องตามทันที
+  const netProceeds = result?.netProceeds ?? null;
+  React.useEffect(() => {
+    if (netProceeds !== null && context && context.amount !== netProceeds) {
+      onDerivedAmount(netProceeds);
+    }
+  }, [netProceeds, context, onDerivedAmount]);
+
+  const input: PostingInput | null =
+    context && result
+      ? {
+          ...context,
+          amount: result.netProceeds,
+          disposal: {
+            costBasis: result.costBasis,
+            salePrice: result.salePrice,
+            sellingCosts: result.sellingCosts,
+          },
+        }
+      : null;
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
@@ -138,12 +182,15 @@ export function DisposalPanel({
 
           {result.unrealizedToReverse > 0 ? (
             <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
-              ⚠ กำไรยังไม่รับรู้ {money(result.unrealizedToReverse)} ของทรัพย์ชิ้นนี้จะถูก<b>ล้างออกพร้อมกัน</b> —
+              ⚠ กำไรยังไม่รับรู้ {money(result.unrealizedToReverse)} ของทรัพย์ชิ้นนี้ต้องถูก<b>ล้างออกด้วยรายการปรับปรุงแยกต่างหาก</b> —
               ไม่งั้นจะนับกำไรซ้ำสองรอบ (รอบแรกตอนตีราคา รอบสองตอนขายจริง)
+              <div className="mt-1 text-ink-600">
+                รายการตีราคายังไม่มีในระบบรอบนี้ ตัวเลขนี้จึงยังไม่ถูกลงบัญชีให้อัตโนมัติ
+              </div>
             </div>
           ) : null}
 
-          <JournalPreview lines={disposalJournal(result, assetCoa, assetName)} />
+          <JournalPreview input={input} />
         </>
       ) : (
         <div className="text-sm leading-6 text-ink-600">กรอกต้นทุนและราคาขายเพื่อดูกำไร/ขาดทุนก่อนยืนยัน</div>
@@ -153,43 +200,50 @@ export function DisposalPanel({
 }
 
 export type RepaymentValue = {
-  amountPaid: string;
   manualPrincipal: string;
   manualInterest: string;
   useManual: boolean;
 };
 
 export const EMPTY_REPAYMENT: RepaymentValue = {
-  amountPaid: "",
   manualPrincipal: "",
   manualInterest: "",
   useManual: false,
 };
 
 /**
+ * ต้องกรอกเงินต้น/ดอกเบี้ยเองหรือไม่
+ *
+ * ไม่มีตารางงวดอ้างอิง = บังคับกรอกเสมอ ไม่ว่าจะติ๊กช่องหรือไม่ — ระบบไม่เดาให้
+ * กฎนี้ต้องใช้ชุดเดียวกันทั้งในแผงและในรายการช่องที่ยังขาด ไม่งั้นจะปล่อยให้กดถัดไปทั้งที่ยังไม่ครบ
+ */
+export function isManualSplit(value: RepaymentValue, hasSchedule: boolean): boolean {
+  return value.useManual || !hasSchedule;
+}
+
+/**
  * Backlog ข้อ 5 — แผงแยกเงินต้น/ดอกเบี้ย
  * ดึงงวดที่ค้างจากสัญญามาตั้งค่าให้ แล้วให้ผู้ใช้ยืนยันหรือแก้ได้
+ *
+ * ยอดที่จ่ายใช้ช่อง "จำนวนเงิน" ของฟอร์มตัวเดียว ไม่มีช่องซ้ำในแผงนี้
  */
 export function RepaymentPanel({
   value,
   onChange,
   installment,
-  liabilityCoa = "2410",
-  liabilityName = "เงินกู้ธนาคาร",
+  context,
 }: {
   value: RepaymentValue;
   onChange: (v: RepaymentValue) => void;
   /** งวดที่ค้างตามสัญญา ถ้ามี */
   installment?: Installment;
-  liabilityCoa?: string;
-  liabilityName?: string;
+  context: PostingContext | null;
 }) {
   const patch = (p: Partial<RepaymentValue>) => onChange({ ...value, ...p });
 
-  const paid = parseAmount(value.amountPaid);
+  const paid = context?.amount ?? 0;
 
-  // ไม่มีตารางงวดอ้างอิง = ต้องกรอกเองเสมอ ไม่ว่าจะติ๊กช่องหรือไม่
-  const manualMode = value.useManual || !installment;
+  const manualMode = isManualSplit(value, !!installment);
   // ยังไม่กรอกอะไรเลยก็อย่าเพิ่งขึ้น error ให้ตกใจ
   const manualTouched = value.manualPrincipal.trim() !== "" || value.manualInterest.trim() !== "";
 
@@ -209,6 +263,11 @@ export function RepaymentPanel({
     }
   }
 
+  const input: PostingInput | null =
+    context && split
+      ? { ...context, repayment: { principal: split.principal, interest: split.interest } }
+      : null;
+
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
       <div className="text-base font-semibold">แยกเงินต้น / ดอกเบี้ย</div>
@@ -224,9 +283,10 @@ export function RepaymentPanel({
         </div>
       )}
 
-      <Field label="ยอดที่จ่ายจริง" required>
-        <Input value={value.amountPaid} onChange={(e) => patch({ amountPaid: e.target.value })} inputMode="decimal" />
-      </Field>
+      <div className="rounded border border-line bg-surface p-[12px_14px] text-sm leading-6 text-ink-600">
+        ยอดที่จ่ายจริง <b className="text-ink-900">{money(paid)}</b> — ใช้ตัวเลขจากช่อง “จำนวนเงิน” ด้านบน
+        {paid <= 0 ? <span className="text-warn-fg"> · ยังไม่ได้กรอก</span> : null}
+      </div>
 
       <label className="flex min-h-control items-center gap-2.5 text-base">
         <input
@@ -279,7 +339,7 @@ export function RepaymentPanel({
             </div>
           ) : null}
 
-          <JournalPreview lines={repaymentJournal(split, liabilityCoa, liabilityName)} />
+          <JournalPreview input={input} />
         </>
       ) : null}
     </div>
