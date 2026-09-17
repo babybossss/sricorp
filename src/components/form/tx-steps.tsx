@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { TX_TYPES, impactLines, REQUIREMENT_LABEL, type TxTypeKey } from "@/lib/rules/tx-rules";
-import { HOLDERS } from "@/lib/mock/entities";
+import { HOLDERS, entityById } from "@/lib/mock/entities";
 import { ASSETS } from "@/lib/mock/assets";
 import { useOrderedBanks } from "@/lib/store";
 import { Field } from "@/components/ui/field";
@@ -16,8 +16,11 @@ import { cn } from "@/lib/utils";
 import { ContactPicker } from "./contact-picker";
 import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
-import { money } from "@/lib/format";
-import type { TxFormApi } from "./use-tx-form";
+import { JournalPreview } from "./journal-preview";
+import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
+import { coa } from "@/lib/rules/coa";
+import { money, parseAmount } from "@/lib/format";
+import type { TxDraft, TxFormApi } from "./use-tx-form";
 
 /** ขั้น 1 — เลือกประเภทรายการ */
 export function StepType({ api, onPicked, narrow }: { api: TxFormApi; onPicked?: () => void; narrow?: boolean }) {
@@ -96,7 +99,7 @@ export function StepHolder({ api }: { api: TxFormApi }) {
         hint="เห็นเฉพาะบัญชีของผู้ถือที่เลือก · เรียงตามลำดับที่ตั้งไว้ใน ตั้งค่า › บัญชีธนาคาร"
         error={banks.length === 0 ? "ผู้ถือรายนี้ยังไม่มีบัญชีที่เปิดใช้งาน" : undefined}
       >
-        <Select value={api.draft.bankId} onChange={(e) => api.patch({ bankId: e.target.value })} disabled={banks.length === 0}>
+        <Select value={api.draft.bankId} onChange={(e) => api.pickBank(e.target.value)} disabled={banks.length === 0}>
           {banks.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -150,9 +153,23 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         </Field>
       </div>
 
-      <label className="flex min-h-control items-center gap-2.5 text-base">
-        <Checkbox checked={draft.notYetPaid} onChange={(e) => patch({ notYetPaid: e.target.checked })} />
-        ยังไม่ได้รับ/จ่ายเงิน (บันทึกเป็นค้างรับ-ค้างจ่าย)
+      <label className="flex min-h-control items-start gap-2.5 text-base">
+        <Checkbox
+          className="mt-0.5"
+          checked={draft.notYetPaid && api.canAccrue}
+          disabled={!api.canAccrue}
+          onChange={(e) => patch({ notYetPaid: e.target.checked })}
+        />
+        <span className={cn("leading-[26px]", !api.canAccrue && "text-ink-400")}>
+          ยังไม่ได้รับ/จ่ายเงิน (บันทึกเป็นค้างรับ-ค้างจ่าย)
+          {api.canAccrue && sub?.accrualCoa ? (
+            <span className="block text-sm text-ink-600">
+              จะลงเป็น {coa(sub.accrualCoa).nameTh} แทนเงินสด ยอดธนาคารยังไม่ขยับ
+            </span>
+          ) : (
+            <span className="block text-sm">หมวดนี้ตั้งค้างไม่ได้ — ต้องมีเงินเข้า/ออกจริง</span>
+          )}
+        </span>
       </label>
 
       {/* Backlog ข้อ 1 — หมวดย่อยมาจากตารางกฎของประเภทที่เลือก ไม่ใช่ dropdown อิสระ */}
@@ -161,7 +178,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         required
         hint={draft.typeKey ? `เลือกได้เฉพาะหมวดที่อยู่ใต้ประเภท “${TX_TYPES.find((t) => t.key === draft.typeKey)?.label}” เท่านั้น` : "เลือกประเภทรายการก่อน"}
       >
-        <Select value={draft.subCode} onChange={(e) => patch({ subCode: e.target.value })} disabled={!draft.typeKey}>
+        <Select value={draft.subCode} onChange={(e) => api.pickSub(e.target.value)} disabled={!draft.typeKey}>
           {subs.map((s) => (
             <option key={s.code} value={s.code}>
               {s.label}
@@ -200,6 +217,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         />
       </div>
 
+      {/* โอนระหว่างบัญชี — ต้องมีปลายทาง และถ้าข้ามผู้ถือต้องบอกว่าเป็นอะไร */}
+      {requires("transferTarget") ? <TransferSection api={api} narrow={narrow} /> : null}
+
       {/* Backlog ข้อ 2 — เงื่อนไขสัญญากู้/ให้กู้ */}
       {requires("loanTerms") ? (
         <LoanTermsSection api={api} contactLayer={contactLayer} />
@@ -210,7 +230,8 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         <DisposalPanel
           value={draft.disposal}
           onChange={(v) => patch({ disposal: v })}
-          context={api.postingContext}
+          result={api.disposal}
+          input={api.postingInput}
           onDerivedAmount={api.setDerivedAmount}
         />
       ) : null}
@@ -221,13 +242,87 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           value={draft.repayment}
           onChange={(v) => patch({ repayment: v })}
           installment={draft.loanTerms.schedule[0]}
-          context={api.postingContext}
+          paid={parseAmount(draft.amount)}
+          split={api.repayment.split}
+          error={api.repayment.error}
+          input={api.postingInput}
         />
       ) : null}
 
       <Field label="หมายเหตุ" hint="ไม่จำเป็นต้องกรอก">
         <Input value={draft.note} onChange={(e) => patch({ note: e.target.value })} placeholder="ไม่จำเป็นต้องกรอก" />
       </Field>
+    </div>
+  );
+}
+
+/**
+ * ปลายทางของการโอน และลักษณะของรายการเมื่อข้ามผู้ถือ
+ *
+ * ผู้ถือปลายทาง**อ่านจากบัญชีที่เลือก** ไม่ให้กรอกเอง — ถ้าให้กรอก ผู้ใช้เว้นได้
+ * แล้วรายการข้ามผู้ถือจะถูกลงเป็นการย้ายกระเป๋าธรรมดา เงินของอีกฝ่ายจะไปโผล่ในงบฝ่ายแรก
+ */
+function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) {
+  const { draft, patch, pickTransferTo, transferToOwnerId, isCrossOwner } = api;
+  const banks = useOrderedBanks(true).filter((b) => b.id !== draft.bankId);
+  const toOwner = transferToOwnerId ? entityById(transferToOwnerId) : null;
+
+  return (
+    <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
+      <div className="text-base font-semibold">ปลายทางของการโอน</div>
+
+      <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
+        <Field
+          label="โอนเข้าบัญชี"
+          required
+          error={!draft.transferToBankId ? "ต้องระบุบัญชีปลายทาง" : undefined}
+          hint="เลือกบัญชีของคนอื่นได้ ระบบจะรู้เองว่าเป็นรายการข้ามผู้ถือ"
+        >
+          <Select value={draft.transferToBankId} onChange={(e) => pickTransferTo(e.target.value)}>
+            <option value="">— เลือกบัญชีปลายทาง —</option>
+            {banks.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} · {entityById(b.ownerId).name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {isCrossOwner ? (
+          <Field
+            label="ลักษณะของรายการ"
+            required
+            error={!draft.intercompanyNature ? "ข้ามผู้ถือต้องระบุลักษณะ" : undefined}
+            hint="ตัวนี้เป็นตัวกำหนดคู่บัญชีของทั้งสองฝ่าย"
+          >
+            <Select
+              value={draft.intercompanyNature}
+              onChange={(e) => patch({ intercompanyNature: e.target.value as TxDraft["intercompanyNature"] })}
+            >
+              <option value="">— เลือกลักษณะ —</option>
+              {(Object.keys(INTERCOMPANY_RULES) as (keyof typeof INTERCOMPANY_RULES)[]).map((k) => (
+                <option key={k} value={k}>
+                  {INTERCOMPANY_RULES[k].label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
+      </div>
+
+      {isCrossOwner ? (
+        <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
+          ข้ามผู้ถือ — เงินออกจากชื่อ <b>{entityById(draft.holderId).name}</b> ไปเข้าชื่อ <b>{toOwner?.name}</b>{" "}
+          ระบบจะสร้าง<b>สองรายการคู่กัน</b> ฝ่ายละหนึ่ง เพราะหนึ่งรายการมีผู้ถือได้คนเดียว
+          {draft.intercompanyNature ? (
+            <div className="mt-1 text-ink-600">{INTERCOMPANY_RULES[draft.intercompanyNature].note}</div>
+          ) : null}
+        </div>
+      ) : draft.transferToBankId ? (
+        <div className="rounded border border-brand-100 bg-brand-50 p-[12px_14px] text-sm leading-6">
+          ย้ายกระเป๋าภายในชื่อเดียวกัน — ยอดรวมกองกลางไม่เปลี่ยน ไม่เข้างบกำไรขาดทุนและไม่นับในงบกระแสเงินสด
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -329,6 +424,7 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
   const bank = banks.find((b) => b.id === draft.bankId);
   const asset = ASSETS.find((a) => a.id === draft.assetId);
   const typeLabel = TX_TYPES.find((t) => t.key === draft.typeKey);
+  const isCorp = holder?.policy === "corporate_strict";
 
   const summary = [
     { k: "ประเภท", v: typeLabel ? `${typeLabel.label} · ${sub?.label ?? "—"}` : "—" },
@@ -339,19 +435,52 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
     { k: "ทรัพย์ที่ผูก", v: asset?.name ?? "—" },
   ];
 
+  // รอบนี้ยังไม่มีที่เก็บไฟล์จริง — จำลองการแนบเพื่อให้เห็นว่ากติกานิติบุคคลทำงานจริง
+  const addMockFile = () =>
+    patch({ attachments: [...draft.attachments, `หลักฐาน-${draft.attachments.length + 1}.pdf`] });
+  const removeFile = (i: number) =>
+    patch({ attachments: draft.attachments.filter((_, n) => n !== i) });
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-card border-2 border-dashed border-line bg-canvas p-6 text-center">
         <div className="text-base font-semibold">ลากไฟล์มาวาง หรือเลือกไฟล์</div>
         <div className="m-[4px_0_12px] text-sm text-ink-600">สลิปโอนเงิน · ใบเสร็จ · ใบแจ้งหนี้ (PDF/JPG)</div>
         <div className="flex flex-wrap justify-center gap-2.5">
-          <button type="button" className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold">
+          <button
+            type="button"
+            onClick={addMockFile}
+            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold"
+          >
             เลือกไฟล์
           </button>
-          <button type="button" className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold">
+          <button
+            type="button"
+            onClick={addMockFile}
+            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold"
+          >
             ถ่ายรูป
           </button>
         </div>
+        {draft.attachments.length ? (
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {draft.attachments.map((f, i) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => removeFile(i)}
+                className="flex min-h-[44px] items-center gap-2 rounded border border-line bg-surface px-3 text-sm"
+              >
+                📎 {f} <span className="text-ink-400">เอาออก</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {isCorp && draft.attachments.length === 0 ? (
+          <div className="mt-3 text-sm leading-6 text-warn-fg">
+            {holder?.name} เป็นนิติบุคคล — ต้องมีไฟล์หลักฐานอย่างน้อยหนึ่งไฟล์ก่อนบันทึก
+          </div>
+        ) : null}
       </div>
 
       {sub ? <ImpactPreview subCode={sub.code} /> : null}
@@ -366,9 +495,19 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
         ))}
       </div>
 
+      {/* บรรทัดบัญชีที่จะถูกบันทึกจริง — มาจาก engine ตัวเดียวกับที่ post */}
+      <JournalPreview input={api.postingInput} showSummary />
+
       {missing.length ? (
         <div className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
           ยังกรอกไม่ครบตามกฎของหมวดย่อยนี้: {missing.join(" · ")}
+        </div>
+      ) : null}
+
+      {/* เหตุที่ระบบจะไม่รับ ถึงกรอกครบแล้วก็ตาม — เช่น นิติบุคคลยังไม่แนบหลักฐาน */}
+      {api.postingError ? (
+        <div className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+          ยังบันทึกไม่ได้: {api.postingError}
         </div>
       ) : null}
 

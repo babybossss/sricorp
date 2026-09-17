@@ -97,6 +97,21 @@ function assertRequirements(sub: SubCategory, input: PostingInput): void {
 }
 
 /**
+ * บัญชีค้างรับ/ค้างจ่ายของหมวดนี้ — อ่านจากตารางกฎ ไม่เดา
+ *
+ * หมวดที่ตารางกฎไม่ได้บอกไว้ แปลว่ายังไม่ได้ตัดสินใจว่าลูกหนี้/เจ้าหนี้ตัวนี้อยู่บรรทัดไหน
+ * จึงต้องปฏิเสธ ไม่ใช่ยัดลง "ลูกหนี้อื่น" ให้พ้นๆ ไป
+ */
+function accrualAccount(sub: SubCategory): string {
+  if (!sub.accrualCoa) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ตารางกฎยังไม่ได้ระบุบัญชีลูกหนี้/เจ้าหนี้ของหมวดนี้`
+    );
+  }
+  return sub.accrualCoa;
+}
+
+/**
  * ผู้ถือต้องเป็นตัวตนที่ถือทรัพย์ได้จริง — "SRI Family (รวม)" เป็นมุมมองรวม ไม่ใช่เจ้าของ
  * เป็นเงื่อนไขเชิงโครงสร้าง ไม่ใช่นโยบายเอกสาร จึงตรวจตั้งแต่ตอนสร้างบรรทัด
  */
@@ -161,11 +176,18 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
 
   assertRequirements(sub, input);
 
+  // เส้นทางพิเศษทั้งสามล้วนเป็นเรื่องของเงินที่เคลื่อนแล้ว — ตั้งค้างไม่ได้
+  // โอนที่ยังไม่โอนคือยังไม่เกิดรายการ · ขายที่ยังไม่ได้รับเงินต้องบันทึกเป็นลูกหนี้ของทรัพย์แยกต่างหาก
+  if (input.notYetPaid && !sub.accrualCoa) accrualAccount(sub);
+
   const summary: string[] = [sub.plain];
   const transactions: PostingTransaction[] = [];
 
-  if (sub.code === "trf.internal") {
+  if (sub.requires?.includes("transferTarget")) {
     // ---------- โอนระหว่างบัญชี ----------
+    // ดูจากธงในตารางกฎ ไม่ใช่รหัสหมวด — หมวดโอนตัวที่สองในอนาคตจะได้ไม่ตกไปเส้นทางปกติ
+    // ซึ่งจะเดบิตและเครดิตบัญชีเงินสดเดียวกัน กลายเป็นรายการว่างที่สมดุลผ่านทุกด่าน
+    // แล้วบัญชีปลายทางถูกทิ้งเงียบๆ
     const to = input.transferToBankAccountId;
     if (!to) throw new PostingError("โอนระหว่างบัญชีต้องระบุบัญชีปลายทาง");
     if (to === input.bankAccountId) throw new PostingError("โอนเข้าบัญชีเดียวกันไม่ได้");
@@ -325,28 +347,43 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
     transactions.push({ ownerId: input.ownerId, lines });
   } else {
     // ---------- รายการปกติสองบรรทัด ----------
-    const drIsCash = isCashAccount(sub.dr);
-    const crIsCash = isCashAccount(sub.cr);
+    // ยังไม่ได้รับ/จ่ายเงิน = ขาเงินสดกลายเป็นลูกหนี้/เจ้าหนี้ และไม่นับในงบกระแสเงินสด
+    // เพราะเงินยังไม่เคลื่อนจริง ถ้าลงเงินสดไว้ก่อนจะกระทบยอดกับ statement ไม่ได้
+    const accrual = input.notYetPaid ? accrualAccount(sub) : null;
+    const cfCategory = accrual ? "none" : sub.cashflow;
+    const accountFor = (code: string) => (accrual && isCashAccount(code) ? accrual : code);
+
+    const drCode = accountFor(sub.dr);
+    const crCode = accountFor(sub.cr);
+    const drIsCash = isCashAccount(drCode);
+    const crIsCash = isCashAccount(crCode);
 
     transactions.push({
       ownerId: input.ownerId,
       lines: [
         line({
-          coaCode: sub.dr,
+          coaCode: drCode,
           bankAccountId: drIsCash ? input.bankAccountId : undefined,
-          assetId: coa(sub.dr).type === "asset" && !drIsCash ? input.assetId : undefined,
+          assetId: coa(drCode).type === "asset" && !drIsCash ? input.assetId : undefined,
           debit: amount,
-          cfCategory: sub.cashflow,
+          cfCategory,
         }),
         line({
-          coaCode: sub.cr,
+          coaCode: crCode,
           bankAccountId: crIsCash ? input.bankAccountId : undefined,
-          assetId: coa(sub.cr).type === "asset" && !crIsCash ? input.assetId : undefined,
+          assetId: coa(crCode).type === "asset" && !crIsCash ? input.assetId : undefined,
           credit: amount,
-          cfCategory: sub.cashflow,
+          cfCategory,
         }),
       ],
     });
+
+    if (accrual) {
+      summary.push(
+        `ยังไม่ได้รับ/จ่ายเงิน — ลงเป็น ${coa(accrual).nameTh} แทนเงินสด ` +
+          "ยอดธนาคารยังไม่ขยับ และยังไม่นับในงบกระแสเงินสด"
+      );
+    }
   }
 
   if (input.memo) {

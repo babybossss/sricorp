@@ -179,3 +179,64 @@ describe("คำอธิบายผลกระทบต้องตรงก�
     }
   });
 });
+
+/**
+ * ตั้งค้างรับ-ค้างจ่ายได้ แต่ล้างไม่ได้ = ลูกหนี้/เจ้าหนี้ค้างในงบดุลตลอดไป
+ * และผู้ใช้จะเผลอลงรายได้ซ้ำตอนเงินเข้าจริง
+ */
+describe("ค้างรับ-ค้างจ่ายต้องมีทางล้าง", () => {
+  const accrualAccounts = [...new Set(allSubs.map((s) => s.accrualCoa).filter(Boolean))] as string[];
+
+  it("มีหมวดตั้งค้างอย่างน้อยฝั่งรายได้และฝั่งค่าใช้จ่าย", () => {
+    expect(accrualAccounts.length).toBeGreaterThan(0);
+  });
+
+  it("ทุกบัญชีค้างรับ-ค้างจ่าย ต้องมีหมวดที่รับ/จ่ายเงินมาล้างได้", () => {
+    for (const account of accrualAccounts) {
+      const settles = allSubs.filter(
+        (s) => (s.dr === account || s.cr === account) && (isCashAccount(s.dr) || isCashAccount(s.cr))
+      );
+      expect(settles.length, `${account} ${coa(account).nameTh} ไม่มีหมวดสำหรับล้าง`).toBeGreaterThan(0);
+    }
+  });
+
+  it("หมวดที่ล้างลูกหนี้/เจ้าหนี้ ต้องไม่กระทบกำไรขาดทุนซ้ำ", () => {
+    // รายได้รับรู้ไปแล้วตอนตั้งค้าง ถ้าหมวดล้างแตะ P&L อีก จะนับซ้ำสองรอบ
+    for (const account of accrualAccounts) {
+      for (const s of allSubs) {
+        if (s.dr !== account && s.cr !== account) continue;
+        if (!isCashAccount(s.dr) && !isCashAccount(s.cr)) continue;
+        expect(affectsPL(s), s.code).toBe(false);
+      }
+    }
+  });
+
+  it("บัญชีค้างทุกตัวต้องอยู่ในผังบัญชี และเป็นสินทรัพย์หรือหนี้สิน", () => {
+    for (const account of accrualAccounts) {
+      const type = coa(account).type;
+      expect(["asset", "liability"], account).toContain(type);
+    }
+  });
+});
+
+/**
+ * บัญชีค้างชี้ผิดข้างจะไม่มีใครเห็น — หมวดรายได้ที่ชี้ไปบัญชีหนี้สิน
+ * จะกลายเป็น "เดบิตลดเจ้าหนี้" ทั้งที่ควรเป็น "เดบิตเพิ่มลูกหนี้"
+ */
+describe("บัญชีค้างต้องชี้ถูกข้าง", () => {
+  it("หมวดเงินเข้าต้องตั้งเป็นลูกหนี้ (สินทรัพย์) · เงินออกต้องเป็นเจ้าหนี้ (หนี้สิน)", () => {
+    for (const s of allSubs) {
+      if (!s.accrualCoa) continue;
+      const expected = s.cash === "in" ? "asset" : "liability";
+      expect(coa(s.accrualCoa).type, `${s.code} → ${s.accrualCoa}`).toBe(expected);
+    }
+  });
+
+  it("หมวดที่ตั้งค้างได้ ต้องมีขาเงินสดให้แทนที่", () => {
+    // ไม่มีขาเงินสด = ไม่รู้จะเอา accrualCoa ไปแทนบรรทัดไหน
+    for (const s of allSubs) {
+      if (!s.accrualCoa) continue;
+      expect(isCashAccount(s.dr) || isCashAccount(s.cr), s.code).toBe(true);
+    }
+  });
+});

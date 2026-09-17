@@ -4,70 +4,13 @@ import * as React from "react";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
-import { money, parseAmount } from "@/lib/format";
-import { computeDisposal } from "@/lib/disposal/capital-gain";
-import { splitRepayment } from "@/lib/disposal/repayment";
-import { previewPosting } from "@/lib/ledger/preview";
-import type { PostingContext, PostingInput } from "@/lib/ledger/types";
+import { money } from "@/lib/format";
+import type { DisposalResult } from "@/lib/disposal/capital-gain";
+import type { RepaymentSplit } from "@/lib/disposal/repayment";
+import type { PostingInput } from "@/lib/ledger/types";
 import type { Installment } from "@/lib/loan/schedule";
+import { JournalPreview } from "./journal-preview";
 import { cn } from "@/lib/utils";
-
-/**
- * ตารางบรรทัดบัญชีที่ระบบจะลงให้
- *
- * ดึงจาก `previewPosting()` ซึ่งเรียก engine ตัวเดียวกับที่ใช้ลงบัญชีจริง
- * ไม่คำนวณคู่บัญชีเอง — สิ่งที่เห็นตรงนี้คือสิ่งที่จะถูกบันทึกจริง
- */
-function JournalPreview({ input }: { input: PostingInput | null }) {
-  const preview = input ? previewPosting(input) : null;
-
-  if (!preview) return null;
-
-  if (!preview.ok) {
-    return (
-      <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
-        ยังแสดงบรรทัดบัญชีไม่ได้: {preview.reason}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="text-sm font-semibold text-ink-600">ระบบจะลงบัญชีให้ดังนี้</div>
-        <Pill className="border-pos bg-pos-bg text-pos-fg">สมดุล ✓</Pill>
-        {preview.transactionCount > 1 ? (
-          <Pill className="border-brand-100 bg-brand-50 text-brand-600">
-            {preview.transactionCount} รายการคู่กัน
-          </Pill>
-        ) : null}
-      </div>
-      <div className="overflow-hidden rounded border border-line">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="bg-canvas">
-              <th className="p-[8px_10px] text-left font-semibold text-ink-600">บัญชี</th>
-              <th className="p-[8px_10px] text-right font-semibold text-ink-600">เดบิต</th>
-              <th className="p-[8px_10px] text-right font-semibold text-ink-600">เครดิต</th>
-            </tr>
-          </thead>
-          <tbody>
-            {preview.lines.map((l, i) => (
-              <tr key={`${l.coaCode}-${i}`} className="border-t border-line">
-                <td className="p-[8px_10px]">
-                  <span className="text-ink-400">{l.coaCode}</span> {l.label}
-                  {l.memo ? <span className="text-ink-400"> · {l.memo}</span> : null}
-                </td>
-                <td className="p-[8px_10px] text-right">{l.debit ? money(l.debit) : "–"}</td>
-                <td className="p-[8px_10px] text-right">{l.credit ? money(l.credit) : "–"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 export type DisposalValue = {
   costBasis: string;
@@ -93,51 +36,26 @@ export const EMPTY_DISPOSAL: DisposalValue = {
 export function DisposalPanel({
   value,
   onChange,
-  context,
+  result,
+  input,
   onDerivedAmount,
 }: {
   value: DisposalValue;
   onChange: (v: DisposalValue) => void;
-  /** ข้อมูลรายการที่ฟอร์มรู้แล้ว — ใช้เรียก engine ตัวจริงมาพรีวิว */
-  context: PostingContext | null;
+  /** ผลคำนวณจาก `useTxForm()` — แผงไม่คิดเลขเอง */
+  result: DisposalResult | null;
+  /** input ที่จะส่งเข้า engine จริง ใช้พรีวิวบรรทัดบัญชี */
+  input: PostingInput | null;
   /** ส่งยอดสุทธิที่คำนวณได้กลับไปให้ฟอร์ม เพื่อให้ช่องจำนวนเงินตรงกันเสมอ */
   onDerivedAmount: (amount: number) => void;
 }) {
   const patch = (p: Partial<DisposalValue>) => onChange({ ...value, ...p });
 
-  const cost = parseAmount(value.costBasis);
-  const price = parseAmount(value.salePrice);
-  const ready = cost > 0 && price > 0;
-
-  const result = ready
-    ? computeDisposal({
-        costBasis: cost,
-        salePrice: price,
-        sellingCosts: parseAmount(value.sellingCosts),
-        unrealizedGain: parseAmount(value.unrealizedGain),
-      })
-    : null;
-
   // ยอดสุทธิเปลี่ยนเมื่อไร ช่องจำนวนเงินของฟอร์มต้องตามทันที
   const netProceeds = result?.netProceeds ?? null;
   React.useEffect(() => {
-    if (netProceeds !== null && context && context.amount !== netProceeds) {
-      onDerivedAmount(netProceeds);
-    }
-  }, [netProceeds, context, onDerivedAmount]);
-
-  const input: PostingInput | null =
-    context && result
-      ? {
-          ...context,
-          amount: result.netProceeds,
-          disposal: {
-            costBasis: result.costBasis,
-            salePrice: result.salePrice,
-            sellingCosts: result.sellingCosts,
-          },
-        }
-      : null;
+    if (netProceeds !== null) onDerivedAmount(netProceeds);
+  }, [netProceeds, onDerivedAmount]);
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
@@ -163,14 +81,14 @@ export function DisposalPanel({
           <div className="flex flex-wrap items-center gap-4 rounded border border-line bg-surface p-[14px_16px]">
             <div>
               <div className="text-sm text-ink-600">เงินที่ได้สุทธิ</div>
-              <div className="text-h2 font-semibold">{money(result.netProceeds)}</div>
+              <div className="text-h2 font-semibold tabular-nums">{money(result.netProceeds)}</div>
             </div>
             <div>
               <div className="text-sm text-ink-600">
                 {result.isGain ? "กำไรจากการขาย" : "ขาดทุนจากการขาย"}{" "}
                 <span className="text-ink-400">Capital {result.isGain ? "gain" : "loss"}</span>
               </div>
-              <div className={cn("text-h2 font-semibold", result.isGain ? "text-pos" : "text-neg")}>
+              <div className={cn("text-h2 font-semibold tabular-nums", result.isGain ? "text-pos" : "text-neg")}>
                 {result.isGain ? "+" : "−"}
                 {money(Math.abs(result.capitalGain))}
               </div>
@@ -231,42 +149,24 @@ export function RepaymentPanel({
   value,
   onChange,
   installment,
-  context,
+  paid,
+  split,
+  error,
+  input,
 }: {
   value: RepaymentValue;
   onChange: (v: RepaymentValue) => void;
   /** งวดที่ค้างตามสัญญา ถ้ามี */
   installment?: Installment;
-  context: PostingContext | null;
+  /** ยอดที่จ่ายจริง มาจากช่อง "จำนวนเงิน" ของฟอร์ม ไม่มีช่องซ้ำในแผงนี้ */
+  paid: number;
+  /** ผลการแยกจาก `useTxForm()` — แผงไม่แยกเอง */
+  split: RepaymentSplit | null;
+  error: string | null;
+  input: PostingInput | null;
 }) {
   const patch = (p: Partial<RepaymentValue>) => onChange({ ...value, ...p });
-
-  const paid = context?.amount ?? 0;
-
   const manualMode = isManualSplit(value, !!installment);
-  // ยังไม่กรอกอะไรเลยก็อย่าเพิ่งขึ้น error ให้ตกใจ
-  const manualTouched = value.manualPrincipal.trim() !== "" || value.manualInterest.trim() !== "";
-
-  let split: ReturnType<typeof splitRepayment> | null = null;
-  let error: string | null = null;
-
-  if (paid > 0 && (!manualMode || manualTouched)) {
-    try {
-      split = splitRepayment({
-        amountPaid: paid,
-        installment,
-        manualPrincipal: manualMode ? parseAmount(value.manualPrincipal) : undefined,
-        manualInterest: manualMode ? parseAmount(value.manualInterest) : undefined,
-      });
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  const input: PostingInput | null =
-    context && split
-      ? { ...context, repayment: { principal: split.principal, interest: split.interest } }
-      : null;
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
@@ -284,7 +184,7 @@ export function RepaymentPanel({
       )}
 
       <div className="rounded border border-line bg-surface p-[12px_14px] text-sm leading-6 text-ink-600">
-        ยอดที่จ่ายจริง <b className="text-ink-900">{money(paid)}</b> — ใช้ตัวเลขจากช่อง “จำนวนเงิน” ด้านบน
+        ยอดที่จ่ายจริง <b className="tabular-nums text-ink-900">{money(paid)}</b> — ใช้ตัวเลขจากช่อง “จำนวนเงิน” ด้านบน
         {paid <= 0 ? <span className="text-warn-fg"> · ยังไม่ได้กรอก</span> : null}
       </div>
 
@@ -320,11 +220,11 @@ export function RepaymentPanel({
           <div className="flex flex-wrap items-center gap-6 rounded border border-line bg-surface p-[14px_16px]">
             <div>
               <div className="text-sm text-ink-600">เงินต้น <span className="text-ink-400">ลดหนี้สิน</span></div>
-              <div className="text-h2 font-semibold">{money(split.principal)}</div>
+              <div className="text-h2 font-semibold tabular-nums">{money(split.principal)}</div>
             </div>
             <div>
               <div className="text-sm text-ink-600">ดอกเบี้ย <span className="text-ink-400">ค่าใช้จ่าย</span></div>
-              <div className="text-h2 font-semibold text-neg">{money(split.interest)}</div>
+              <div className="text-h2 font-semibold tabular-nums text-neg">{money(split.interest)}</div>
             </div>
             {split.isPartial ? (
               <Pill className="border-warn bg-warn-bg text-warn-fg">ไม่ตรงงวด</Pill>

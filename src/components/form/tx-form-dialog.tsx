@@ -14,7 +14,7 @@ const STEP_LABELS = ["เลือกประเภท", "ผู้ถือ & 
 export function TxFormDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const api = useTxForm();
   const showToast = useApp((s) => s.showToast);
-  const { step, setStep, draft, missing, reset } = api;
+  const { step, setStep, draft, canSubmit, reset } = api;
 
   function close() {
     onOpenChange(false);
@@ -27,12 +27,12 @@ export function TxFormDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       setStep(step + 1);
       return;
     }
-    if (missing.length) return;
+    if (!canSubmit) return;
     showToast(draft.skipApproval ? "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ" : "ส่งอนุมัติแล้ว 1 รายการ");
     close();
   }
 
-  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && missing.length > 0);
+  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && !canSubmit);
 
   return (
     <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : close())}>

@@ -20,20 +20,20 @@ export function MobileTxForm() {
   const router = useRouter();
   const api = useTxForm();
   const showToast = useApp((s) => s.showToast);
-  const { step, setStep, draft, missing, reset } = api;
+  const { step, setStep, draft, canSubmit, reset } = api;
 
   function next() {
     if (step < 4) {
       setStep(step + 1);
       return;
     }
-    if (missing.length) return;
+    if (!canSubmit) return;
     showToast(draft.skipApproval ? "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ" : "ส่งอนุมัติแล้ว 1 รายการ");
     reset();
     router.push("/m");
   }
 
-  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && missing.length > 0);
+  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && !canSubmit);
 
   return (
     <div className="min-h-screen bg-canvas py-6">

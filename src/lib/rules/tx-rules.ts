@@ -44,7 +44,8 @@ export type FormRequirement =
   | "asset" // ต้องผูกทรัพย์
   | "loanTerms" // ต้องเปิดฟอร์มเงื่อนไขสัญญา (Backlog ข้อ 2)
   | "capitalGain" // ต้องคำนวณกำไร/ขาดทุนจากการขาย (Backlog ข้อ 4)
-  | "principalInterestSplit"; // ต้องแยกเงินต้น/ดอกเบี้ย (Backlog ข้อ 5)
+  | "principalInterestSplit" // ต้องแยกเงินต้น/ดอกเบี้ย (Backlog ข้อ 5)
+  | "transferTarget"; // ต้องระบุบัญชีปลายทาง (และลักษณะรายการถ้าข้ามผู้ถือ)
 
 export type SubCategory = {
   code: string;
@@ -66,6 +67,13 @@ export type SubCategory = {
   gainCoa?: string;
   /** บัญชีรับรู้ขาดทุนจากการขาย */
   lossCoa?: string;
+  /**
+   * บัญชีค้างรับ/ค้างจ่ายของหมวดนี้ — ใช้เมื่อผู้ใช้ติ๊ก "ยังไม่ได้รับ/จ่ายเงิน"
+   *
+   * ไม่มีค่านี้ = หมวดนี้ตั้งค้างไม่ได้ ระบบจะปฏิเสธแทนที่จะเดาบัญชีให้
+   * (เดาผิด = ลูกหนี้ไปโผล่ผิดบรรทัดในงบดุล ซึ่งไม่มีทางเห็นจากหน้าจอ)
+   */
+  accrualCoa?: string;
   /** บัญชีดอกเบี้ยจ่าย (เฉพาะหมวดที่ `requires: principalInterestSplit`) */
   interestCoa?: string;
   requires?: FormRequirement[];
@@ -102,6 +110,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4200",
+        accrualCoa: "1200",
         requires: ["asset", "contact"],
       },
       {
@@ -113,6 +122,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4210",
+        accrualCoa: "1200",
         requires: ["asset", "contact"],
       },
       {
@@ -124,6 +134,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4100",
+        accrualCoa: "1210",
         requires: ["contact"],
         caution: "ถ้ารับเงินต้นคืนด้วย ให้แยกบันทึกเงินต้นที่ ลงทุน (ขาย/รับคืน) › รับคืนเงินต้นขายฝาก",
       },
@@ -136,6 +147,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4110",
+        accrualCoa: "1210",
         requires: ["contact"],
         caution: "ถ้ารับเงินต้นคืนด้วย ให้แยกบันทึกเงินต้นที่ ลงทุน (ขาย/รับคืน) › รับคืนเงินต้นจำนอง",
       },
@@ -148,6 +160,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4120",
+        accrualCoa: "1210",
         requires: ["contact"],
       },
       {
@@ -211,6 +224,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5100",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
       },
       {
@@ -222,6 +236,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5110",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
       },
       {
@@ -233,6 +248,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5120",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
         caution: "ถ้าเป็นการปรับปรุงที่ทำให้มูลค่าทรัพย์เพิ่ม ให้ลงที่ ลงทุน (ซื้อ/ปล่อยเงิน) › ค่ารีโนเวท แทน",
       },
@@ -245,6 +261,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5130",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
         caution: "ของที่อายุใช้งานยาวและมูลค่าสูง ควรลงเป็นค่ารีโนเวท (บันทึกเป็นทุน) แทน",
       },
@@ -257,6 +274,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5140",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
       },
       {
@@ -268,6 +286,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5200",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
       },
       {
@@ -279,6 +298,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5210",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
       },
       {
@@ -290,6 +310,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5220",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.land_office",
@@ -300,6 +321,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5300",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
         caution: "ค่าธรรมเนียมที่เกิดตอนซื้อทรัพย์ ควรรวมเป็นต้นทุนทรัพย์ (ลงทุน) ไม่ใช่ค่าใช้จ่ายงวดนี้",
       },
@@ -312,6 +334,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5310",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.legal",
@@ -322,6 +345,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5320",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.bank_charge",
@@ -332,6 +356,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5330",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.salary",
@@ -342,6 +367,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5500",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.travel",
@@ -352,6 +378,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5510",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.office",
@@ -362,6 +389,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5520",
         cr: CASH,
+        accrualCoa: "2100",
       },
       {
         code: "exp.other",
@@ -372,6 +400,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "5900",
         cr: CASH,
+        accrualCoa: "2100",
         caution: "ฝั่ง Corporate ห้ามใช้หมวดนี้แบบไม่ระบุ ต้องเลือกหมวดที่ตรงกว่าเสมอ",
       },
     ],
@@ -552,6 +581,32 @@ export const TX_TYPES: TxType[] = [
         cr: "1600",
         requires: ["contact"],
       },
+      // คู่ของการตั้งค้างรับ — ไม่มีสองหมวดนี้ ลูกหนี้ที่ตั้งไว้จะค้างในงบดุลตลอดไป
+      // และผู้ใช้จะเผลอลงรายได้ซ้ำตอนเงินเข้าจริง
+      {
+        code: "inv.collect_rent",
+        label: "รับชำระค่าเช่าค้างรับ",
+        en: "Rent receivable collected",
+        plain: "เงินเข้าบัญชีเพิ่มขึ้น และลูกหนี้ค่าเช่าลดลง — ไม่ใช่รายได้ใหม่ รับรู้ไปแล้วตอนตั้งค้าง",
+        cash: "in",
+        cashflow: "operating",
+        dr: CASH,
+        cr: "1200",
+        requires: ["contact"],
+        caution: "ถ้ายังไม่เคยตั้งค้างรับไว้ ให้ลงเป็นรายได้ › ค่าเช่า ตรงๆ แทน ไม่งั้นรายได้จะหาย",
+      },
+      {
+        code: "inv.collect_interest",
+        label: "รับชำระดอกเบี้ยค้างรับ",
+        en: "Interest receivable collected",
+        plain: "เงินเข้าบัญชีเพิ่มขึ้น และลูกหนี้ดอกเบี้ยลดลง — ไม่ใช่รายได้ใหม่ รับรู้ไปแล้วตอนตั้งค้าง",
+        cash: "in",
+        cashflow: "operating",
+        dr: CASH,
+        cr: "1210",
+        requires: ["contact"],
+        caution: "ถ้ายังไม่เคยตั้งค้างรับไว้ ให้ลงเป็นรายได้ › ดอกเบี้ยรับ ตรงๆ แทน ไม่งั้นรายได้จะหาย",
+      },
     ],
   },
   {
@@ -716,6 +771,7 @@ export const TX_TYPES: TxType[] = [
         plain: "เงินย้ายจากบัญชีหนึ่งไปอีกบัญชี ยอดรวมกองกลางไม่เปลี่ยน",
         cash: "both",
         cashflow: "none",
+        requires: ["transferTarget"],
         dr: CASH,
         cr: CASH,
         caution: "ไม่นับในงบกระแสเงินสด และตัดออกจากงบรวม จึงไม่กระทบกำไรขาดทุนและ NAV",
@@ -880,6 +936,7 @@ export const REQUIREMENT_LABEL: Record<FormRequirement, string> = {
   loanTerms: "ต้องกรอกเงื่อนไขสัญญา",
   capitalGain: "คำนวณกำไร/ขาดทุนจากการขาย",
   principalInterestSplit: "ต้องแยกเงินต้น/ดอกเบี้ย",
+  transferTarget: "ต้องระบุบัญชีปลายทาง",
 };
 
 export const CASHFLOW_LABEL = CF_TH;

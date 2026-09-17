@@ -57,6 +57,13 @@ describe("พรีวิวบรรทัดบัญชี", () => {
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.transactionCount).toBe(2);
+    expect(r.transactions).toHaveLength(2);
+    expect(r.transactions.map((t) => t.ownerId)).toEqual(["thanakorn", "thanawin"]);
+    // แต่ละรายการต้องสมดุลในตัวเอง ไม่ใช่สมดุลรวมกัน
+    for (const t of r.transactions) {
+      const dr = t.lines.reduce((n, l) => n + l.debit, 0);
+      const cr = t.lines.reduce((n, l) => n + l.credit, 0);
+      expect(dr).toBe(cr);
+    }
   });
 });

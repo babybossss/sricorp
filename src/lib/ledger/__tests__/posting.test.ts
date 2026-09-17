@@ -685,3 +685,87 @@ describe("พรีวิวผ่อนได้ แต่ทางที่บ
     ).toThrow(/มุมมองรวม/);
   });
 });
+
+/**
+ * ยังไม่ได้รับ/จ่ายเงิน — ถ้าลงเงินสดไว้ก่อน ยอดธนาคารจะไม่ตรง statement
+ * และกระทบยอดกับธนาคารไม่ได้ (Money Invariant 5)
+ */
+describe("ค้างรับ-ค้างจ่าย", () => {
+  const rent = {
+    ...base,
+    typeKey: "income" as const,
+    subCode: "inc.rent",
+    assetId: "rent1",
+    contactId: "c1",
+  };
+
+  it("ค่าเช่าค้างรับ: ไม่มีบรรทัดเงินสด ลงลูกหนี้ค่าเช่าแทน", () => {
+    const lines = allLines(buildPosting({ ...rent, notYetPaid: true }));
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "1200")?.debit).toBe(base.amount);
+    expect(lines.find((l) => l.coaCode === "4200")?.credit).toBe(base.amount);
+    assertBalanced(lines);
+  });
+
+  it("ค้างรับไม่นับในงบกระแสเงินสด เพราะเงินยังไม่เคลื่อน", () => {
+    const lines = allLines(buildPosting({ ...rent, notYetPaid: true }));
+    expect(lines.every((l) => l.cfCategory === "none")).toBe(true);
+  });
+
+  it("ค่าใช้จ่ายค้างจ่าย: ลงเจ้าหนี้ ไม่ใช่เงินสดออก", () => {
+    const lines = allLines(
+      buildPosting({ ...base, typeKey: "expense", subCode: "exp.repair", assetId: "rent1", notYetPaid: true })
+    );
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "2100")?.credit).toBe(base.amount);
+    assertBalanced(lines);
+  });
+
+  it("ไม่ติ๊กค้าง ต้องได้บรรทัดเงินสดเหมือนเดิม", () => {
+    const lines = allLines(buildPosting(rent));
+    expect(lines.filter((l) => isCashAccount(l.coaCode))).toHaveLength(1);
+  });
+
+  it("หมวดที่ตารางกฎไม่ได้ระบุบัญชีค้าง ต้องถูกปฏิเสธ ไม่ใช่เดาให้", () => {
+    // โอนที่ยังไม่โอน = ยังไม่เกิดรายการ · ขายที่ยังไม่ได้เงินต้องบันทึกเป็นลูกหนี้ของทรัพย์แยก
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        transferToBankAccountId: "b4b",
+        notYetPaid: true,
+      })
+    ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "finance_in",
+        subCode: "fin.loan_bank",
+        contactId: "c3",
+        notYetPaid: true,
+      })
+    ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+  });
+
+  it("ทุกหมวดที่ตั้งค้างได้ ต้องได้บรรทัดที่สมดุลและไม่มีเงินสด", () => {
+    for (const t of TX_TYPES) {
+      for (const s of t.subs) {
+        if (!s.accrualCoa) continue;
+        const lines = allLines(
+          buildPosting({
+            ...base,
+            typeKey: t.key,
+            subCode: s.code,
+            assetId: "rent1",
+            contactId: "c1",
+            notYetPaid: true,
+          })
+        );
+        assertBalanced(lines);
+        expect(lines.some((l) => isCashAccount(l.coaCode)), s.code).toBe(false);
+      }
+    }
+  });
+});
