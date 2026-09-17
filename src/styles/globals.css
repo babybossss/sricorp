@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* โหมดตัวใหญ่ +2px ตั้งค่ารายผู้ใช้ — ตั้งบน <html data-large-text> */
+    --app-base-font: 18px;
+  }
+  html[data-large-text="true"] {
+    --app-base-font: 20px;
+  }
+  body {
+    @apply bg-canvas text-ink-900;
+    font-size: var(--app-base-font);
+    line-height: 1.55;
+    /* ตัวเลขทั้งระบบใช้ tabular numbers */
+    font-variant-numeric: tabular-nums;
+  }
+  a {
+    @apply text-brand-600;
+  }
+  a:hover {
+    @apply text-brand-700 underline;
+  }
+  /* คอนทราสต์สูง: วงแหวนโฟกัสหนา 3px มองเห็นชัดทุกพื้นหลัง */
+  :focus-visible {
+    outline: 3px solid theme("colors.brand.600");
+    outline-offset: 2px;
+  }
+}
