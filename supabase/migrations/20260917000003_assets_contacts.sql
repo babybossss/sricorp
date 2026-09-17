@@ -204,7 +204,7 @@ create or replace function fn_schedule_requires_complete_contract() returns trig
 language plpgsql set search_path = sri_os, public as $fn$
 begin
   if fn_contract_completeness(new.contract_id) < 100 then
-    raise exception 'สัญญา % ข้อมูลยังไม่ครบ สร้างตารางงวดไม่ได้ (ครบ %%)',
+    raise exception 'สัญญา % ข้อมูลยังไม่ครบ (กรอกครบ % เปอร์เซ็นต์) สร้างตารางงวดไม่ได้',
       new.contract_id, fn_contract_completeness(new.contract_id);
   end if;
   return new;
