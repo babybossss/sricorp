@@ -20,11 +20,12 @@ export type Entity = {
 export const ENTITIES: Entity[] = [
   { id: "family", name: "SRI Family (รวมทุกชื่อ)", color: "#0A2540", policy: "corporate_strict", group: "กองกลางครอบครัว", selectableAsHolder: false },
   { id: "corp", name: "SRI Corporation", color: "#004AAD", policy: "corporate_strict", group: "ถือในชื่อนิติบุคคล", selectableAsHolder: true },
-  { id: "sutee", name: "สุธี (ป๊า)", color: "#7A5AF8", policy: "personal_flexible", group: "ถือในชื่อบุคคล (ยังเป็นกองกลาง)", selectableAsHolder: true },
-  { id: "sudjit", name: "สุดจิตต์ (ม๊า)", color: "#7A5AF8", policy: "personal_flexible", selectableAsHolder: true },
-  { id: "thanakorn", name: "ธนากร", color: "#7A5AF8", policy: "personal_flexible", selectableAsHolder: true },
-  { id: "thanawin", name: "ธนวินท์", color: "#7A5AF8", policy: "personal_flexible", selectableAsHolder: true },
-  { id: "benjaporn", name: "เบ็ญจพร", color: "#7A5AF8", policy: "personal_flexible", selectableAsHolder: true },
+  // ลำดับและสีตามที่ลูกพี่กำหนด 26/09 — แต่ละคนคนละสี จะได้แยกออกในกราฟและชิป
+  { id: "sutee", name: "สุธี", color: "#7A5AF8", policy: "personal_flexible", group: "ถือในชื่อบุคคล (ยังเป็นกองกลาง)", selectableAsHolder: true },
+  { id: "thanakorn", name: "ธนากร", color: "#D92D20", policy: "personal_flexible", selectableAsHolder: true },
+  { id: "thanawin", name: "ธนวินท์", color: "#0E7C4A", policy: "personal_flexible", selectableAsHolder: true },
+  { id: "benjaporn", name: "เบ็ญจพร", color: "#E93D82", policy: "personal_flexible", selectableAsHolder: true },
+  { id: "sudjit", name: "สุดจิตต์", color: "#CA8A04", policy: "personal_flexible", selectableAsHolder: true },
 ];
 
 export const HOLDERS = ENTITIES.filter((e) => e.selectableAsHolder);

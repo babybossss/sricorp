@@ -71,7 +71,10 @@ export function DisposalPanel({
         <Field label="ค่าธรรมเนียม / ค่าใช้จ่ายในการขาย" hint="ค่านายหน้า ค่าโอน ภาษีธุรกิจเฉพาะ">
           <Input value={value.sellingCosts} onChange={(e) => patch({ sellingCosts: e.target.value })} inputMode="decimal" />
         </Field>
-        <Field label="กำไรยังไม่รับรู้ที่เคยบันทึกไว้" hint="จากการตีราคา — ต้องล้างออกพร้อมการขาย">
+        <Field
+          label="ส่วนต่างจากการตีราคาที่เคยบันทึกไว้"
+          hint="มูลค่าประเมินล่าสุด − ต้นทุน · ตีราคาขึ้นใส่บวก · ตีราคาลงใส่ติดลบ (เช่น -300000)"
+        >
           <Input value={value.unrealizedGain} onChange={(e) => patch({ unrealizedGain: e.target.value })} inputMode="decimal" />
         </Field>
       </div>
@@ -98,10 +101,12 @@ export function DisposalPanel({
             </div>
           </div>
 
-          {result.unrealizedToReverse > 0 ? (
+          {result.unrealizedToReverse !== 0 ? (
             <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
-              ⚠ กำไรยังไม่รับรู้ {money(result.unrealizedToReverse)} ของทรัพย์ชิ้นนี้ต้องถูก<b>ล้างออกด้วยรายการปรับปรุงแยกต่างหาก</b> —
-              ไม่งั้นจะนับกำไรซ้ำสองรอบ (รอบแรกตอนตีราคา รอบสองตอนขายจริง)
+              ⚠ {result.unrealizedIsLoss ? "ขาดทุน" : "กำไร"}ยังไม่รับรู้{" "}
+              {money(Math.abs(result.unrealizedToReverse))} ของทรัพย์ชิ้นนี้ต้องถูก
+              <b>ล้างออกด้วยรายการปรับปรุงแยกต่างหาก</b> — ไม่งั้นจะนับ
+              {result.unrealizedIsLoss ? "ขาดทุน" : "กำไร"}ซ้ำสองรอบ (รอบแรกตอนตีราคา รอบสองตอนขายจริง)
               <div className="mt-1 text-ink-600">
                 รายการตีราคายังไม่มีในระบบรอบนี้ ตัวเลขนี้จึงยังไม่ถูกลงบัญชีให้อัตโนมัติ
               </div>

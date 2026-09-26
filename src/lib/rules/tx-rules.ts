@@ -515,7 +515,7 @@ export const TX_TYPES: TxType[] = [
         gainCoa: "4300",
         lossCoa: "5910",
         requires: ["asset", "capitalGain"],
-        caution: "กำไรยังไม่รับรู้ (unrealized) ของทรัพย์ชิ้นนี้ต้องถูกล้างออกพร้อมกัน (Backlog ข้อ 4)",
+        caution: "ส่วนต่างจากการตีราคาที่เคยบันทึกไว้ต้องถูกล้างออกพร้อมกัน — ทั้งตอนตีขึ้นและตีลง (ขายขาดทุนเกิดขึ้นจริง)",
       },
       {
         code: "inv.srr_redeem",

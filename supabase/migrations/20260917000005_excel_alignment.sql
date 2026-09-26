@@ -122,10 +122,10 @@ insert into owners (code, type, policy, name_th, name_en, status, color, sort_or
   ('SRI_CORP',    'company', 'corporate_strict',  'SRI Corporation', 'SRI Corporation Co., Ltd.', 'active',  '#004AAD', 10),
   ('SRI_HOLDING', 'company', 'corporate_strict',  'SRI Holding',     'SRI Holding',               'planned', '#004AAD', 20),
   ('SRI_CAPITAL', 'company', 'corporate_strict',  'SRI Capital',     'SRI Capital',               'planned', '#004AAD', 30),
-  ('SUTEE',       'person',  'personal_flexible', 'สุธี (ป๊า)',       'Sutee',                     'active',  '#7A5AF8', 35),
-  ('SUDJIT',      'person',  'personal_flexible', 'สุดจิตต์ (ม๊า)',   'Sudjit',                    'active',  '#7A5AF8', 36),
-  ('THANAKORN',   'person',  'personal_flexible', 'ธนากร',           'Thanakorn',                 'active',  '#7A5AF8', 40),
-  ('THANAWIN',    'person',  'personal_flexible', 'ธนวินท์',          'Thanawin',                  'active',  '#7A5AF8', 50),
-  ('BENJAPORN',   'person',  'personal_flexible', 'เบ็ญจพร',         'Benjaporn',                 'active',  '#7A5AF8', 60)
+  ('SUTEE',       'person',  'personal_flexible', 'สุธี',             'Sutee',                     'active',  '#7A5AF8', 35),
+  ('SUDJIT',      'person',  'personal_flexible', 'สุดจิตต์',         'Sudjit',                    'active',  '#CA8A04', 39),
+  ('THANAKORN',   'person',  'personal_flexible', 'ธนากร',           'Thanakorn',                 'active',  '#D92D20', 36),
+  ('THANAWIN',    'person',  'personal_flexible', 'ธนวินท์',          'Thanawin',                  'active',  '#0E7C4A', 37),
+  ('BENJAPORN',   'person',  'personal_flexible', 'เบ็ญจพร',         'Benjaporn',                 'active',  '#E93D82', 38)
 on conflict (code) do update
   set name_th = excluded.name_th, policy = excluded.policy, status = excluded.status;

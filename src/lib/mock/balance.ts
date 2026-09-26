@@ -21,19 +21,13 @@ export const TREE: TreeNode[] = [
     cost: null,
     children: [
       {
-        id: "cash",
-        name: "เงินสดและเงินฝาก",
-        value: 6015920,
-        cost: null,
+        id: "biz",
+        name: "Businesses",
+        value: 18000000,
+        cost: 17000000,
+        gl: 1000000,
         children: [
-          { id: "c1", name: "SRI - SCB", ownerLabel: "SRI Corporation", value: 2340120, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c2", name: "ธนากร - BBL 888", ownerLabel: "ธนากร", value: 1286500, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c3", name: "ธนวินท์ - KBANK", ownerLabel: "ธนวินท์", value: 592400, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c3b", name: "ธนวินท์ - BBL", ownerLabel: "ธนวินท์", value: 150000, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c4", name: "เบ็ญจพร - BBL", ownerLabel: "เบ็ญจพร", value: 326900, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c5", name: "สุธี - TTB", ownerLabel: "สุธี (ป๊า)", value: 850000, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c6", name: "สุดจิตต์ - BAY", ownerLabel: "สุดจิตต์ (ม๊า)", value: 420000, cost: null, src: "ยอดธนาคาร 17/09" },
-          { id: "c7", name: "เงินสดในมือ SRI", ownerLabel: "SRI Corporation", value: 50000, cost: null, src: "นับเงินสด 17/09" },
+          { id: "f1", name: "เงินลงทุนในกิจการ", ownerLabel: "SRI Corporation", value: 18000000, cost: 17000000, gl: 1000000, yield: "8.2%", src: "มูลค่าตามบัญชี" },
         ],
       },
       {
@@ -64,30 +58,45 @@ export const TREE: TreeNode[] = [
         ],
       },
       {
-        id: "fin",
-        name: "Finance",
-        value: 31500000,
-        cost: 30100000,
-        gl: 1400000,
+        id: "paper",
+        name: "Paper Asset",
+        value: 19750000,
+        cost: 18620000,
+        gl: 1130000,
         children: [
-          { id: "f1", name: "Business (เงินลงทุนในกิจการ)", ownerLabel: "SRI Corporation", value: 18000000, cost: 17000000, gl: 1000000, yield: "8.2%", src: "มูลค่าตามบัญชี" },
           { id: "f2", name: "Bond", ownerLabel: "SRI Corporation", value: 6500000, cost: 6300000, gl: 200000, yield: "3.1%", src: "ราคาตลาด 16/09" },
           { id: "f3", name: "Loan Agreement", ownerLabel: "SRI Corporation", value: 7000000, cost: 6800000, gl: 200000, yield: "9.0%", src: "มูลค่าตามสัญญา" },
-        ],
-      },
-      {
-        id: "inv",
-        name: "Investment",
-        value: 7100000,
-        cost: 6250000,
-        gl: 850000,
-        children: [
           { id: "i1", name: "หุ้นไทย", ownerLabel: "ธนากร", value: 2400000, cost: 2150000, gl: 250000, src: "ราคาปิด 08/09", status: "ราคาเก่า 9 วัน", statusTone: "wait" },
           { id: "i2", name: "หุ้น US", ownerLabel: "ธนากร", value: 1850000, cost: 1500000, gl: 350000, src: "ราคาปิด 16/09" },
           { id: "i3", name: "ETF", ownerLabel: "ธนากร", value: 900000, cost: 820000, gl: 80000, src: "ราคาปิด 16/09" },
           { id: "i4", name: "กองทุน", ownerLabel: "ธนากร", value: 1100000, cost: 1050000, gl: 50000, src: "NAV 15/09" },
-          { id: "i5", name: "Crypto", ownerLabel: "ธนากร", value: 350000, cost: 280000, gl: 70000, src: "ราคาตลาด 17/09" },
+        ],
+      },
+      {
+        id: "commodity",
+        name: "Commodity & Cash",
+        value: 6865920,
+        cost: null,
+        gl: 120000,
+        children: [
+          {
+            id: "cash",
+            name: "เงินสดและเงินฝาก",
+            value: 6015920,
+            cost: null,
+            children: [
+          { id: "c1", name: "SRI - SCB", ownerLabel: "SRI Corporation", value: 2340120, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c2", name: "ธนากร - BBL 888", ownerLabel: "ธนากร", value: 1286500, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c3", name: "ธนวินท์ - KBANK", ownerLabel: "ธนวินท์", value: 592400, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c3b", name: "ธนวินท์ - BBL", ownerLabel: "ธนวินท์", value: 150000, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c4", name: "เบ็ญจพร - BBL", ownerLabel: "เบ็ญจพร", value: 326900, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c5", name: "สุธี - TTB", ownerLabel: "สุธี", value: 850000, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c6", name: "สุดจิตต์ - BAY", ownerLabel: "สุดจิตต์", value: 420000, cost: null, src: "ยอดธนาคาร 17/09" },
+          { id: "c7", name: "เงินสดในมือ SRI", ownerLabel: "SRI Corporation", value: 50000, cost: null, src: "นับเงินสด 17/09" },
+            ],
+          },
           { id: "i6", name: "ทองคำ", ownerLabel: "ธนากร", value: 500000, cost: 450000, gl: 50000, src: "ราคาสมาคม 17/09" },
+          { id: "i5", name: "Crypto", ownerLabel: "ธนากร", value: 350000, cost: 280000, gl: 70000, src: "ราคาตลาด 17/09" },
         ],
       },
     ],
@@ -119,9 +128,47 @@ export const TREE: TreeNode[] = [
 
 export const NAV_BY_HOLDER = [
   { name: "SRI Corporation", color: "#004AAD", value: "฿ 40.2M" },
-  { name: "สุธี (ป๊า)", color: "#7A5AF8", value: "฿ 6.4M" },
-  { name: "สุดจิตต์ (ม๊า)", color: "#7A5AF8", value: "฿ 2.2M" },
-  { name: "ธนากร", color: "#7A5AF8", value: "฿ 9.8M" },
-  { name: "ธนวินท์", color: "#7A5AF8", value: "฿ 3.6M" },
-  { name: "เบ็ญจพร", color: "#7A5AF8", value: "฿ 2.0M" },
+  { name: "สุธี", color: "#7A5AF8", value: "฿ 6.4M" },
+  { name: "ธนากร", color: "#D92D20", value: "฿ 9.8M" },
+  { name: "ธนวินท์", color: "#0E7C4A", value: "฿ 3.6M" },
+  { name: "เบ็ญจพร", color: "#E93D82", value: "฿ 2.0M" },
+  { name: "สุดจิตต์", color: "#CA8A04", value: "฿ 2.2M" },
 ];
+
+/** สีประจำหมวดใหญ่ของทรัพย์ ใช้ทั้งโดนัทหน้าแรกและกราฟอื่น */
+export const CLASS_COLOR: Record<string, string> = {
+  biz: "#7A5AF8",
+  re: "#004AAD",
+  paper: "#0E9F6E",
+  commodity: "#F5A524",
+};
+
+/**
+ * สัดส่วนทรัพย์สินตามหมวดใหญ่ — **คำนวณจาก TREE** ไม่ใช่ตัวเลขที่พิมพ์ไว้
+ *
+ * เดิมหน้าแรกฮาร์ดโค้ดทั้งชื่อหมวดและเปอร์เซ็นต์ พอเปลี่ยนการจัดหมวดแล้ว
+ * โดนัทยังโชว์ของเก่าอยู่โดยไม่มีอะไรฟ้อง — ซึ่งเป็นความผิดพลาดที่ดูไม่ออกจากหน้าจอ
+ */
+export function allocationByClass(): { id: string; name: string; value: number; pct: number; color: string }[] {
+  const assets = TREE.find((n) => n.id === "assets");
+  const classes = assets?.children ?? [];
+  const total = classes.reduce((t, c) => t + c.value, 0);
+  return classes.map((c) => ({
+    id: c.id,
+    name: c.name,
+    value: c.value,
+    pct: total ? (c.value / total) * 100 : 0,
+    color: CLASS_COLOR[c.id] ?? "#8792A2",
+  }));
+}
+
+/** ขอบเขตของแต่ละหมวดใน conic-gradient ของโดนัท */
+export function allocationGradient(): string {
+  let at = 0;
+  const stops = allocationByClass().map((c) => {
+    const from = at;
+    at += c.pct;
+    return `${c.color} ${from.toFixed(2)}% ${at.toFixed(2)}%`;
+  });
+  return `conic-gradient(${stops.join(",")})`;
+}

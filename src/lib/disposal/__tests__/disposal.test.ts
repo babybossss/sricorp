@@ -65,13 +65,43 @@ describe("Backlog ข้อ 4 — กำไร/ขาดทุนจากกา
     expect(computeDisposal({ costBasis: 500_000, salePrice: 500_000 }).capitalGain).toBe(0);
   });
 
-  it("บอกกำไรยังไม่รับรู้ที่ต้องล้างออกพร้อมกัน", () => {
+  it("บอกส่วนต่างจากการตีราคาที่ต้องล้างออกพร้อมกัน", () => {
     const r = computeDisposal({
       costBasis: 2_450_000,
       salePrice: 3_000_000,
-      unrealizedGain: 330_000,
+      unrealizedAdjustment: 330_000,
     });
     expect(r.unrealizedToReverse).toBe(330_000);
+    expect(r.unrealizedIsLoss).toBe(false);
+  });
+
+  it("ทรัพย์ที่เคยตีราคาลง ต้องรับค่าติดลบได้", () => {
+    // ราคาประเมินต่ำกว่าทุนเกิดขึ้นจริง ถ้ารับแต่ค่าบวก ทรัพย์ที่ราคาตกจะไม่มีที่ลง
+    const r = computeDisposal({
+      costBasis: 2_450_000,
+      salePrice: 2_000_000,
+      unrealizedAdjustment: -300_000,
+    });
+    expect(r.unrealizedToReverse).toBe(-300_000);
+    expect(r.unrealizedIsLoss).toBe(true);
+  });
+
+  it("ขายขาดทุนพร้อมเคยตีราคาลง — ทั้งสองอย่างต้องอยู่ครบ", () => {
+    const r = computeDisposal({
+      costBasis: 5_000_000,
+      salePrice: 4_000_000,
+      sellingCosts: 100_000,
+      unrealizedAdjustment: -600_000,
+    });
+    expect(r.capitalGain).toBe(-1_100_000);
+    expect(r.isGain).toBe(false);
+    expect(r.unrealizedIsLoss).toBe(true);
+  });
+
+  it("ส่วนต่างที่คำนวณต่อไม่ได้ ต้องถูกปฏิเสธ", () => {
+    expect(() =>
+      computeDisposal({ costBasis: 100, salePrice: 100, unrealizedAdjustment: NaN })
+    ).toThrow(/ตัวเลขที่ระบุได้/);
   });
 
   it("ตัดทรัพย์ออกตามต้นทุน ไม่ใช่ราคาขาย", () => {

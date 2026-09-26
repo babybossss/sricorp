@@ -204,7 +204,7 @@ export function useTxForm() {
         costBasis,
         salePrice,
         sellingCosts: parseAmount(draft.disposal.sellingCosts),
-        unrealizedGain: parseAmount(draft.disposal.unrealizedGain),
+        unrealizedAdjustment: parseAmount(draft.disposal.unrealizedGain),
       });
     } catch {
       return null;

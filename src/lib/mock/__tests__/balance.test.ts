@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TREE, type TreeNode } from "../balance";
+import { TREE, type TreeNode, allocationByClass, allocationGradient } from "../balance";
 import { BANKS } from "../banks";
 import { ENTITIES, HOLDERS, entityById } from "../entities";
 import { LEDGER } from "../ledger";
@@ -59,11 +59,11 @@ describe("งบดุลตัวอย่างต้องลงตัว", (
 
   it("บรรทัดมูลค่ายุติธรรมในส่วนของเจ้าของ = ผลรวมกำไรยังไม่รับรู้ของทุกทรัพย์", () => {
     // ถ้าสองตัวนี้ไม่เท่ากัน แปลว่ากำไรจากการตีราคาหายไปหรือถูกนับซ้ำ
-    let totalGl = 0;
-    walk(TREE, (n) => {
-      // นับเฉพาะโหนดระดับหมวด (re / fin / inv) ไม่งั้นจะนับซ้ำกับลูก
-      if (["re", "fin", "inv"].includes(n.id)) totalGl += n.gl ?? 0;
-    });
+    // อ่านหมวดใหญ่จากลูกโดยตรงของโหนด "สินทรัพย์" ไม่ฮาร์ดโค้ดรหัสหมวด
+    // เดิมเขียน ["re","fin","inv"] ไว้ พอเปลี่ยนชื่อหมวดแล้วเทสต์เงียบๆ ไม่ครอบคลุมสองหมวด
+    const classes = node("assets")!.children ?? [];
+    const totalGl = classes.reduce((t, c) => t + (c.gl ?? 0), 0);
+    expect(classes.length, "หมวดใหญ่ต้องมี 4 หมวด").toBe(4);
     expect(node("e3")!.value).toBe(totalGl);
   });
 
@@ -118,5 +118,38 @@ describe("ผู้ถือกรรมสิทธิ์", () => {
     for (const r of LEDGER) {
       expect(ENTITIES.some((e) => e.id === r.ownerId), `${r.id} → ${r.ownerId}`).toBe(true);
     }
+  });
+});
+
+/**
+ * โดนัทหน้าแรกเคยฮาร์ดโค้ดทั้งชื่อหมวดและเปอร์เซ็นต์
+ * พอเปลี่ยนการจัดหมวดแล้วมันยังโชว์ของเก่า โดยไม่มีอะไรฟ้อง
+ */
+describe("สัดส่วนทรัพย์สินหน้าแรก", () => {
+  it("สัดส่วนรวมกันได้ 100%", () => {
+    const total = allocationByClass().reduce((t, c) => t + c.pct, 0);
+    expect(total).toBeCloseTo(100, 6);
+  });
+
+  it("มีครบ 4 หมวดใหญ่ และชื่อตรงกับที่ลูกพี่กำหนด", () => {
+    expect(allocationByClass().map((c) => c.name)).toEqual([
+      "Businesses",
+      "Real Estate",
+      "Paper Asset",
+      "Commodity & Cash",
+    ]);
+  });
+
+  it("ยอดของแต่ละหมวดตรงกับงบดุล", () => {
+    for (const c of allocationByClass()) {
+      expect(node(c.id)!.value, c.name).toBe(c.value);
+    }
+  });
+
+  it("โดนัทไล่สีครบ 100% ไม่มีช่องว่าง", () => {
+    const g = allocationGradient();
+    expect(g.startsWith("conic-gradient(")).toBe(true);
+    expect(g).toContain("100.00%");
+    expect(g.split(",").length).toBe(4);
   });
 });

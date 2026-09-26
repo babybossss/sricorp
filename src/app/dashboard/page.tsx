@@ -4,6 +4,7 @@ import { Card, CardBody, CardTitle, CardLabel } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { KPIS, YIELDS, TODOS, TEAM_TASKS, EXPIRING_CONTRACTS } from "@/lib/mock/dashboard";
+import { allocationByClass, allocationGradient } from "@/lib/mock/balance";
 import { PRIORITY_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 
@@ -133,7 +134,7 @@ export default function DashboardPage() {
               <div className="flex flex-wrap items-center gap-[22px]">
                 <div
                   className="flex h-[150px] w-[150px] flex-none items-center justify-center rounded-pill"
-                  style={{ background: "conic-gradient(#004AAD 0 48%,#0E9F6E 48% 86%,#F5A524 86% 95%,#8792A2 95% 100%)" }}
+                  style={{ background: allocationGradient() }}
                 >
                   <div className="flex h-24 w-24 flex-col items-center justify-center rounded-pill bg-surface">
                     <div className="text-sm text-ink-400">รวม</div>
@@ -141,15 +142,11 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 text-base">
-                  {[
-                    ["Real Estate", "48%", "#004AAD"],
-                    ["Finance", "38%", "#0E9F6E"],
-                    ["Investment", "9%", "#F5A524"],
-                    ["Cash", "5%", "#8792A2"],
-                  ].map(([label, pct, color]) => (
-                    <div key={label} className="flex items-center gap-2.5">
-                      <span className="h-3 w-3 rounded-[3px]" style={{ background: color }} />
-                      {label} <span className="ml-auto font-semibold">{pct}</span>
+                  {allocationByClass().map((c) => (
+                    <div key={c.id} className="flex items-center gap-2.5">
+                      <span className="h-3 w-3 rounded-[3px]" style={{ background: c.color }} />
+                      {c.name}{" "}
+                      <span className="ml-auto font-semibold tabular-nums">{c.pct.toFixed(1)}%</span>
                     </div>
                   ))}
                 </div>

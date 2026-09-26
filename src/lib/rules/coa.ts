@@ -35,6 +35,9 @@ export const COA: CoaAccount[] = [
   { code: "1600", nameTh: "เงินมัดจำจ่าย", nameEn: "Deposits paid", type: "asset" },
   // เพิ่มจากแม่บท: พอร์ตหลักทรัพย์ยังไม่มีรหัสใน Excel เดิม
   { code: "1700", nameTh: "เงินลงทุนในหลักทรัพย์", nameEn: "Investment in securities", type: "asset" },
+  // แยกจาก 1700 เพราะทองคำและคริปโตเป็นคนละหมวดใหญ่ (Commodity & Cash ไม่ใช่ Paper Asset)
+  // ถ้าใช้บัญชีเดียวกับหุ้น จะแยกสองหมวดนี้ออกจากกันในรายงานไม่ได้เลย
+  { code: "1720", nameTh: "เงินลงทุนในทองคำและสินทรัพย์ทางเลือก", nameEn: "Gold & alternative assets", type: "asset" },
   // รายการระหว่างกันในกองกลาง — แยกจากพอร์ตจริง ไม่งั้นต้นทุนเฉลี่ยและ NAV เพี้ยน
   { code: "1310", nameTh: "ลูกหนี้ระหว่างกัน (ในกองกลาง)", nameEn: "Intercompany receivable", type: "asset" },
   { code: "1710", nameTh: "เงินลงทุนในบริษัทในเครือ", nameEn: "Investment in related company", type: "asset" },
