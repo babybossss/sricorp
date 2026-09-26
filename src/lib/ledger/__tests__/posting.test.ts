@@ -109,7 +109,7 @@ describe("Backlog ข้อ 4 — ขายทรัพย์สามบรร�
     expect(allLines(r).find((l) => l.coaCode === "4300")!.credit).toBe(550_000);
   });
 
-  it("ขายขาดทุน: ขาดทุนเข้า 5900 ฝั่งเดบิต", () => {
+  it("ขายขาดทุน: ขาดทุนเข้า 5910 ฝั่งเดบิต", () => {
     const r = buildPosting({
       ...base,
       typeKey: "invest_sell",
@@ -119,7 +119,7 @@ describe("Backlog ข้อ 4 — ขายทรัพย์สามบรร�
       disposal: { costBasis: 2_450_000, salePrice: 2_000_000 },
     });
     assertBalanced(allLines(r));
-    expect(allLines(r).find((l) => l.coaCode === "5900")!.debit).toBe(450_000);
+    expect(allLines(r).find((l) => l.coaCode === "5910")!.debit).toBe(450_000);
   });
 
   it("ค่าใช้จ่ายในการขายลดเงินที่เข้าบัญชี และลดกำไร", () => {
@@ -146,7 +146,7 @@ describe("Backlog ข้อ 4 — ขายทรัพย์สามบรร�
       disposal: { costBasis: 2_450_000, salePrice: 2_450_000 },
     });
     expect(allLines(r)).toHaveLength(2);
-    expect(allLines(r).some((l) => l.coaCode === "4300" || l.coaCode === "5900")).toBe(false);
+    expect(allLines(r).some((l) => l.coaCode === "4300" || l.coaCode === "5910")).toBe(false);
   });
 
   it("ทรัพย์ทุกบรรทัดผูก assetId เพื่อคำนวณต้นทุนย้อนหลังได้", () => {

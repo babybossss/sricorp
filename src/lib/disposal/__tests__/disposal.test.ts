@@ -87,12 +87,12 @@ describe("Backlog ข้อ 4 — กำไร/ขาดทุนจากกา
     }
   });
 
-  it("กำไรเข้า 4300 · ขาดทุนเข้า 5900", () => {
+  it("กำไรเข้า 4300 · ขาดทุนเข้า 5910 (ไม่ใช่ค่าใช้จ่ายอื่น)", () => {
     const gain = sellRealEstate({ costBasis: 1_000_000, salePrice: 1_500_000 });
     expect(gain.some((l) => l.coaCode === "4300" && l.credit === 500_000)).toBe(true);
 
     const loss = sellRealEstate({ costBasis: 1_000_000, salePrice: 600_000 });
-    expect(loss.some((l) => l.coaCode === "5900" && l.debit === 400_000)).toBe(true);
+    expect(loss.some((l) => l.coaCode === "5910" && l.debit === 400_000)).toBe(true);
   });
 
   it("ยอดเงินของรายการต้องเท่ากับเงินสุทธิ ไม่ใช่ราคาขายเต็ม", () => {

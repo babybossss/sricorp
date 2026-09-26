@@ -513,7 +513,7 @@ export const TX_TYPES: TxType[] = [
         dr: CASH,
         cr: "1500",
         gainCoa: "4300",
-        lossCoa: "5900",
+        lossCoa: "5910",
         requires: ["asset", "capitalGain"],
         caution: "กำไรยังไม่รับรู้ (unrealized) ของทรัพย์ชิ้นนี้ต้องถูกล้างออกพร้อมกัน (Backlog ข้อ 4)",
       },
@@ -567,7 +567,7 @@ export const TX_TYPES: TxType[] = [
         dr: CASH,
         cr: "1700",
         gainCoa: "4900",
-        lossCoa: "5900",
+        lossCoa: "5910",
         requires: ["capitalGain"],
       },
       {
@@ -809,12 +809,20 @@ function effectOf(account: CoaAccount, side: "dr" | "cr"): { pl?: PLEffect; bs?:
       return { bs: { line: account.nameTh, side: "asset", direction: side === "dr" ? "increase" : "decrease" } };
     case "liability":
       return { bs: { line: account.nameTh, side: "liability", direction: side === "cr" ? "increase" : "decrease" } };
-    case "equity": {
-      // 3200 เงินถอนของเจ้าของ เป็น contra-equity: เดบิตแล้วส่วนของเจ้าของ "ลด"
-      const isContra = account.code === "3200";
-      const increase = isContra ? side === "cr" : side === "cr";
-      return { bs: { line: account.nameTh, side: "equity", direction: increase ? "increase" : "decrease" } };
-    }
+    case "equity":
+      /**
+       * เครดิตเพิ่มส่วนของเจ้าของ เดบิตลด — ใช้ได้กับบัญชี contra ด้วย
+       *
+       * 3200 เงินถอนของเจ้าของ เป็น contra-equity: เดบิตแล้ว**ยอดถอนโต** ซึ่งก็คือ
+       * ส่วนของเจ้าของ**ลด** พอดี จึงไม่ต้องแยกเคส
+       * (เดิมมีตัวแปร `isContra` ที่สองฝั่งของ ternary เหมือนกันเป๊ะ — ไม่ได้ทำอะไรเลย
+       * แต่ทำให้คนอ่านคิดว่ามีการจัดการ contra อยู่ ซึ่งอันตรายกว่าไม่มี)
+       *
+       * การจัดกลุ่มในงบว่าบรรทัดไหนต้อง "หัก" อยู่ที่ `statements.ts` (`contra: true`)
+       */
+      return {
+        bs: { line: account.nameTh, side: "equity", direction: side === "cr" ? "increase" : "decrease" },
+      };
   }
 }
 

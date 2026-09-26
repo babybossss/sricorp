@@ -240,3 +240,25 @@ describe("บัญชีค้างต้องชี้ถูกข้าง"
     }
   });
 });
+
+/**
+ * ขาดทุนจากการขายต้องอ่านออกจากงบ ไม่ใช่ปนใน "ค่าใช้จ่ายอื่น"
+ * ซึ่งเป็นถังรวมของค่าใช้จ่ายจรที่ไม่เกี่ยวกัน
+ */
+describe("บัญชีกำไร/ขาดทุนจากการขาย", () => {
+  it("หมวดที่รับรู้กำไรได้ ต้องมีบัญชีขาดทุนแยกเป็นของตัวเอง", () => {
+    for (const s of allSubs) {
+      if (!s.gainCoa) continue;
+      expect(s.lossCoa, s.code).toBeDefined();
+      // ถ้าขาดทุนไปลงบัญชีเดียวกับค่าใช้จ่ายทั่วไป จะแยกไม่ออกว่าขาดทุนจากการขายเท่าไร
+      expect(s.lossCoa, s.code).not.toBe("5900");
+      expect(coa(s.lossCoa!).type, s.code).toBe("expense");
+      expect(coa(s.gainCoa).type, s.code).toBe("income");
+    }
+  });
+
+  it("กำไรสะสมต้องมีในผังบัญชี ไม่งั้นตั้งยอดตั้งต้นไม่ได้", () => {
+    const re = COA.find((a) => a.code === "3300");
+    expect(re?.type).toBe("equity");
+  });
+});
