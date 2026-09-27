@@ -128,4 +128,11 @@ insert into owners (code, type, policy, name_th, name_en, status, color, sort_or
   ('THANAWIN',    'person',  'personal_flexible', 'ธนวินท์',          'Thanawin',                  'active',  '#0E7C4A', 37),
   ('BENJAPORN',   'person',  'personal_flexible', 'เบ็ญจพร',         'Benjaporn',                 'active',  '#E93D82', 38)
 on conflict (code) do update
-  set name_th = excluded.name_th, policy = excluded.policy, status = excluded.status;
+  -- ต้องอัปเดต color และ sort_order ด้วย ไม่งั้นรัน migration ซ้ำแล้ว DB ยังถือสี/ลำดับเก่า
+  -- แล้วสีบนหน้าจอกับในฐานข้อมูลจะคนละชุดโดยไม่มีอะไรฟ้อง
+  set name_th    = excluded.name_th,
+      name_en    = excluded.name_en,
+      policy     = excluded.policy,
+      status     = excluded.status,
+      color      = excluded.color,
+      sort_order = excluded.sort_order;

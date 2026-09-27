@@ -16,6 +16,7 @@ import {
   statementOf,
   isBalanceSheetType,
 } from "../src/lib/rules/statements";
+import { ASSET_CLASSES, allCategories } from "../src/lib/rules/asset-classes";
 import { ENTITIES, HOLDERS } from "../src/lib/mock/entities";
 import { BANKS } from "../src/lib/mock/banks";
 
@@ -69,6 +70,14 @@ process.stdout.write(
       bsLayout: BS_LAYOUT,
       plLayout: PL_LAYOUT,
       subs,
+      assetClasses: ASSET_CLASSES.map((c) => ({ code: c.code, name: c.name, nameTh: c.nameTh })),
+      assetCategories: allCategories().map((c) => ({
+        code: c.code,
+        nameTh: c.nameTh,
+        nameEn: c.nameEn,
+        className: c.className,
+        coaCodes: c.coaCodes,
+      })),
       owners: HOLDERS.map((o) => ({ id: o.id, name: o.name, policy: o.policy })),
       consolidatedName: ENTITIES.find((e) => !e.selectableAsHolder)?.name ?? "รวมทุกชื่อ",
       banks: BANKS.filter((b) => !b.off).map((b) => ({

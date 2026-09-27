@@ -4,7 +4,7 @@ import * as React from "react";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
-import { money } from "@/lib/format";
+import { money, parseAmount } from "@/lib/format";
 import type { DisposalResult } from "@/lib/disposal/capital-gain";
 import type { RepaymentSplit } from "@/lib/disposal/repayment";
 import type { PostingInput } from "@/lib/ledger/types";
@@ -16,15 +16,30 @@ export type DisposalValue = {
   costBasis: string;
   salePrice: string;
   sellingCosts: string;
-  unrealizedGain: string;
+  /** จำนวนบวกเสมอ — ทิศทางอยู่ที่ `unrealizedDirection` ไม่ให้พิมพ์เครื่องหมายเอง */
+  unrealizedAmount: string;
+  unrealizedDirection: "up" | "down";
 };
 
 export const EMPTY_DISPOSAL: DisposalValue = {
   costBasis: "",
   salePrice: "",
   sellingCosts: "",
-  unrealizedGain: "",
+  unrealizedAmount: "",
+  unrealizedDirection: "up",
 };
+
+/**
+ * ส่วนต่างจากการตีราคาแบบมีเครื่องหมาย
+ *
+ * แยกทิศทางออกมาเป็นปุ่มแทนการให้พิมพ์เลขติดลบ เพราะ:
+ * - แป้นตัวเลขบนมือถือ (`inputMode="decimal"`) ไม่มีปุ่มลบ
+ * - ผู้ใช้ก๊อปตัวเลขจากหน้าจอมาวางได้ ซึ่งแสดงติดลบเป็นวงเล็บหรือ `−` ยูนิโคด
+ *   เคยทำให้ตีราคาลงกลายเป็นตีราคาขึ้นโดยไม่มีอะไรฟ้อง
+ */
+export function signedUnrealized(v: DisposalValue): number {
+  return Math.abs(parseAmount(v.unrealizedAmount)) * (v.unrealizedDirection === "down" ? -1 : 1);
+}
 
 /**
  * Backlog ข้อ 4 — แผงคำนวณกำไร/ขาดทุนจากการขาย
@@ -73,9 +88,39 @@ export function DisposalPanel({
         </Field>
         <Field
           label="ส่วนต่างจากการตีราคาที่เคยบันทึกไว้"
-          hint="มูลค่าประเมินล่าสุด − ต้นทุน · ตีราคาขึ้นใส่บวก · ตีราคาลงใส่ติดลบ (เช่น -300000)"
+          hint="ผลต่างระหว่างมูลค่าประเมินล่าสุดกับต้นทุน · เลือกทิศทางแล้วใส่จำนวนบวก"
         >
-          <Input value={value.unrealizedGain} onChange={(e) => patch({ unrealizedGain: e.target.value })} inputMode="decimal" />
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              {([
+                ["up", "ตีราคาขึ้น"],
+                ["down", "ตีราคาลง"],
+              ] as const).map(([dir, label]) => (
+                <button
+                  key={dir}
+                  type="button"
+                  onClick={() => patch({ unrealizedDirection: dir })}
+                  aria-pressed={value.unrealizedDirection === dir}
+                  className={cn(
+                    "min-h-control flex-1 rounded border px-4 text-base",
+                    value.unrealizedDirection === dir
+                      ? dir === "down"
+                        ? "border-neg bg-neg-bg font-semibold text-neg-fg"
+                        : "border-pos bg-pos-bg font-semibold text-pos-fg"
+                      : "border-line bg-surface"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Input
+              value={value.unrealizedAmount}
+              onChange={(e) => patch({ unrealizedAmount: e.target.value })}
+              inputMode="decimal"
+              placeholder="0.00"
+            />
+          </div>
         </Field>
       </div>
 

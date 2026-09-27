@@ -62,11 +62,45 @@ on conflict (code) do update set
   name_th    = excluded.name_th,
   sort_order = excluded.sort_order;
 
+-- ---------- ย้าย class_id ของทรัพย์ที่มีอยู่ให้ตามหมวดย่อยไปด้วย ----------
+-- `assets` เก็บ class_id ไว้ซ้ำกับ category_id · การย้าย category ข้าม class ข้างบน
+-- ทำให้แถวเดิมชี้ไป class เก่าค้างอยู่ โดยที่ trigger ไม่ยิง (ยิงเฉพาะตอน insert/update คอลัมน์นั้น)
+-- ฐานข้อมูลที่มีทรัพย์จริงจะรายงานคนละหมวดในคนละหน้าโดยไม่มีอะไรฟ้อง
+update assets a
+   set class_id = c.class_id
+  from asset_categories c
+ where c.id = a.category_id
+   and a.class_id is distinct from c.class_id;
+
+-- กันไม่ให้ migration ผ่านไปทั้งที่ยังเหลือแถวที่ไม่ตรง
+do $$
+declare
+  n int;
+begin
+  select count(*) into n
+    from assets a join asset_categories c on c.id = a.category_id
+   where a.class_id is distinct from c.class_id;
+  if n > 0 then
+    raise exception 'ยังมีทรัพย์ % แถวที่หมวดใหญ่ไม่ตรงกับหมวดย่อย — หยุดก่อน', n;
+  end if;
+end $$;
+
 -- ---------- ลบหมวดใหญ่เดิมที่ไม่มีลูกแล้ว ----------
 delete from asset_classes c
  where c.code in ('FINANCE', 'INVESTMENT', 'BUSINESS')
    and not exists (select 1 from asset_categories x where x.class_id = c.id)
    and not exists (select 1 from assets a where a.class_id = c.id);
+
+-- ถ้าลบไม่หมด แปลว่ายังมีอะไรอ้างอยู่ ต้องรู้ ไม่ใช่ปล่อยให้เหลือ class กำพร้า
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from asset_classes where code in ('FINANCE', 'INVESTMENT', 'BUSINESS');
+  if n > 0 then
+    raise exception 'ลบหมวดใหญ่เดิมไม่หมด เหลือ % — มีหมวดย่อยหรือทรัพย์อ้างอยู่', n;
+  end if;
+end $$;
 
 -- ---------- บัญชีใหม่สำหรับทองคำ/สินทรัพย์ทางเลือก ----------
 -- ต้องแยกจาก 1700 เงินลงทุนในหลักทรัพย์ ไม่งั้นแยก Commodity ออกจาก Paper Asset ไม่ได้

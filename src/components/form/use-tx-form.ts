@@ -10,7 +10,14 @@ import { splitRepayment, type RepaymentSplit } from "@/lib/disposal/repayment";
 import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError, type IntercompanyNature, type PostingInput } from "@/lib/ledger/types";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
-import { EMPTY_DISPOSAL, EMPTY_REPAYMENT, isManualSplit, type DisposalValue, type RepaymentValue } from "./disposal-panel";
+import {
+  EMPTY_DISPOSAL,
+  EMPTY_REPAYMENT,
+  isManualSplit,
+  signedUnrealized,
+  type DisposalValue,
+  type RepaymentValue,
+} from "./disposal-panel";
 
 export type TxDraft = {
   typeKey: TxTypeKey | null;
@@ -204,7 +211,7 @@ export function useTxForm() {
         costBasis,
         salePrice,
         sellingCosts: parseAmount(draft.disposal.sellingCosts),
-        unrealizedAdjustment: parseAmount(draft.disposal.unrealizedGain),
+        unrealizedAdjustment: signedUnrealized(draft.disposal),
       });
     } catch {
       return null;

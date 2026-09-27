@@ -262,3 +262,58 @@ describe("บัญชีกำไร/ขาดทุนจากการขา
     expect(re?.type).toBe("equity");
   });
 });
+
+/**
+ * ทองคำต้องมีทางเข้า-ออกบัญชี 1720 ของตัวเอง
+ * มีบัญชีแต่ไม่มีประเภทรายการที่ลงบัญชีนั้น = เปิดฟีเจอร์ครึ่งเดียว
+ * ทองยังไปกอง Paper Asset และบรรทัด 1720 ในงบดุลเป็นศูนย์ตลอด
+ */
+describe("ซื้อ/ขายทองคำและสินทรัพย์ทางเลือก", () => {
+  const buy = findSub("inv.buy_commodity")!;
+  const sell = findSub("inv.sell_commodity")!;
+
+  it("อยู่ใต้ประเภทที่ถูก และเลือกจากประเภทอื่นไม่ได้", () => {
+    expect(isValidPair("invest_buy", "inv.buy_commodity")).toBe(true);
+    expect(isValidPair("invest_sell", "inv.sell_commodity")).toBe(true);
+    expect(isValidPair("invest_sell", "inv.buy_commodity")).toBe(false);
+    expect(isValidPair("invest_buy", "inv.sell_commodity")).toBe(false);
+    expect(isValidPair("expense", "inv.buy_commodity")).toBe(false);
+    expect(isValidPair("income", "inv.sell_commodity")).toBe(false);
+  });
+
+  it("ใช้บัญชี 1720 ไม่ใช่ 1700 — ไม่งั้นทองไปรวมกับหุ้น", () => {
+    expect(buy.sub.dr).toBe("1720");
+    expect(sell.sub.cr).toBe("1720");
+    expect([buy.sub.dr, buy.sub.cr, sell.sub.dr, sell.sub.cr]).not.toContain("1700");
+  });
+
+  it("ซื้อไม่กระทบกำไรขาดทุน · ขายกระทบเฉพาะกำไร/ขาดทุน", () => {
+    expect(affectsPL(buy.sub)).toBe(false);
+    expect(impactLines(buy.sub).find((l) => l.startsWith("กำไรขาดทุน"))).toBe("กำไรขาดทุน · ไม่กระทบ");
+
+    expect(affectsPL(sell.sub)).toBe(true);
+    const pl = impactLines(sell.sub).find((l) => l.startsWith("กำไรขาดทุน"))!;
+    expect(pl).toContain("เมื่อขายได้กำไรหรือขาดทุน");
+    expect(pl).toContain("รายได้หรือค่าใช้จ่าย");
+  });
+
+  it("ทั้งคู่เป็นกระแสเงินสดลงทุน ซื้อเงินออก ขายเงินเข้า", () => {
+    expect(buy.sub.cashflow).toBe("investing");
+    expect(sell.sub.cashflow).toBe("investing");
+    expect(buy.sub.cash).toBe("out");
+    expect(sell.sub.cash).toBe("in");
+    expect(impactLines(buy.sub)).toContain("กระแสเงินสด · ลงทุน — เงินออก");
+    expect(impactLines(sell.sub)).toContain("กระแสเงินสด · ลงทุน — เงินเข้า");
+  });
+
+  it("ขายต้องบังคับกรอกต้นทุน ไม่งั้นตัดบัญชีผิดและกำไรผิด", () => {
+    expect(sell.sub.requires).toContain("capitalGain");
+    expect(sell.sub.gainCoa).toBe("4900");
+    expect(sell.sub.lossCoa).toBe("5910");
+  });
+
+  it("งบดุลขยับถูกด้าน: ซื้อ 1720 เพิ่ม · ขาย 1720 ลด", () => {
+    expect(impactLines(buy.sub)).toContain("งบดุล · สินทรัพย์ — เงินลงทุนในทองคำและสินทรัพย์ทางเลือก เพิ่มขึ้น");
+    expect(impactLines(sell.sub)).toContain("งบดุล · สินทรัพย์ — เงินลงทุนในทองคำและสินทรัพย์ทางเลือก ลดลง");
+  });
+});
