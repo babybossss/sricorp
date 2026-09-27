@@ -52,6 +52,17 @@ describe("หมวดใหญ่ของทรัพย์", () => {
     expect(srr.coaCodes).toEqual(["1400", "1410"]);
   });
 
+  it("คริปโตอยู่ Commodity & Cash คู่กับทองคำ ตามที่ลูกพี่ยืนยัน 27/09", () => {
+    // เคยเป็นดุลพินิจของ Claude ตอนนี้เป็นกฎที่ลูกพี่ตัดสินแล้ว
+    // ล็อกไว้กันย้ายโดยไม่ตั้งใจ — เส้นแบ่งคือ "มีผู้ออกหรือไม่" ไม่ใช่ "ซื้อขายในตลาดหรือไม่"
+    const crypto = allCategories().find((c) => c.code === "COM_CRYPTO")!;
+    const gold = allCategories().find((c) => c.code === "COM_GOLD")!;
+    expect(crypto.className).toBe("Commodity & Cash");
+    expect(crypto.className).toBe(gold.className);
+    expect(allCategories().filter((c) => c.className === "Paper Asset").map((c) => c.code))
+      .not.toContain("COM_CRYPTO");
+  });
+
   it("เงินสดอยู่ใน Commodity & Cash · ทองคำแยกจากหลักทรัพย์", () => {
     expect(classOfCoa("1100")?.name).toBe("Commodity & Cash");
     expect(classOfCoa("1720")?.name).toBe("Commodity & Cash");
