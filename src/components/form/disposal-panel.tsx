@@ -4,42 +4,24 @@ import * as React from "react";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
-import { money, parseAmount } from "@/lib/format";
+import { money } from "@/lib/format";
 import type { DisposalResult } from "@/lib/disposal/capital-gain";
 import type { RepaymentSplit } from "@/lib/disposal/repayment";
 import type { PostingInput } from "@/lib/ledger/types";
 import type { Installment } from "@/lib/loan/schedule";
 import { JournalPreview } from "./journal-preview";
 import { cn } from "@/lib/utils";
+import {
+  EMPTY_DISPOSAL,
+  EMPTY_REPAYMENT,
+  isManualSplit,
+  signedUnrealized,
+  type DisposalValue,
+  type RepaymentValue,
+} from "./disposal-value";
 
-export type DisposalValue = {
-  costBasis: string;
-  salePrice: string;
-  sellingCosts: string;
-  /** จำนวนบวกเสมอ — ทิศทางอยู่ที่ `unrealizedDirection` ไม่ให้พิมพ์เครื่องหมายเอง */
-  unrealizedAmount: string;
-  unrealizedDirection: "up" | "down";
-};
-
-export const EMPTY_DISPOSAL: DisposalValue = {
-  costBasis: "",
-  salePrice: "",
-  sellingCosts: "",
-  unrealizedAmount: "",
-  unrealizedDirection: "up",
-};
-
-/**
- * ส่วนต่างจากการตีราคาแบบมีเครื่องหมาย
- *
- * แยกทิศทางออกมาเป็นปุ่มแทนการให้พิมพ์เลขติดลบ เพราะ:
- * - แป้นตัวเลขบนมือถือ (`inputMode="decimal"`) ไม่มีปุ่มลบ
- * - ผู้ใช้ก๊อปตัวเลขจากหน้าจอมาวางได้ ซึ่งแสดงติดลบเป็นวงเล็บหรือ `−` ยูนิโคด
- *   เคยทำให้ตีราคาลงกลายเป็นตีราคาขึ้นโดยไม่มีอะไรฟ้อง
- */
-export function signedUnrealized(v: DisposalValue): number {
-  return Math.abs(parseAmount(v.unrealizedAmount)) * (v.unrealizedDirection === "down" ? -1 : 1);
-}
+export { EMPTY_DISPOSAL, EMPTY_REPAYMENT, isManualSplit, signedUnrealized };
+export type { DisposalValue, RepaymentValue };
 
 /**
  * Backlog ข้อ 4 — แผงคำนวณกำไร/ขาดทุนจากการขาย
@@ -165,28 +147,6 @@ export function DisposalPanel({
       )}
     </div>
   );
-}
-
-export type RepaymentValue = {
-  manualPrincipal: string;
-  manualInterest: string;
-  useManual: boolean;
-};
-
-export const EMPTY_REPAYMENT: RepaymentValue = {
-  manualPrincipal: "",
-  manualInterest: "",
-  useManual: false,
-};
-
-/**
- * ต้องกรอกเงินต้น/ดอกเบี้ยเองหรือไม่
- *
- * ไม่มีตารางงวดอ้างอิง = บังคับกรอกเสมอ ไม่ว่าจะติ๊กช่องหรือไม่ — ระบบไม่เดาให้
- * กฎนี้ต้องใช้ชุดเดียวกันทั้งในแผงและในรายการช่องที่ยังขาด ไม่งั้นจะปล่อยให้กดถัดไปทั้งที่ยังไม่ครบ
- */
-export function isManualSplit(value: RepaymentValue, hasSchedule: boolean): boolean {
-  return value.useManual || !hasSchedule;
 }
 
 /**

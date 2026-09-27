@@ -52,6 +52,10 @@ export function parseAmountOrNull(raw: string): number | null {
   const wrapped = /^\((.*)\)$/.exec(t);
   const body = wrapped ? wrapped[1] : t;
 
+  // รูปแบบยุโรป "1.000,50" — ถ้าตัดจุลภาคทิ้งดื้อๆ จะกลายเป็น 1.0005 ผิดไปพันเท่าเงียบๆ
+  // สังเกตจากจุลภาคที่อยู่**หลัง**จุดทศนิยม ซึ่งรูปแบบที่ระบบใช้ (en-US) ไม่มีทางเกิด
+  if (body.lastIndexOf(",") > body.lastIndexOf(".") && body.includes(".")) return null;
+
   // เครื่องหมายลบทุกแบบที่หน้าจอและคีย์บอร์ดไทยผลิตได้
   const normalised = body.replace(/[\u2212\u2013\u2014]/g, "-").replace(/[,\s฿]/g, "");
   if (!/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(normalised)) return null;
