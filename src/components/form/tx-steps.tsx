@@ -192,22 +192,6 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       </Field>
 
       <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
-        <Field
-          label="ทรัพย์ที่ผูก"
-          required={needsAsset}
-          error={needsAsset && !draft.assetId ? "หมวดย่อยนี้ต้องผูกทรัพย์" : undefined}
-          hint={!needsAsset ? "ไม่บังคับสำหรับหมวดนี้" : undefined}
-        >
-          <Select value={draft.assetId} onChange={(e) => patch({ assetId: e.target.value })}>
-            <option value="">— ไม่ผูกทรัพย์ —</option>
-            {ASSETS.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-
         <ContactPicker
           value={draft.contactId}
           onSelect={(id) => patch({ contactId: id })}
@@ -216,6 +200,22 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           hint={!needsContact ? "ไม่บังคับสำหรับหมวดนี้" : undefined}
           layer={contactLayer}
         />
+
+        <Field
+          label="โปรเจค (ทรัพย์)"
+          required={needsAsset}
+          error={needsAsset && !draft.assetId ? "หมวดย่อยนี้ต้องระบุโปรเจค (ทรัพย์)" : undefined}
+          hint={!needsAsset ? "ไม่บังคับสำหรับหมวดนี้" : undefined}
+        >
+          <Select value={draft.assetId} onChange={(e) => patch({ assetId: e.target.value })}>
+            <option value="">— ไม่ระบุโปรเจค —</option>
+            {ASSETS.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
       </div>
 
       {/* โอนระหว่างบัญชี — ต้องมีปลายทาง และถ้าข้ามผู้ถือต้องบอกว่าเป็นอะไร */}
@@ -448,7 +448,7 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
     { k: "บัญชี", v: bank?.name ?? "—" },
     { k: "จำนวนเงิน", v: draft.amount ? `฿ ${draft.amount}` : "—" },
     { k: "วันที่เอกสาร / เงินจริง", v: `${draft.docDate} · ${draft.notYetPaid ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}` },
-    { k: "ทรัพย์ที่ผูก", v: asset?.name ?? "—" },
+    { k: "โปรเจค (ทรัพย์)", v: asset?.name ?? "—" },
   ];
 
   // รอบนี้ยังไม่มีที่เก็บไฟล์จริง — จำลองการแนบเพื่อให้เห็นว่ากติกานิติบุคคลทำงานจริง

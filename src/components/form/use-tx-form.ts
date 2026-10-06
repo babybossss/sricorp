@@ -182,7 +182,7 @@ export function useTxForm() {
     if (!draft.subCode) out.push("หมวดย่อย");
     if (!draft.amount.trim()) out.push("จำนวนเงิน");
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
-    if (requires("asset") && !draft.assetId) out.push("ทรัพย์ที่ผูก");
+    if (requires("asset") && !draft.assetId) out.push("โปรเจค (ทรัพย์)");
     if (requires("transferTarget")) {
       if (!draft.transferToBankId) out.push("บัญชีปลายทาง");
       // ข้ามผู้ถือแล้วไม่ระบุลักษณะ = ไม่รู้ว่าเป็นหนี้ เป็นทุน หรือเป็นปันผล ลงบัญชีไม่ได้

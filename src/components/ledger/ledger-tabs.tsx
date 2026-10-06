@@ -105,7 +105,7 @@ function ListTab() {
               <Th className="whitespace-nowrap">ประเภท</Th>
               <Th>หมวดย่อย</Th>
               <Th>รายละเอียด</Th>
-              <Th>ทรัพย์ที่ผูก</Th>
+              <Th>โปรเจค (ทรัพย์)</Th>
               <Th>ถือในชื่อ</Th>
               <Th align="right">เงินเข้า</Th>
               <Th align="right">เงินออก</Th>
