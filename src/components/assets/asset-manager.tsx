@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import Link from "next/link";
-import { ASSETS, yearlyFor, FREQUENCY_LABEL, PER_YEAR, type AssetRef } from "@/lib/mock/assets";
+import { ASSETS, monthlyFor, monthlyOf, FREQUENCY_LABEL, type AssetRef } from "@/lib/mock/assets";
 import { entityById } from "@/lib/mock/entities";
 import { money, signedMoney } from "@/lib/format";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
@@ -13,146 +14,278 @@ import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "active" | "inactive";
+type Layout = "table" | "cards" | "rows";
+
+const LAYOUTS: { key: Layout; label: string; note: string }[] = [
+  { key: "table", label: "แบบ A · ตาราง", note: "แน่น อ่านเร็ว เทียบตัวเลขข้ามทรัพย์ง่าย" },
+  { key: "cards", label: "แบบ B · การ์ด", note: "รูปใหญ่ จำทรัพย์จากภาพได้ทันที" },
+  { key: "rows", label: "แบบ C · รายการ", note: "แถวโปร่ง ตัวเลขใหญ่ อ่านสบายตาที่สุด" },
+];
 
 /**
- * หน้าบริหารสินทรัพย์ — ทะเบียนทรัพย์พร้อมสถานะและรายการประจำ
+ * หน้าบริหารสินทรัพย์ — ทะเบียนทรัพย์ สถานะ และรายการประจำ
  *
- * หน้านี้คือต้นทางของ Auto-Key (D-067): ทรัพย์ที่ `active` และมีรายการประจำ
- * จะถูก cron สร้าง draft ให้ล่วงหน้า แล้วไปรออนุมัติเป็นชุด
+ * **ตัวเลขทุกตัวเป็นต่อเดือน** (ลูกพี่สั่ง 06/10) · ค่าส่วนกลางรายปีกับค่าล้างแอร์ราย 3 เดือน
+ * ถูกเฉลี่ยลงมาเป็นรายเดือนด้วย ไม่ใช่นับเฉพาะรายการรายเดือน ไม่งั้นเดือนที่ไม่มีบิลก้อนใหญ่
+ * จะดูกำไรดีเกินจริง
  *
- * **ทรัพย์ที่ไม่ active ไม่นับในยอดคาดการณ์และไม่ออกรายการประจำ** — ห้องที่ไม่มี
- * คนเช่าแต่ยังออกใบค่าเช่าทุกเดือน คือรายได้ปลอมที่ค้างเป็นลูกหนี้ไปตลอด
+ * หน้านี้คือต้นทางของ Auto-Key (D-067): ทรัพย์ที่ active และมีรายการประจำ
+ * จะถูกสร้าง draft ล่วงหน้าไปรออนุมัติเป็นชุด
  */
 export function AssetManager() {
-  const showToast = useApp((s) => s.showToast);
   const [filter, setFilter] = React.useState<Filter>("all");
+  const [layout, setLayout] = React.useState<Layout>("table");
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   const rows = ASSETS.filter((a) => filter === "all" || a.status === filter);
-  const active = ASSETS.filter((a) => a.status === "active");
-  const total = ASSETS.reduce(
+  const activeCount = ASSETS.filter((a) => a.status === "active").length;
+  const sum = ASSETS.reduce(
     (t, a) => {
-      const y = yearlyFor(a);
-      return { cost: t.cost + a.cost, income: t.income + y.income, expense: t.expense + y.expense };
+      const m = monthlyFor(a);
+      return { income: t.income + m.income, expense: t.expense + m.expense };
     },
-    { cost: 0, income: 0, expense: 0 }
+    { income: 0, expense: 0 }
   );
-  const open = ASSETS.find((a) => a.id === openId) ?? null;
 
   return (
     <div className="flex flex-col gap-4 pb-24">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="ทรัพย์ทั้งหมด" value={`${ASSETS.length} ชิ้น`} sub={`ปล่อยเช่า/สร้างรายได้อยู่ ${active.length} ชิ้น`} />
-        <Stat label="ต้นทุนรวม" value={money(total.cost)} sub="ราคาที่ได้มา ยังไม่รวมราคาประเมิน" />
-        <Stat label="รายได้คาดต่อปี" value={money(total.income)} tone="pos" sub="นับเฉพาะทรัพย์ที่ยัง active" />
-        <Stat
-          label="สุทธิคาดต่อปี"
-          value={signedMoney(total.income - total.expense)}
-          tone={total.income - total.expense < 0 ? "neg" : "pos"}
-          sub={`หักค่าใช้จ่ายประจำ ${money(total.expense)}`}
-        />
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-card border border-line bg-surface p-[16px_20px] shadow-card">
+        <Figure label="ทรัพย์ที่สร้างรายได้" value={`${activeCount} / ${ASSETS.length}`} />
+        <Figure label="รายได้ต่อเดือน" value={money(sum.income)} tone="pos" />
+        <Figure label="ค่าใช้จ่ายต่อเดือน" value={money(sum.expense)} tone="neg" />
+        <Figure label="สุทธิต่อเดือน" value={signedMoney(sum.income - sum.expense)} tone="pos" strong />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2.5 rounded-card border border-line bg-surface p-[14px_18px] shadow-card">
-        <span className="text-base text-ink-600">แสดง</span>
+      <div className="flex flex-wrap items-center gap-2.5">
         {(["all", "active", "inactive"] as Filter[]).map((f) => (
           <Button key={f} size="sm" variant={filter === f ? "primary" : "secondary"} onClick={() => setFilter(f)}>
-            {f === "all" ? `ทั้งหมด (${ASSETS.length})` : f === "active" ? `ใช้งานอยู่ (${active.length})` : `หยุดไว้ (${ASSETS.length - active.length})`}
+            {f === "all" ? `ทั้งหมด (${ASSETS.length})` : f === "active" ? `ใช้งานอยู่ (${activeCount})` : `หยุดไว้ (${ASSETS.length - activeCount})`}
           </Button>
         ))}
-        <Button className="ml-auto" size="sm" onClick={() => showToast("ยังเป็นตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล")}>
-          + เพิ่มทรัพย์
-        </Button>
       </div>
 
-      <TableShell>
-        <Table minWidth={1340}>
-          <thead>
-            <tr>
-              <Th className="min-w-[230px]">ทรัพย์</Th>
-              <Th>หมวด</Th>
-              <Th>ถือในชื่อ</Th>
-              <Th>สถานะ</Th>
-              <Th align="right">ต้นทุน</Th>
-              <Th align="right">รายได้/ปี</Th>
-              <Th align="right">ค่าใช้จ่าย/ปี</Th>
-              <Th align="right">สุทธิ/ปี</Th>
-              <Th>รายการประจำ</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((a) => {
-              const y = yearlyFor(a);
-              const holder = entityById(a.ownerId);
-              const stopped = a.status !== "active";
-              return (
-                <tr key={a.id} className={cn("bg-surface", stopped && "bg-canvas")}>
-                  <Td className="p-0">
-                    <button
-                      type="button"
-                      className="flex min-h-control w-full flex-col items-start gap-0.5 p-[14px_16px] text-left hover:bg-brand-50"
-                      onClick={() => setOpenId(a.id)}
-                    >
-                      <span className="whitespace-nowrap font-semibold underline decoration-line underline-offset-4">{a.name}</span>
-                      {a.statusNote ? <span className="text-sm text-ink-400">{a.statusNote}</span> : null}
-                    </button>
-                  </Td>
-                  <Td className="whitespace-nowrap text-ink-600">{a.category}</Td>
-                  <Td className="whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-pill" style={{ background: holder.color }} />
-                      {holder.name}
-                    </span>
-                  </Td>
-                  <Td className="whitespace-nowrap">
-                    <Pill className={cn("whitespace-nowrap", stopped ? "border-line bg-canvas text-ink-600" : "border-pos bg-pos-bg text-pos-fg")}>
-                      {stopped ? "หยุดไว้" : "ใช้งานอยู่"}
-                    </Pill>
-                  </Td>
-                  <Td align="right" className="whitespace-nowrap tabular-nums">{money(a.cost)}</Td>
-                  <Td align="right" className="whitespace-nowrap tabular-nums text-pos">{y.income ? money(y.income) : "—"}</Td>
-                  <Td align="right" className="whitespace-nowrap tabular-nums text-neg">{y.expense ? money(y.expense) : "—"}</Td>
-                  <Td align="right" className="whitespace-nowrap tabular-nums">
-                    <b className={y.net < 0 ? "text-neg" : "text-pos"}>{y.net ? signedMoney(y.net) : "—"}</b>
-                  </Td>
-                  <Td className="whitespace-nowrap text-ink-600">
-                    {a.recurring.length} รายการ
-                    {stopped && a.recurring.length ? <span className="block text-sm text-ink-400">หยุดออกอัตโนมัติ</span> : null}
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-      </TableShell>
-
-      <div className="rounded-card border border-brand-100 bg-brand-50 p-[14px_18px] text-base leading-7">
-        ทรัพย์ที่ <b>ใช้งานอยู่</b> และมีรายการประจำ ระบบจะสร้างรายการล่วงหน้าให้เป็นชุด
-        แล้วส่งเข้าคิวอนุมัติ — <b>สร้างได้แค่ร่าง ไม่ลงบัญชีเอง</b> ·
-        ทรัพย์ที่หยุดไว้จะไม่ออกรายการใดเลย
+      {/* สลับแบบเพื่อให้ลูกพี่เลือก — ของจริงจะเหลือแบบเดียว */}
+      <div className="flex flex-col gap-2 rounded-card border border-dashed border-brand-100 bg-brand-50 p-[14px_18px]">
+        <div className="text-base font-semibold">เลือกแบบที่ชอบ แล้วบอกผม — ของจริงจะเหลือแบบเดียว</div>
+        <div className="flex flex-wrap gap-2.5">
+          {LAYOUTS.map((l) => (
+            <Button key={l.key} size="sm" variant={layout === l.key ? "primary" : "secondary"} onClick={() => setLayout(l.key)}>
+              {l.label}
+            </Button>
+          ))}
+        </div>
+        <div className="text-sm text-ink-600">{LAYOUTS.find((l) => l.key === layout)?.note}</div>
       </div>
 
-      <AssetSheet asset={open} onClose={() => setOpenId(null)} />
+      {layout === "table" ? <TableLayout rows={rows} onOpen={setOpenId} /> : null}
+      {layout === "cards" ? <CardLayout rows={rows} onOpen={setOpenId} /> : null}
+      {layout === "rows" ? <RowLayout rows={rows} onOpen={setOpenId} /> : null}
+
+      <AssetSheet asset={ASSETS.find((a) => a.id === openId) ?? null} onClose={() => setOpenId(null)} />
     </div>
   );
 }
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "pos" | "neg" }) {
+/* ---------- ชิ้นส่วนที่ใช้ร่วมกันทั้งสามแบบ ---------- */
+
+function Figure({ label, value, tone, strong }: { label: string; value: string; tone?: "pos" | "neg"; strong?: boolean }) {
   return (
-    <div className="flex flex-col gap-1 rounded-card border border-line bg-surface p-[16px_18px] shadow-card">
-      <div className="text-base text-ink-600">{label}</div>
-      <div className={cn("text-h1 font-semibold tabular-nums", tone === "pos" && "text-pos", tone === "neg" && "text-neg")}>{value}</div>
-      {sub ? <div className="text-sm text-ink-400">{sub}</div> : null}
+    <div>
+      <div className="text-sm text-ink-400">{label}</div>
+      <div className={cn("tabular-nums font-semibold", strong ? "text-h1" : "text-h2", tone === "pos" && "text-pos", tone === "neg" && "text-neg")}>
+        {value}
+      </div>
     </div>
   );
 }
 
-/** แผงขวา — รายการประจำของทรัพย์ชิ้นเดียว */
+function Photo({ asset, size }: { asset: AssetRef; size: number }) {
+  return (
+    <Image
+      src={asset.photo ?? "/asset-photos/rent1.svg"}
+      alt=""
+      width={size}
+      height={size}
+      className={cn("flex-none rounded-card object-cover", asset.status !== "active" && "opacity-55 grayscale")}
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+function StatusChip({ asset }: { asset: AssetRef }) {
+  const stopped = asset.status !== "active";
+  return (
+    <Pill className={cn("whitespace-nowrap", stopped ? "border-line bg-canvas text-ink-600" : "border-pos bg-pos-bg text-pos-fg")}>
+      {stopped ? "หยุดไว้" : "ใช้งานอยู่"}
+    </Pill>
+  );
+}
+
+function Owner({ ownerId }: { ownerId: string }) {
+  const o = entityById(ownerId);
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="h-2.5 w-2.5 flex-none rounded-pill" style={{ background: o.color }} />
+      {o.name}
+    </span>
+  );
+}
+
+/** ยอดสุทธิต่อเดือน — "—" เมื่อทรัพย์หยุดไว้ เพื่อไม่ให้อ่านเป็นศูนย์บาทจริง */
+function Net({ asset, className }: { asset: AssetRef; className?: string }) {
+  const m = monthlyFor(asset);
+  if (asset.status !== "active") return <span className={cn("text-ink-400", className)}>—</span>;
+  return <span className={cn("tabular-nums font-semibold", m.net < 0 ? "text-neg" : "text-pos", className)}>{signedMoney(m.net)}</span>;
+}
+
+/* ---------- แบบ A · ตาราง ---------- */
+
+function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
+  return (
+    <TableShell>
+      <Table minWidth={980}>
+        <thead>
+          <tr>
+            <Th className="min-w-[280px]">ทรัพย์</Th>
+            <Th>ถือในชื่อ</Th>
+            <Th>สถานะ</Th>
+            <Th align="right">รายได้/เดือน</Th>
+            <Th align="right">ค่าใช้จ่าย/เดือน</Th>
+            <Th align="right">สุทธิ/เดือน</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((a) => {
+            const m = monthlyFor(a);
+            return (
+              <tr key={a.id} className="bg-surface">
+                <Td className="p-0">
+                  <button
+                    type="button"
+                    className="flex min-h-control w-full items-center gap-3 p-[10px_16px] text-left hover:bg-brand-50"
+                    onClick={() => onOpen(a.id)}
+                  >
+                    <Photo asset={a} size={40} />
+                    <span className="min-w-0">
+                      <span className="block whitespace-nowrap font-semibold">{a.name}</span>
+                      <span className="block text-sm text-ink-400">{a.category}</span>
+                    </span>
+                  </button>
+                </Td>
+                <Td><Owner ownerId={a.ownerId} /></Td>
+                <Td className="whitespace-nowrap"><StatusChip asset={a} /></Td>
+                <Td align="right" className="whitespace-nowrap tabular-nums text-pos">{a.status === "active" && m.income ? money(m.income) : "—"}</Td>
+                <Td align="right" className="whitespace-nowrap tabular-nums text-neg">{a.status === "active" && m.expense ? money(m.expense) : "—"}</Td>
+                <Td align="right" className="whitespace-nowrap"><Net asset={a} /></Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </Table>
+    </TableShell>
+  );
+}
+
+/* ---------- แบบ B · การ์ด ---------- */
+
+function CardLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {rows.map((a) => {
+        const m = monthlyFor(a);
+        return (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onOpen(a.id)}
+            className="flex flex-col overflow-hidden rounded-card border border-line bg-surface text-left shadow-card hover:border-brand-100"
+          >
+            <Image
+              src={a.photo ?? "/asset-photos/rent1.svg"}
+              alt=""
+              width={480}
+              height={200}
+              className={cn("h-[140px] w-full object-cover", a.status !== "active" && "opacity-55 grayscale")}
+            />
+            <div className="flex flex-1 flex-col gap-2.5 p-[16px_18px]">
+              <div className="flex items-start gap-2">
+                <div className="mr-auto min-w-0">
+                  <div className="font-semibold">{a.name}</div>
+                  <div className="text-sm text-ink-400">{a.category}</div>
+                </div>
+                <StatusChip asset={a} />
+              </div>
+              <Owner ownerId={a.ownerId} />
+              <div className="mt-auto flex items-end justify-between border-t border-line pt-2.5">
+                <div className="text-sm text-ink-400">
+                  <div>รับ {a.status === "active" && m.income ? money(m.income) : "—"}</div>
+                  <div>จ่าย {a.status === "active" && m.expense ? money(m.expense) : "—"}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-ink-400">สุทธิ/เดือน</div>
+                  <Net asset={a} className="text-h2" />
+                </div>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- แบบ C · รายการ ---------- */
+
+function RowLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
+  const m0 = monthlyFor;
+  return (
+    <div className="overflow-hidden rounded-card border border-line bg-surface shadow-card">
+      {rows.map((a, i) => {
+        const m = m0(a);
+        return (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onOpen(a.id)}
+            className={cn(
+              "flex w-full flex-wrap items-center gap-4 p-[16px_20px] text-left hover:bg-brand-50",
+              i > 0 && "border-t border-line"
+            )}
+          >
+            <Photo asset={a} size={56} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-h2 font-semibold">{a.name}</span>
+                <StatusChip asset={a} />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base text-ink-600">
+                <span>{a.category}</span>
+                <span className="text-ink-400">·</span>
+                <Owner ownerId={a.ownerId} />
+              </div>
+              {a.statusNote ? <div className="text-sm text-ink-400">{a.statusNote}</div> : null}
+            </div>
+            <div className="ml-auto text-right">
+              <Net asset={a} className="text-h1" />
+              <div className="text-sm text-ink-400">
+                สุทธิ/เดือน
+                {a.status === "active" ? ` · รับ ${money(m.income)} · จ่าย ${money(m.expense)}` : ""}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- แผงขวา ---------- */
+
 function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () => void }) {
   const showToast = useApp((s) => s.showToast);
   if (!asset) return null;
 
-  const y = yearlyFor(asset);
+  const m = monthlyFor(asset);
   const stopped = asset.status !== "active";
 
   return (
@@ -162,18 +295,23 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
         <DialogHeader title={asset.name} onClose={onClose} />
 
         <div className="flex flex-1 flex-col gap-5 overflow-auto p-[20px_24px]">
-          <div className="flex flex-wrap items-center gap-2">
-            <Pill className={stopped ? "border-line bg-canvas text-ink-600" : "border-pos bg-pos-bg text-pos-fg"}>
-              {stopped ? "หยุดไว้" : "ใช้งานอยู่"}
-            </Pill>
-            <span className="text-base text-ink-600">{asset.category}</span>
+          <div className="flex gap-4">
+            <Photo asset={asset} size={96} />
+            <div className="flex flex-col gap-2">
+              <StatusChip asset={asset} />
+              <div className="text-base text-ink-600">{asset.category}</div>
+              <Owner ownerId={asset.ownerId} />
+              <Button variant="secondary" size="sm" onClick={() => showToast("ตัวอย่างหน้าจอ — ต่อ Supabase Storage แล้วจะอัพรูปได้จริง")}>
+                เปลี่ยนรูป
+              </Button>
+            </div>
           </div>
           {asset.statusNote ? <div className="text-base text-ink-600">{asset.statusNote}</div> : null}
 
           <div className="grid grid-cols-3 gap-3">
-            <Mini label="ต้นทุน" value={money(asset.cost)} />
-            <Mini label="รายได้/ปี" value={y.income ? money(y.income) : "—"} />
-            <Mini label="สุทธิ/ปี" value={y.net ? signedMoney(y.net) : "—"} />
+            <Mini label="รับ/เดือน" value={stopped ? "—" : money(m.income)} />
+            <Mini label="จ่าย/เดือน" value={stopped ? "—" : money(m.expense)} />
+            <Mini label="สุทธิ/เดือน" value={stopped ? "—" : signedMoney(m.net)} />
           </div>
 
           <div className="flex flex-col gap-2">
@@ -187,7 +325,7 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
                     <div className="mr-auto">
                       <div className="text-base font-semibold">{r.label}</div>
                       <div className="text-sm text-ink-400">
-                        {FREQUENCY_LABEL[r.frequency]} · {money(r.amount)} ต่องวด · {money(r.amount * PER_YEAR[r.frequency])} ต่อปี
+                        {FREQUENCY_LABEL[r.frequency]} · {money(r.amount)} ต่องวด · เฉลี่ย {money(monthlyOf(r))} ต่อเดือน
                       </div>
                     </div>
                     <Pill className={r.direction === "income" ? "border-pos bg-pos-bg text-pos-fg" : "border-neg bg-neg-bg text-neg-fg"}>
@@ -211,7 +349,7 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
               ดูทะเบียนเต็ม
             </Link>
           </Button>
-          <Button size="sm" onClick={() => showToast("ยังเป็นตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล")}>
+          <Button size="sm" onClick={() => showToast("ตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล")}>
             + เพิ่มรายการประจำ
           </Button>
         </DialogFooter>

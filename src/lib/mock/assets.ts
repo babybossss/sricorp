@@ -42,12 +42,15 @@ export type AssetRef = {
   status: "active" | "inactive";
   /** เหตุผลที่หยุด — แสดงให้คนอ่านรู้ว่าทำไมทรัพย์ชิ้นนี้ไม่มีรายได้เดือนนี้ */
   statusNote?: string;
+  /** รูปทรัพย์ — ชิ้นละหนึ่งรูป ใช้เป็นไอคอนเล็กหน้าชื่อให้จำได้เร็วกว่าอ่านชื่อ */
+  photo?: string;
   recurring: RecurringPlan[];
 };
 
 export const ASSETS: AssetRef[] = [
   {
     id: "rent1",
+    photo: "/asset-photos/rent1.svg",
     name: "คอนโดตัวอย่าง C",
     category: "Real Estate · ปล่อยเช่า",
     ownerId: "thanakorn",
@@ -61,6 +64,7 @@ export const ASSETS: AssetRef[] = [
   },
   {
     id: "rent2",
+    photo: "/asset-photos/rent2.svg",
     name: "คอนโดตัวอย่าง A",
     category: "Real Estate · ปล่อยเช่า",
     ownerId: "corp",
@@ -74,6 +78,7 @@ export const ASSETS: AssetRef[] = [
   },
   {
     id: "rent3",
+    photo: "/asset-photos/rent3.svg",
     name: "อาคารพาณิชย์ตัวอย่าง E",
     category: "Real Estate · ปล่อยเช่า",
     ownerId: "corp",
@@ -87,6 +92,7 @@ export const ASSETS: AssetRef[] = [
   },
   {
     id: "th_b",
+    photo: "/asset-photos/th_b.svg",
     name: "ทาวน์โฮมตัวอย่าง B",
     category: "Real Estate · ขายฝาก",
     ownerId: "corp",
@@ -98,6 +104,7 @@ export const ASSETS: AssetRef[] = [
   },
   {
     id: "land_d",
+    photo: "/asset-photos/land_d.svg",
     name: "ที่ดินตัวอย่าง D",
     category: "Real Estate · ขายฝาก",
     ownerId: "corp",
@@ -127,4 +134,21 @@ export function yearlyFor(a: AssetRef): { income: number; expense: number; net: 
     else expense += yearly;
   }
   return { income, expense, net: income - expense };
+}
+
+/**
+ * ยอดต่อ**เดือน** — ลูกพี่ขอให้ทุกตัวเลขในหน้าบริหารเทียบเป็นรายเดือนเหมือนกันหมด
+ *
+ * คิดจากยอดต่อปีหารสิบสอง ไม่ใช่ "เอาเฉพาะรายการรายเดือน" — ค่าส่วนกลางรายปี
+ * กับค่าล้างแอร์ราย 3 เดือน ก็เป็นภาระจริงของทุกเดือน แค่จ่ายเป็นก้อน
+ * ถ้านับเฉพาะรายการรายเดือน ตัวเลขจะดูดีเกินจริงในเดือนที่ไม่มีบิลก้อนใหญ่
+ */
+export function monthlyFor(a: AssetRef): { income: number; expense: number; net: number } {
+  const y = yearlyFor(a);
+  return { income: y.income / 12, expense: y.expense / 12, net: y.net / 12 };
+}
+
+/** ยอดต่อเดือนของรายการประจำหนึ่งแผน */
+export function monthlyOf(r: RecurringPlan): number {
+  return (r.amount * PER_YEAR[r.frequency]) / 12;
 }
