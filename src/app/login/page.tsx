@@ -13,7 +13,7 @@ export default function LoginPage() {
       </div>
       <div className="flex w-full max-w-[380px] flex-col gap-3">
         <Button asChild>
-          <Link href="/dashboard" className="no-underline hover:no-underline">เข้าสู่ระบบ</Link>
+          <Link href="/dashboard" className="no-underline hover:no-underline">เข้าสู่ระบบด้วย Google</Link>
         </Button>
         <Button asChild variant="secondary">
           <Link href="/dashboard" className="no-underline hover:no-underline">ส่งลิงก์เข้าอีเมล</Link>
