@@ -27,6 +27,9 @@ export const COA: CoaAccount[] = [
   { code: "1100", nameTh: "เงินสดและเงินฝากธนาคาร", nameEn: "Cash & bank", type: "asset" },
   { code: "1200", nameTh: "ลูกหนี้ค่าเช่า", nameEn: "Rent receivable", type: "asset" },
   { code: "1210", nameTh: "ลูกหนี้ดอกเบี้ย", nameEn: "Interest receivable", type: "asset" },
+  // บัญชีพักของทุกหมวดที่เงินยังไม่เข้า แต่ไม่ใช่ค่าเช่าหรือดอกเบี้ย (D-069)
+  // ขายทองคำแล้วยังไม่ได้เงิน = คนซื้อเป็นหนี้เรา — เป็นลูกหนี้ ไม่ใช่ "เงินระหว่างทาง"
+  { code: "1220", nameTh: "ลูกหนี้อื่น (รอรับเงิน)", nameEn: "Other receivable", type: "asset" },
   { code: "1300", nameTh: "เงินให้กู้ยืม - เงินต้น", nameEn: "Loan principal receivable", type: "asset" },
   { code: "1400", nameTh: "เงินลงทุนขายฝาก - เงินต้น", nameEn: "Redemption principal", type: "asset" },
   { code: "1410", nameTh: "เงินลงทุนจำนอง - เงินต้น", nameEn: "Mortgage principal", type: "asset" },

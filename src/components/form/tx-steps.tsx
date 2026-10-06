@@ -161,7 +161,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           ยืนยันว่าเงินเข้า/ออกจริงแล้ว
           {!api.canAccrue ? (
             <span className="block text-sm text-ink-400">
-              หมวดนี้ยังไม่มีบัญชีค้างรับ-ค้างจ่าย จึงตั้งค้างไม่ได้ — ต้องมีเงินเข้า/ออกจริง
+              หมวดนี้ตั้งค้างรับ-ค้างจ่ายไม่ได้ จึงต้องมีเงินเข้า/ออกจริงก่อนบันทึก
             </span>
           ) : draft.notYetPaid && sub?.accrualCoa ? (
             <span className="block text-sm text-ink-600">

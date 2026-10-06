@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { allowedSubs, findSub, isValidPair, type TxTypeKey, type SubCategory } from "@/lib/rules/tx-rules";
+import {
+  allowedSubs,
+  findSub,
+  isValidPair,
+  canAccrueFromForm,
+  type TxTypeKey,
+  type SubCategory,
+} from "@/lib/rules/tx-rules";
 import { HOLDERS } from "@/lib/mock/entities";
 import { BANKS } from "@/lib/mock/banks";
 import { parseAmount } from "@/lib/format";
@@ -89,8 +96,12 @@ const EMPTY: TxDraft = {
  * "รับเงินแล้ว" เงียบๆ ทั้งที่ผู้ใช้ไม่เคยติ๊กอะไรเลย
  */
 function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
-  if (!findSub(nextSub)?.sub.accrualCoa) return false;
-  return findSub(prevSub)?.sub.accrualCoa ? current : EMPTY.notYetPaid;
+  const accruable = (code: string) => {
+    const s = findSub(code)?.sub;
+    return !!s && canAccrueFromForm(s);
+  };
+  if (!accruable(nextSub)) return false;
+  return accruable(prevSub) ? current : EMPTY.notYetPaid;
 }
 
 export function useTxForm() {
@@ -159,8 +170,13 @@ export function useTxForm() {
   }, []);
 
   const sub: SubCategory | undefined = draft.subCode ? findSub(draft.subCode)?.sub : undefined;
-  /** หมวดนี้ตั้งค้างรับ-ค้างจ่ายได้ไหม — ตารางกฎเป็นคนบอก ไม่ใช่ฟอร์ม */
-  const canAccrue = !!sub?.accrualCoa;
+  /**
+   * หมวดนี้ตั้งค้างรับ-ค้างจ่ายได้ไหม — ตารางกฎเป็นคนบอก ไม่ใช่ฟอร์ม
+   *
+   * ถามฟังก์ชันเดียวกับที่ `buildPosting()` ใช้ ไม่ใช่เช็ค `accrualCoa` เอง
+   * ไม่งั้นช่องติ๊กจะเปิดให้ติ๊กในหมวดที่ engine ปฏิเสธ (บทเรียนข้อ 5 และ 6)
+   */
+  const canAccrue = !!sub && canAccrueFromForm(sub);
   const subs = draft.typeKey ? allowedSubs(draft.typeKey) : [];
 
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);

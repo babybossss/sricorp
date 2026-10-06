@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   TX_TYPES,
+  canAccrueFromForm,
   allowedSubs,
   findSub,
   isValidPair,
@@ -191,11 +192,23 @@ describe("ค้างรับ-ค้างจ่ายต้องมีทา
     expect(accrualAccounts.length).toBeGreaterThan(0);
   });
 
-  it("ทุกบัญชีค้างรับ-ค้างจ่าย ต้องมีหมวดที่รับ/จ่ายเงินมาล้างได้", () => {
+  /**
+   * ตั้งค้างได้แต่ล้างไม่ได้ = ลูกหนี้ค้างตลอดไป · กันด้วยโครงสร้างสองชั้น:
+   * บัญชีที่ยังไม่มีหมวดล้าง (เช่น `1220` ที่รอกลไก check ตาม D-068) ต้อง
+   * **ตั้งค้างจากฟอร์มไม่ได้** ไม่ใช่ตั้งได้แล้วค้างไว้ก่อน
+   */
+  it("ทุกบัญชีค้างที่ตั้งค้างจากฟอร์มได้ ต้องมีหมวดที่รับ/จ่ายเงินมาล้างได้", () => {
+    const accruableFromForm = new Set(
+      allSubs.filter(canAccrueFromForm).map((s) => s.accrualCoa as string)
+    );
     for (const account of accrualAccounts) {
       const settles = allSubs.filter(
         (s) => (s.dr === account || s.cr === account) && (isCashAccount(s.dr) || isCashAccount(s.cr))
       );
+      if (!accruableFromForm.has(account)) {
+        expect(settles.length, `${account} ไม่มีหมวดล้าง จึงต้องตั้งค้างจากฟอร์มไม่ได้`).toBe(0);
+        continue;
+      }
       expect(settles.length, `${account} ${coa(account).nameTh} ไม่มีหมวดสำหรับล้าง`).toBeGreaterThan(0);
     }
   });

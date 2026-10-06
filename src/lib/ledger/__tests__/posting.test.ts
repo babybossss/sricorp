@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildPosting, buildPostingDraft, assertBalanced, totalDebit, totalCredit, allLines } from "../posting";
 import { PostingError } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
-import { TX_TYPES, findSub } from "@/lib/rules/tx-rules";
+import { TX_TYPES, findSub, canAccrueFromForm } from "@/lib/rules/tx-rules";
 
 const base = {
   amount: 12000,
@@ -726,8 +726,8 @@ describe("ค้างรับ-ค้างจ่าย", () => {
     expect(lines.filter((l) => isCashAccount(l.coaCode))).toHaveLength(1);
   });
 
-  it("หมวดที่ตารางกฎไม่ได้ระบุบัญชีค้าง ต้องถูกปฏิเสธ ไม่ใช่เดาให้", () => {
-    // โอนที่ยังไม่โอน = ยังไม่เกิดรายการ · ขายที่ยังไม่ได้เงินต้องบันทึกเป็นลูกหนี้ของทรัพย์แยก
+  it("หมวดที่ตั้งค้างไม่ได้ ต้องถูกปฏิเสธ ไม่ใช่เดาให้", () => {
+    // โอนที่ยังไม่โอน = ยังไม่เกิดรายการ
     expect(() =>
       buildPosting({
         ...base,
@@ -738,21 +738,53 @@ describe("ค้างรับ-ค้างจ่าย", () => {
       })
     ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
 
+    // หมวดที่ตัวมันเองคือการล้างลูกหนี้ — ตั้งค้างซ้ำจะล้างได้สองทาง ลูกหนี้ติดลบ (D-069b)
     expect(() =>
       buildPosting({
         ...base,
-        typeKey: "finance_in",
-        subCode: "fin.loan_bank",
-        contactId: "c3",
+        typeKey: "invest_sell",
+        subCode: "inv.collect_rent",
+        contactId: "c1",
         notYetPaid: true,
       })
     ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
   });
 
+  /**
+   * D-069 เติม `accrualCoa` ให้ทุกหมวดที่เงินเคลื่อนจริง รวมเส้นทางพิเศษด้วย
+   * แต่สาขาที่สร้างบรรทัดเอง (แยกเงินต้น/ดอกเบี้ย · กำไรขาดทุน) **ไม่ได้อ่าน `notYetPaid`**
+   * ปล่อยผ่านจะได้บรรทัดเงินสดทั้งที่ผู้ใช้บอกว่าเงินยังไม่เข้า — ต้องปฏิเสธให้เห็น
+   */
+  it("เส้นทางพิเศษที่มีบัญชีพักแล้ว แต่ engine ยังพักไม่ได้ ต้องปฏิเสธ ไม่ใช่ลงเงินสดเงียบๆ", () => {
+    const special = TX_TYPES.flatMap((t) => t.subs.map((s) => ({ t, s }))).filter(
+      ({ s }) => s.accrualCoa && !canAccrueFromForm(s)
+    );
+    expect(special.length, "ต้องมีหมวดเส้นทางพิเศษให้ทดสอบ").toBeGreaterThan(0);
+
+    for (const { t, s } of special) {
+      expect(() =>
+        buildPosting({
+          ...base,
+          typeKey: t.key,
+          subCode: s.code,
+          assetId: "rent1",
+          contactId: "c1",
+          transferToBankAccountId: "b4b",
+          disposal: { costBasis: 100, salePrice: base.amount },
+          repayment: { principal: base.amount, interest: 0 },
+          notYetPaid: true,
+        }),
+        s.code
+      ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+    }
+  });
+
   it("ทุกหมวดที่ตั้งค้างได้ ต้องได้บรรทัดที่สมดุลและไม่มีเงินสด", () => {
     for (const t of TX_TYPES) {
       for (const s of t.subs) {
-        if (!s.accrualCoa) continue;
+        // ถามฟังก์ชันเดียวกับ engine ไม่ใช่ `!s.accrualCoa` — ไม่งั้นลูปนี้จะลาก
+        // เส้นทางพิเศษ (ที่ตั้งค้างไม่ได้) เข้ามาด้วย แล้วเทสต์จะพังด้วยเหตุผลที่ชี้ผิดจุด
+        if (!canAccrueFromForm(s)) continue;
         const lines = allLines(
           buildPosting({
             ...base,

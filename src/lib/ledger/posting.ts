@@ -11,7 +11,7 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { findSub, isValidPair, type SubCategory } from "@/lib/rules/tx-rules";
+import { findSub, isValidPair, canAccrueFromForm, clearingSubsFor, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { entityById } from "@/lib/mock/entities";
@@ -108,6 +108,22 @@ function accrualAccount(sub: SubCategory): string {
       `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ตารางกฎยังไม่ได้ระบุบัญชีลูกหนี้/เจ้าหนี้ของหมวดนี้`
     );
   }
+  // มีบัญชีพักในตารางกฎ **ไม่พอ** ที่จะตั้งค้างได้จริง — ต้องบอกเหตุผลที่ปฏิเสธให้ตรงจุด
+  // เงียบไว้แล้วปล่อยผ่านคือกรณีที่แพงที่สุด: เส้นทางพิเศษจะลงบรรทัดเงินสดตามปกติ
+  // ทั้งที่ผู้ใช้ติ๊กว่าเงินยังไม่เข้า (D-068 ห้ามไว้ตรงๆ) โดยไม่มีอะไรฟ้อง
+  if (!canAccrueFromForm(sub)) {
+    if (clearingSubsFor(sub.accrualCoa).length === 0) {
+      throw new PostingError(
+        `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ` +
+          `${coa(sub.accrualCoa).nameTh} ยังไม่มีหมวดสำหรับล้าง ตั้งค้างไว้จะค้างในงบดุลตลอดไป`
+      );
+    }
+    throw new PostingError(
+      `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ` +
+        "หมวดที่ต้องแยกเงินต้น/ดอกเบี้ย รับรู้กำไรขาดทุน หรือโอนระหว่างบัญชี " +
+        "ต้องบันทึกตอนเงินเคลื่อนจริง"
+    );
+  }
   return sub.accrualCoa;
 }
 
@@ -178,7 +194,11 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
 
   // เส้นทางพิเศษทั้งสามล้วนเป็นเรื่องของเงินที่เคลื่อนแล้ว — ตั้งค้างไม่ได้
   // โอนที่ยังไม่โอนคือยังไม่เกิดรายการ · ขายที่ยังไม่ได้รับเงินต้องบันทึกเป็นลูกหนี้ของทรัพย์แยกต่างหาก
-  if (input.notYetPaid && !sub.accrualCoa) accrualAccount(sub);
+  //
+  // ถามจาก `canAccrueFromForm()` ไม่ใช่จาก `!sub.accrualCoa` — ตั้งแต่ D-069 เติมบัญชีพัก
+  // ให้ทุกหมวดที่เงินเคลื่อนจริง การเช็คแค่ว่า "มีบัญชีพักไหม" จะปล่อยเส้นทางพิเศษผ่าน
+  // ไปถึงสาขาที่ **ไม่สนใจ `notYetPaid` เลย** แล้วลงบรรทัดเงินสดเงียบๆ
+  if (input.notYetPaid) accrualAccount(sub);
 
   const summary: string[] = [sub.plain];
   const transactions: PostingTransaction[] = [];

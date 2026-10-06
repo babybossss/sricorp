@@ -72,7 +72,12 @@ process.stdout.write(`-- =======================================================
 -- แก้ที่ตารางกฎในโค้ดแล้วรัน \`npm run sync:rules\` ใหม่
 --
 -- ทำอะไร: sync ${rows.length} หมวดย่อยลงตาราง txn_types ให้ SQL อ้างกฎเดียวกับหน้าจอ
--- ย้อนกลับ: delete from sri_os.txn_types;
+--
+-- ต้องรันหลัง migration ที่เพิ่มบัญชีในผังเสมอ — gain/loss/interest/accrual_coa_code
+-- เป็น FK เข้า chart_of_accounts · ถ้าบัญชีที่กฎอ้างยังไม่มี ทั้งชุดจะ rollback
+--
+-- ย้อนกลับ: ไฟล์นี้เป็น upsert ทั้งหมด replay ซ้ำได้ · ถอนทั้งชุดด้วย
+--   delete from sri_os.txn_types;  (ลบไม่ได้ถ้ามี transactions/draft_entries อ้างอยู่)
 -- ============================================================
 
 set search_path = sri_os, public;

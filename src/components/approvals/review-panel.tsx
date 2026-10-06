@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { Approval } from "@/lib/mock/ledger";
-import { getTxType, findSub } from "@/lib/rules/tx-rules";
+import { getTxType, findSub, canAccrueFromForm } from "@/lib/rules/tx-rules";
 import { entityById } from "@/lib/mock/entities";
 import { BANKS } from "@/lib/mock/banks";
 import { money } from "@/lib/format";
@@ -56,7 +56,9 @@ export function ReviewPanel({
           bankAccountId: bank.id,
           assetId: item.assetId,
           contactId: item.contactId,
-          notYetPaid: !!sub.accrualCoa,
+          // ร่างที่ยังไม่ยืนยันเงินเข้า-ออก — ถามฟังก์ชันเดียวกับ engine
+          // ไม่ใช่ `!!sub.accrualCoa` ซึ่งจะเปิดธงนี้ให้หมวดที่ engine ปฏิเสธด้วย
+          notYetPaid: canAccrueFromForm(sub),
         }
       : null;
 
@@ -93,7 +95,7 @@ export function ReviewPanel({
 
           <div className="flex flex-col gap-2 rounded-card border border-line bg-canvas p-4">
             <JournalPreview input={input} showSummary />
-            {sub?.accrualCoa ? (
+            {sub && canAccrueFromForm(sub) ? (
               <div className="text-sm leading-6 text-ink-600">
                 อนุมัติแล้ว<b>ยังไม่ย้ายเงินสด</b> — ต้องให้ Management ยืนยันว่าเงินเข้า/ออกจริงอีกขั้น
                 กระแสเงินสดจึงจะวิ่ง

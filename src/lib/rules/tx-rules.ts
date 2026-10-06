@@ -13,7 +13,7 @@
  * ผังบัญชีและหมวดย่อยตรวจทานกับของจริงใน SRI_Transaction_ERP.xlsx (ชีท Setup)
  */
 
-import { coa, type CoaAccount } from "./coa";
+import { coa, isCashAccount, type CoaAccount } from "./coa";
 
 export type TxTypeKey =
   | "income"
@@ -172,6 +172,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4410",
+        accrualCoa: "1220",
       },
       {
         code: "inc.key_money",
@@ -182,6 +183,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4310",
+        accrualCoa: "1220",
         requires: ["asset", "contact"],
       },
       {
@@ -193,6 +195,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4400",
+        accrualCoa: "1220",
         requires: ["contact"],
       },
       {
@@ -204,6 +207,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "4900",
+        accrualCoa: "1220",
         caution: "ฝั่ง Corporate ห้ามใช้หมวดนี้แบบไม่ระบุ ต้องเลือกหมวดที่ตรงกว่าเสมอ",
       },
     ],
@@ -421,6 +425,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1500",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
         caution: "ไม่กระทบกำไรขาดทุน เป็นการเปลี่ยนรูปของสินทรัพย์เท่านั้น",
       },
@@ -433,6 +438,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1510",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset"],
         caution: "ซ่อมให้กลับมาใช้ได้เหมือนเดิม = ค่าใช้จ่าย · ปรับปรุงให้ดีขึ้น/อายุยาวขึ้น = ลงทุน",
       },
@@ -445,6 +451,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1400",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset", "contact", "loanTerms"],
         caution: "ต้องกรอกเงื่อนไขสัญญาเพื่อสร้างตารางงวดรับดอกเบี้ย (Backlog ข้อ 2)",
       },
@@ -457,6 +464,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1410",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["asset", "contact", "loanTerms"],
         caution: "ต้องกรอกเงื่อนไขสัญญาเพื่อสร้างตารางงวดรับดอกเบี้ย (Backlog ข้อ 2)",
       },
@@ -469,6 +477,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1300",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact", "loanTerms"],
         caution: "เงินที่เราปล่อยออกไปเป็น Investing ไม่ใช่ Financing — Financing คือเรากู้เขา",
       },
@@ -481,6 +490,10 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1700",
         cr: CASH,
+        accrualCoa: "2100",
+        // ไม่ผูกทะเบียนตอนซื้อ = ไม่มีล็อตให้ตัดต้นทุนแบบ FIFO ตอนขาย (D-038 · D-058 ข้อ 1)
+        // ย้อนหลังทำไม่ได้เพราะข้อมูลล็อต (วันที่ · จำนวน · ราคา) หายไปแล้ว
+        requires: ["asset"],
       },
       {
         /**
@@ -503,6 +516,9 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: "1720",
         cr: CASH,
+        accrualCoa: "2100",
+        // เหตุผลเดียวกับซื้อหลักทรัพย์ — FIFO ครอบทั้ง 1700 และ 1720 (LEDGER_RULES §6 ข้อ 1)
+        requires: ["asset"],
         caution: "ทองคำและคริปโตใช้หมวดนี้ ไม่ใช่หมวดซื้อหลักทรัพย์ ไม่งั้นจะไปรวมอยู่ใน Paper Asset",
       },
       {
@@ -514,6 +530,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "1600",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
         caution: "เงินมัดจำที่เราจ่ายคือสิทธิที่จะได้คืน จึงเป็นสินทรัพย์ ไม่ใช่ค่าใช้จ่าย",
       },
@@ -535,6 +552,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1500",
+        accrualCoa: "1220",
         gainCoa: "4300",
         lossCoa: "5910",
         requires: ["asset", "capitalGain"],
@@ -549,6 +567,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1400",
+        accrualCoa: "1220",
         // ดอกเบี้ยรับเป็น "รายได้" ไม่ใช่ค่าใช้จ่าย — engine จะลงเป็นเครดิต
         interestCoa: "4100",
         requires: ["asset", "contact", "principalInterestSplit"],
@@ -563,6 +582,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1410",
+        accrualCoa: "1220",
         interestCoa: "4110",
         requires: ["asset", "contact", "principalInterestSplit"],
         caution: "รับพร้อมดอกเบี้ยได้ในรายการเดียว แต่ต้องแยกยอดให้ชัด — เงินต้นลดลูกหนี้ ดอกเบี้ยเป็นรายได้",
@@ -576,6 +596,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1300",
+        accrualCoa: "1220",
         interestCoa: "4120",
         requires: ["contact", "principalInterestSplit"],
         caution: "รับพร้อมดอกเบี้ยได้ในรายการเดียว แต่ต้องแยกยอดให้ชัด — เงินต้นลดลูกหนี้ ดอกเบี้ยเป็นรายได้",
@@ -589,6 +610,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1700",
+        accrualCoa: "1220",
         gainCoa: "4900",
         lossCoa: "5910",
         requires: ["capitalGain"],
@@ -614,6 +636,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "investing",
         dr: CASH,
         cr: "1720",
+        accrualCoa: "1220",
         gainCoa: "4900",
         lossCoa: "5910",
         requires: ["capitalGain"],
@@ -628,6 +651,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "1600",
+        accrualCoa: "1220",
         requires: ["contact"],
       },
       // คู่ของการตั้งค้างรับ — ไม่มีสองหมวดนี้ ลูกหนี้ที่ตั้งไว้จะค้างในงบดุลตลอดไป
@@ -674,6 +698,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: CASH,
         cr: "2410",
+        accrualCoa: "1220",
         requires: ["contact", "loanTerms"],
         caution: "เงินเข้าบัญชีแต่ไม่ใช่รายได้ ห้ามลงหมวด รายได้ เด็ดขาด",
       },
@@ -686,6 +711,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: CASH,
         cr: "2300",
+        accrualCoa: "1220",
         requires: ["contact", "loanTerms"],
         caution: "เงินเข้าบัญชีแต่ไม่ใช่รายได้ ห้ามลงหมวด รายได้ เด็ดขาด",
       },
@@ -698,6 +724,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: CASH,
         cr: "2400",
+        accrualCoa: "1220",
         requires: ["contact", "loanTerms"],
       },
       {
@@ -709,6 +736,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: CASH,
         cr: "3100",
+        accrualCoa: "1220",
         requires: ["contact"],
         caution: "เงินทุนจากอากงต้องแยกจากเงินกู้ยืมกรรมการ ห้ามรวมเป็นก้อนเดียว",
       },
@@ -721,6 +749,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: CASH,
         cr: "2200",
+        accrualCoa: "1220",
         requires: ["contact", "asset"],
       },
     ],
@@ -741,6 +770,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "2410",
         cr: CASH,
+        accrualCoa: "2100",
         interestCoa: "5400",
         requires: ["contact", "principalInterestSplit"],
         caution: "เงินต้นไม่ใช่ค่าใช้จ่าย ต้องแยกออกจากดอกเบี้ยเสมอ (Backlog ข้อ 5)",
@@ -754,6 +784,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "2300",
         cr: CASH,
+        accrualCoa: "2100",
         interestCoa: "5400",
         requires: ["contact", "principalInterestSplit"],
         caution: "เงินต้นไม่ใช่ค่าใช้จ่าย ต้องแยกออกจากดอกเบี้ยเสมอ (Backlog ข้อ 5)",
@@ -767,6 +798,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "5400",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
       },
       {
@@ -778,6 +810,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "financing",
         dr: "3200",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
         caution: "เงินปันผลจ่ายลดส่วนของเจ้าของ ไม่ใช่ค่าใช้จ่าย จึงไม่กระทบกำไรสุทธิ",
       },
@@ -790,6 +823,7 @@ export const TX_TYPES: TxType[] = [
         cashflow: "operating",
         dr: "2200",
         cr: CASH,
+        accrualCoa: "2100",
         requires: ["contact"],
       },
       {
@@ -998,3 +1032,40 @@ export const REQUIREMENT_LABEL: Record<FormRequirement, string> = {
 
 export const CASHFLOW_LABEL = CF_TH;
 export const SIDE_LABEL = SIDE_TH;
+
+/**
+ * หมวดที่ "รับ/จ่ายเงินแล้วทำให้บัญชีพักตัวนี้ลดลง" — คือทางล้างด้วยการคีย์มือ
+ *
+ * ใช้ตรวจ invariant ข้อที่พลาดบ่อยที่สุด: ตั้งค้างได้แต่ล้างไม่ได้
+ * = ลูกหนี้/เจ้าหนี้ค้างในงบดุลตลอดไป และรายได้ถูกนับซ้ำตอนเงินเข้าจริง (บทเรียนข้อ 7)
+ */
+export function clearingSubsFor(accrualCoa: string): SubCategory[] {
+  return TX_TYPES.flatMap((t) => t.subs).filter(
+    (s) =>
+      (s.dr === accrualCoa || s.cr === accrualCoa) &&
+      (isCashAccount(s.dr) || isCashAccount(s.cr))
+  );
+}
+
+/**
+ * ฟอร์มติ๊ก "ยังไม่ได้รับ/จ่ายเงิน" กับหมวดนี้ได้ไหม
+ *
+ * **ต่างจาก "มี `accrualCoa` ไหม"** และความต่างนี้สำคัญ:
+ * `accrualCoa` ตอบว่า "ถ้าเงินยังไม่เคลื่อน ยอดนี้ไปพักที่บัญชีไหน" ซึ่งกลไกการ check
+ * (D-068) เป็นคนใช้ · ส่วนฟังก์ชันนี้ตอบว่า "ตอนนี้คีย์ค้างจากฟอร์มได้จริงไหม"
+ * ซึ่งแคบกว่า เพราะยังมีสองเงื่อนไขที่ปิดอยู่:
+ *
+ * 1. **เส้นทางพิเศษ** (แยกเงินต้น/ดอกเบี้ย · รับรู้กำไรขาดทุน · โอน) engine สร้าง
+ *    บรรทัดเงินสดเองหลายบรรทัด ยังไม่รองรับการพัก — ปล่อยผ่านจะได้บรรทัดเงินสด
+ *    ทั้งที่ผู้ใช้บอกว่าเงินยังไม่เข้า ซึ่งคือสิ่งที่ D-068 ห้ามไว้ตรงๆ
+ * 2. **บัญชีพักที่ยังไม่มีทางล้าง** (`1220` รอกลไก check) — เปิดให้ตั้งค้างก่อน
+ *    แปลว่าสร้างลูกหนี้ที่ไม่มีใครล้างได้
+ *
+ * เงื่อนไขอ่านจากตารางกฎทั้งคู่ ไม่ได้ไล่ชื่อรหัสหมวด — เพิ่มหมวดใหม่จึงไม่หลุด
+ */
+export function canAccrueFromForm(sub: SubCategory): boolean {
+  if (!sub.accrualCoa) return false;
+  const specialPath: FormRequirement[] = ["capitalGain", "principalInterestSplit", "transferTarget"];
+  if (sub.requires?.some((r) => specialPath.includes(r))) return false;
+  return clearingSubsFor(sub.accrualCoa).length > 0;
+}
