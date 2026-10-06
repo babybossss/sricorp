@@ -13,13 +13,16 @@ export default function LoginPage() {
       </div>
       <div className="flex w-full max-w-[380px] flex-col gap-3">
         <Button asChild>
-          <Link href="/dashboard" className="no-underline hover:no-underline">เข้าสู่ระบบด้วย Google</Link>
+          <Link href="/dashboard" className="no-underline hover:no-underline">เข้าสู่ระบบ</Link>
         </Button>
         <Button asChild variant="secondary">
           <Link href="/dashboard" className="no-underline hover:no-underline">ส่งลิงก์เข้าอีเมล</Link>
         </Button>
       </div>
-      <div className="text-sm text-ink-400">Sustainable Generations Wealth</div>
+      <div className="flex flex-col items-center gap-1.5 text-center">
+        <div className="text-sm text-ink-400">“ Sustainable Generational Wealth and Happiness ”</div>
+        <div className="text-sm text-ink-400">Designed by Mr. LU</div>
+      </div>
     </div>
   );
 }
