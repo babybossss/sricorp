@@ -22,7 +22,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard", label: "หน้าแรก", icon: icon("m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10") },
   { href: "/ledger", label: "สมุดบัญชี", icon: icon("M12 7v14", "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z") },
   { href: "/approvals", label: "คิวอนุมัติ", badge: "7", icon: icon("M22 11.08V12a10 10 0 1 1-5.93-9.14", "m9 11 3 3L22 4") },
-  { href: "/balance", label: "งบดุล & ทรัพย์สิน", icon: icon("M12 2 2 7l10 5 10-5-10-5z", "m2 17 10 5 10-5", "m2 12 10 5 10-5"), match: (p) => p.startsWith("/balance") },
+  { href: "/balance", label: "งบดุล & ทรัพย์สิน", icon: icon("M3 10h18", "M12 3 3 8h18z", "M6 10v8M10 10v8M14 10v8M18 10v8", "M3 21h18"), match: (p) => p.startsWith("/balance") },
   { href: "/assets", label: "บริหารสินทรัพย์", icon: icon("M3 21h18", "M5 21V7l7-4 7 4v14", "M9 21v-5h6v5"), match: (p) => p.startsWith("/assets") },
   { href: "/contacts", label: "ผู้ติดต่อ", icon: icon("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8") },
   { href: "/settings/banks", label: "ตั้งค่า", icon: icon("M20 7h-9", "M14 17H5"), match: (p) => p.startsWith("/settings") },
