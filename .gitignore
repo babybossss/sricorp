@@ -8,6 +8,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .env*.local
+# ปิดช่องที่ค่าตั้งต้นของ Next เปิดไว้ — `.env*.local` ไม่ครอบ `.env` กับ `.env.production`
+# โปรเจกต์นี้เป็นข้อมูลการเงิน ไม่มีไฟล์ env ไหนที่ควรขึ้น git เลย
+.env
+.env.*
+!.env.example
 .vercel
 *.tsbuildinfo
 next-env.d.ts
