@@ -162,6 +162,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           {!api.canAccrue ? (
             <span className="block text-sm text-ink-400">
               หมวดนี้ตั้งค้างรับ-ค้างจ่ายไม่ได้ จึงต้องมีเงินเข้า/ออกจริงก่อนบันทึก
+              {api.accrualWhy ? <span className="block">{api.accrualWhy}</span> : null}
             </span>
           ) : draft.notYetPaid && sub?.accrualCoa ? (
             <span className="block text-sm text-ink-600">

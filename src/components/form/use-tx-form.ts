@@ -6,6 +6,7 @@ import {
   findSub,
   isValidPair,
   canAccrueFromForm,
+  accrualCheck,
   type TxTypeKey,
   type SubCategory,
 } from "@/lib/rules/tx-rules";
@@ -176,7 +177,13 @@ export function useTxForm() {
    * ถามฟังก์ชันเดียวกับที่ `buildPosting()` ใช้ ไม่ใช่เช็ค `accrualCoa` เอง
    * ไม่งั้นช่องติ๊กจะเปิดให้ติ๊กในหมวดที่ engine ปฏิเสธ (บทเรียนข้อ 5 และ 6)
    */
-  const canAccrue = !!sub && canAccrueFromForm(sub);
+  const accrual = sub ? accrualCheck(sub) : undefined;
+  const canAccrue = !!accrual?.ok;
+  /**
+   * เหตุผลที่ตั้งค้างไม่ได้ — เอามาจากตารางกฎตัวเดียวกับที่ engine ใช้ปฏิเสธ
+   * ผู้ใช้ที่ซื้อทรัพย์แบบยังไม่จ่ายต้องอ่านได้ว่าทำไมติ๊กไม่ได้ ไม่ใช่เจอช่องเทาๆ
+   */
+  const accrualWhy = accrual && !accrual.ok ? accrual.why : undefined;
   const subs = draft.typeKey ? allowedSubs(draft.typeKey) : [];
 
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);
@@ -351,6 +358,7 @@ export function useTxForm() {
     subs,
     requires,
     canAccrue,
+    accrualWhy,
     missing,
     reset,
     disposal,

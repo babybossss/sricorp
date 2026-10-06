@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   TX_TYPES,
   canAccrueFromForm,
+  clearingSubsFor,
+  accrualClearingRoutes,
   allowedSubs,
   findSub,
   isValidPair,
@@ -193,23 +195,34 @@ describe("ค้างรับ-ค้างจ่ายต้องมีทา
   });
 
   /**
-   * ตั้งค้างได้แต่ล้างไม่ได้ = ลูกหนี้ค้างตลอดไป · กันด้วยโครงสร้างสองชั้น:
-   * บัญชีที่ยังไม่มีหมวดล้าง (เช่น `1220` ที่รอกลไก check ตาม D-068) ต้อง
-   * **ตั้งค้างจากฟอร์มไม่ได้** ไม่ใช่ตั้งได้แล้วค้างไว้ก่อน
+   * ตั้งค้างได้แต่ล้างไม่ได้ = ลูกหนี้ค้างตลอดไป · ตรวจ **รายหมวด** ไม่ใช่รายบัญชี
+   *
+   * รายบัญชีหยาบเกินไป: `2100` มีทางล้าง (จ่ายเจ้าหนี้ค้างจ่าย) แต่เป็น Operating
+   * หมวดลงทุน/จัดหาเงินที่พักยอดที่ 2100 เหมือนกันจึง "ล้างได้" ในมุมรายบัญชี
+   * ทั้งที่เงินจะไปโผล่ผิดหมวดในงบกระแสเงินสด — เกณฑ์ที่ถูกคือ (บัญชีพัก, หมวด CF)
+   *
+   * เคยมีสาขา `if (!accruableFromForm.has(account)) ... continue` ที่ผ่อนให้บัญชี
+   * ที่ตั้งค้างไม่ได้ — เป็นการยืนยัน "สิ่งที่โค้ดทำ" ไม่ใช่ "กฎ" จึงเอาออก
    */
-  it("ทุกบัญชีค้างที่ตั้งค้างจากฟอร์มได้ ต้องมีหมวดที่รับ/จ่ายเงินมาล้างได้", () => {
-    const accruableFromForm = new Set(
-      allSubs.filter(canAccrueFromForm).map((s) => s.accrualCoa as string)
-    );
+  it("ทุกหมวดที่ตั้งค้างจากฟอร์มได้ ต้องมีทางล้างในกระแสเงินสดหมวดเดียวกัน", () => {
+    const accruable = allSubs.filter(canAccrueFromForm);
+    expect(accruable.length, "ต้องมีหมวดที่ตั้งค้างได้ให้ตรวจ").toBeGreaterThan(0);
+    for (const s of accruable) {
+      const account = s.accrualCoa as string;
+      expect(
+        clearingSubsFor(account, s.cashflow).map((c) => c.code),
+        `${s.code} พักที่ ${account} ${coa(account).nameTh} (CF ${s.cashflow}) แต่ไม่มีหมวดล้างที่ CF ตรงกัน`
+      ).not.toEqual([]);
+    }
+  });
+
+  it("บัญชีค้างที่ยังไม่มีทางล้างเลย ต้องตั้งค้างจากฟอร์มไม่ได้ทุกหมวด", () => {
     for (const account of accrualAccounts) {
-      const settles = allSubs.filter(
-        (s) => (s.dr === account || s.cr === account) && (isCashAccount(s.dr) || isCashAccount(s.cr))
-      );
-      if (!accruableFromForm.has(account)) {
-        expect(settles.length, `${account} ไม่มีหมวดล้าง จึงต้องตั้งค้างจากฟอร์มไม่ได้`).toBe(0);
-        continue;
-      }
-      expect(settles.length, `${account} ${coa(account).nameTh} ไม่มีหมวดสำหรับล้าง`).toBeGreaterThan(0);
+      if (accrualClearingRoutes(account).length > 0) continue;
+      expect(
+        allSubs.filter((s) => s.accrualCoa === account && canAccrueFromForm(s)).map((s) => s.code),
+        `${account} ไม่มีทางล้าง แต่ยังมีหมวดที่ตั้งค้างเข้ามันได้`
+      ).toEqual([]);
     }
   });
 

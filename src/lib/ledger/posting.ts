@@ -11,7 +11,7 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { findSub, isValidPair, canAccrueFromForm, clearingSubsFor, type SubCategory } from "@/lib/rules/tx-rules";
+import { findSub, isValidPair, accrualCheck, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { entityById } from "@/lib/mock/entities";
@@ -103,28 +103,17 @@ function assertRequirements(sub: SubCategory, input: PostingInput): void {
  * จึงต้องปฏิเสธ ไม่ใช่ยัดลง "ลูกหนี้อื่น" ให้พ้นๆ ไป
  */
 function accrualAccount(sub: SubCategory): string {
-  if (!sub.accrualCoa) {
-    throw new PostingError(
-      `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ตารางกฎยังไม่ได้ระบุบัญชีลูกหนี้/เจ้าหนี้ของหมวดนี้`
-    );
-  }
   // มีบัญชีพักในตารางกฎ **ไม่พอ** ที่จะตั้งค้างได้จริง — ต้องบอกเหตุผลที่ปฏิเสธให้ตรงจุด
   // เงียบไว้แล้วปล่อยผ่านคือกรณีที่แพงที่สุด: เส้นทางพิเศษจะลงบรรทัดเงินสดตามปกติ
   // ทั้งที่ผู้ใช้ติ๊กว่าเงินยังไม่เข้า (D-068 ห้ามไว้ตรงๆ) โดยไม่มีอะไรฟ้อง
-  if (!canAccrueFromForm(sub)) {
-    if (clearingSubsFor(sub.accrualCoa).length === 0) {
-      throw new PostingError(
-        `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ` +
-          `${coa(sub.accrualCoa).nameTh} ยังไม่มีหมวดสำหรับล้าง ตั้งค้างไว้จะค้างในงบดุลตลอดไป`
-      );
-    }
-    throw new PostingError(
-      `หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ` +
-        "หมวดที่ต้องแยกเงินต้น/ดอกเบี้ย รับรู้กำไรขาดทุน หรือโอนระหว่างบัญชี " +
-        "ต้องบันทึกตอนเงินเคลื่อนจริง"
-    );
+  //
+  // เหตุผลมาจากตารางกฎที่เดียว (`accrualCheck()`) ไม่ได้ไล่เงื่อนไขซ้ำที่นี่ —
+  // ไม่งั้นข้อความที่ผู้ใช้เห็นกับกฎที่ตัดสินจริงแยกจากกันได้ (บทเรียนข้อ 5)
+  const check = accrualCheck(sub);
+  if (!check.ok) {
+    throw new PostingError(`หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ${check.why}`);
   }
-  return sub.accrualCoa;
+  return check.account;
 }
 
 /**

@@ -13,7 +13,7 @@
  * ผังบัญชีและหมวดย่อยตรวจทานกับของจริงใน SRI_Transaction_ERP.xlsx (ชีท Setup)
  */
 
-import { coa, isCashAccount, type CoaAccount } from "./coa";
+import { coa, coaLabel, isCashAccount, type CoaAccount } from "./coa";
 
 export type TxTypeKey =
   | "income"
@@ -1034,38 +1034,132 @@ export const CASHFLOW_LABEL = CF_TH;
 export const SIDE_LABEL = SIDE_TH;
 
 /**
- * หมวดที่ "รับ/จ่ายเงินแล้วทำให้บัญชีพักตัวนี้ลดลง" — คือทางล้างด้วยการคีย์มือ
+ * ขาที่ **ลดยอด** บัญชีพักตัวนี้ และอีกขาเป็นเงินสด — คือรูปร่างของการล้างยอดจริง
+ *
+ * ทิศสำคัญกว่าที่คิด: นับแค่ "แตะบัญชีเดียวกัน" จะได้ขาที่ **ตั้ง** ยอดมาด้วย
+ * (เช่น `fin.deposit_received` เครดิต 2200 = ตั้งหนี้เงินมัดจำ ไม่ใช่ล้าง)
+ * แล้วระบบจะเชื่อว่าบัญชีนั้นล้างได้ ทั้งที่ยอดมีแต่โตขึ้นเรื่อยๆ
+ *
+ * ลูกหนี้ (สินทรัพย์) ลดเมื่ออยู่ฝั่งเครดิต · เจ้าหนี้ (หนี้สิน) ลดเมื่ออยู่ฝั่งเดบิต
+ * อ่านข้างจากประเภทบัญชีในผัง ไม่ใช่เดาจากรหัส
+ */
+function reducesAccrual(sub: SubCategory, accrualCoa: string): boolean {
+  const type = coa(accrualCoa).type;
+  // บัญชีพักที่เป็นรายได้/ค่าใช้จ่ายคือการพักใน P&L ซึ่งห้ามอยู่แล้ว — ไม่มีทางล้างให้
+  if (type !== "asset" && type !== "liability") return false;
+  const reducingSide: "dr" | "cr" = type === "asset" ? "cr" : "dr";
+  if (sub[reducingSide] !== accrualCoa) return false;
+  const otherLeg = reducingSide === "cr" ? sub.dr : sub.cr;
+  return isCashAccount(otherLeg);
+}
+
+/**
+ * ทุกหมวดที่ล้างบัญชีพักตัวนี้ได้ด้วยการคีย์มือ — **ไม่สนว่าลงกระแสเงินสดหมวดไหน**
+ *
+ * ใช้ตอบคำถามเดียวคือ "บัญชีนี้มีทางออกอยู่บ้างไหม" เพื่อแยกสองสาเหตุที่ต่างกัน
+ * ในข้อความปฏิเสธ: ไม่มีทางล้างเลย vs มีทางล้างแต่คนละหมวด CF
+ *
+ * **อย่าใช้ตัวนี้ตัดสินว่าตั้งค้างได้** — ใช้ `clearingSubsFor()` ที่คุมหมวด CF ด้วย
+ */
+export function accrualClearingRoutes(accrualCoa: string): SubCategory[] {
+  return TX_TYPES.flatMap((t) => t.subs).filter((s) => reducesAccrual(s, accrualCoa));
+}
+
+/**
+ * ทางล้างบัญชีพักตัวนี้ที่ใช้กับรายการต้นทางซึ่งลงกระแสเงินสดหมวด `cashflow` ได้จริง
  *
  * ใช้ตรวจ invariant ข้อที่พลาดบ่อยที่สุด: ตั้งค้างได้แต่ล้างไม่ได้
  * = ลูกหนี้/เจ้าหนี้ค้างในงบดุลตลอดไป และรายได้ถูกนับซ้ำตอนเงินเข้าจริง (บทเรียนข้อ 7)
+ *
+ * เงื่อนไขหมวด CF ไม่ใช่เรื่องความสวยงาม: ซื้อทรัพย์ 10 ล้านแบบยังไม่จ่ายพักที่ 2100
+ * ทางล้างเดียวที่มีคือ "จ่ายเจ้าหนี้ค้างจ่าย" ซึ่งเป็น Operating → เงิน 10 ล้านจะไปโผล่
+ * กระแสเงินสดจากการดำเนินงาน ทั้งที่ต้องเป็น Investing · งบดุลสมดุลทุกบรรทัด
+ * และไม่มีอะไรฟ้องเลย จับได้ก็ตอนอ่านงบกระแสเงินสดแล้วตัวเลขไม่เหมือนความจริง
  */
-export function clearingSubsFor(accrualCoa: string): SubCategory[] {
-  return TX_TYPES.flatMap((t) => t.subs).filter(
-    (s) =>
-      (s.dr === accrualCoa || s.cr === accrualCoa) &&
-      (isCashAccount(s.dr) || isCashAccount(s.cr))
-  );
+export function clearingSubsFor(accrualCoa: string, cashflow: CashflowSection): SubCategory[] {
+  return accrualClearingRoutes(accrualCoa).filter((s) => s.cashflow === cashflow);
+}
+
+/**
+ * เหตุผลที่หมวดนี้ยังตั้งค้างรับ-ค้างจ่ายจากฟอร์มไม่ได้ — คำนวณที่เดียว
+ *
+ * ทั้ง engine และฟอร์มอ่านจากตัวนี้ ข้อความปฏิเสธจึงไม่มีทางเพี้ยนจากกฎ
+ * (บทเรียนข้อ 5: กฎเดียวกันห้ามเขียนสองที่)
+ */
+export type AccrualCheck =
+  | { ok: true; account: string }
+  | {
+      ok: false;
+      reason: "noAccount" | "specialPath" | "noClearing" | "cashflowMismatch";
+      /** เหตุผลภาษาคน ใช้ต่อท้ายข้อความปฏิเสธได้ตรงๆ */
+      why: string;
+    };
+
+const ACCRUAL_SPECIAL_PATHS: FormRequirement[] = [
+  "capitalGain",
+  "principalInterestSplit",
+  "transferTarget",
+];
+
+export function accrualCheck(sub: SubCategory): AccrualCheck {
+  if (!sub.accrualCoa) {
+    return {
+      ok: false,
+      reason: "noAccount",
+      why: "ตารางกฎยังไม่ได้ระบุบัญชีลูกหนี้/เจ้าหนี้ของหมวดนี้",
+    };
+  }
+
+  if (sub.requires?.some((r) => ACCRUAL_SPECIAL_PATHS.includes(r))) {
+    return {
+      ok: false,
+      reason: "specialPath",
+      why:
+        "หมวดที่ต้องแยกเงินต้น/ดอกเบี้ย รับรู้กำไรขาดทุน หรือโอนระหว่างบัญชี " +
+        "ต้องบันทึกตอนเงินเคลื่อนจริง",
+    };
+  }
+
+  const account = sub.accrualCoa;
+  if (clearingSubsFor(account, sub.cashflow).length > 0) return { ok: true, account };
+
+  const routes = accrualClearingRoutes(account);
+  if (routes.length === 0) {
+    return {
+      ok: false,
+      reason: "noClearing",
+      why: `${coaLabel(account)} ยังไม่มีหมวดสำหรับล้าง ตั้งค้างไว้จะค้างในงบดุลตลอดไป`,
+    };
+  }
+
+  const sections = [...new Set(routes.map((r) => CF_TH[r.cashflow]))].join(" / ");
+  return {
+    ok: false,
+    reason: "cashflowMismatch",
+    why:
+      `หมวดที่ล้าง ${coaLabel(account)} ได้ ลงกระแสเงินสดหมวด${sections} ` +
+      `ไม่ใช่หมวด${CF_TH[sub.cashflow]}ของรายการนี้ — ตอนจ่าย/รับเงินจริง ` +
+      "ยอดจะไปโผล่ผิดหมวดในงบกระแสเงินสด",
+  };
 }
 
 /**
  * ฟอร์มติ๊ก "ยังไม่ได้รับ/จ่ายเงิน" กับหมวดนี้ได้ไหม
  *
  * **ต่างจาก "มี `accrualCoa` ไหม"** และความต่างนี้สำคัญ:
- * `accrualCoa` ตอบว่า "ถ้าเงินยังไม่เคลื่อน ยอดนี้ไปพักที่บัญชีไหน" ซึ่งกลไกการ check
- * (D-068) เป็นคนใช้ · ส่วนฟังก์ชันนี้ตอบว่า "ตอนนี้คีย์ค้างจากฟอร์มได้จริงไหม"
- * ซึ่งแคบกว่า เพราะยังมีสองเงื่อนไขที่ปิดอยู่:
+ * `accrualCoa` ตอบว่า "ถ้าเงินยังไม่เคลื่อน ยอดนี้ไปพักที่บัญชีไหน" ซึ่งเป็นข้อมูลที่ถูก
+ * สำหรับกลไกยืนยันรับ-จ่าย (C6) ที่จะลงบรรทัดเงินสดด้วย cashflow ของรายการต้นทาง
+ * ส่วนฟังก์ชันนี้ตอบว่า "ตอนนี้คีย์ค้างจากฟอร์มได้จริงไหม" ซึ่งแคบกว่า เพราะยังมี
+ * สามเงื่อนไขที่ปิดอยู่ (ดู `accrualCheck()` สำหรับเหตุผลรายข้อ):
  *
  * 1. **เส้นทางพิเศษ** (แยกเงินต้น/ดอกเบี้ย · รับรู้กำไรขาดทุน · โอน) engine สร้าง
- *    บรรทัดเงินสดเองหลายบรรทัด ยังไม่รองรับการพัก — ปล่อยผ่านจะได้บรรทัดเงินสด
- *    ทั้งที่ผู้ใช้บอกว่าเงินยังไม่เข้า ซึ่งคือสิ่งที่ D-068 ห้ามไว้ตรงๆ
- * 2. **บัญชีพักที่ยังไม่มีทางล้าง** (`1220` รอกลไก check) — เปิดให้ตั้งค้างก่อน
+ *    บรรทัดเงินสดเองหลายบรรทัด ยังไม่รองรับการพัก
+ * 2. **บัญชีพักที่ยังไม่มีทางล้างเลย** (`1220` รอกลไก C6) — เปิดให้ตั้งค้างก่อน
  *    แปลว่าสร้างลูกหนี้ที่ไม่มีใครล้างได้
+ * 3. **มีทางล้างแต่คนละหมวดกระแสเงินสด** — ล้างได้ แต่เงินไปโผล่ผิดหมวด
  *
- * เงื่อนไขอ่านจากตารางกฎทั้งคู่ ไม่ได้ไล่ชื่อรหัสหมวด — เพิ่มหมวดใหม่จึงไม่หลุด
+ * เงื่อนไขอ่านจากตารางกฎทั้งหมด ไม่ได้ไล่ชื่อรหัสหมวด — เพิ่มหมวดใหม่จึงไม่หลุด
  */
 export function canAccrueFromForm(sub: SubCategory): boolean {
-  if (!sub.accrualCoa) return false;
-  const specialPath: FormRequirement[] = ["capitalGain", "principalInterestSplit", "transferTarget"];
-  if (sub.requires?.some((r) => specialPath.includes(r))) return false;
-  return clearingSubsFor(sub.accrualCoa).length > 0;
+  return accrualCheck(sub).ok;
 }
