@@ -18,6 +18,7 @@ import { Field } from "@/components/ui/field";
 import { Dialog, SheetContent, DialogHeader, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { AssetMap } from "./asset-map";
 import { MapsLinkField } from "./maps-link-field";
+import { AssetKindIcon } from "./asset-kind-icon";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -192,14 +193,17 @@ function Figure({ label, value, sub, tone, strong }: { label: string; value: str
 
 /* ---------- ชิ้นส่วนร่วม ---------- */
 
+/** รูปถ่ายถ้ามี ไม่มีก็ไอคอนประจำชนิดทรัพย์ — คอลัมน์นี้ห้ามว่าง */
 function Photo({ asset, size }: { asset: AssetRef; size: number }) {
+  const muted = asset.status !== "active";
+  if (!asset.photo) return <AssetKindIcon kind={asset.kind} size={size} muted={muted} />;
   return (
     <Image
-      src={asset.photo ?? "/asset-photos/rent1.svg"}
+      src={asset.photo}
       alt=""
       width={size}
       height={size}
-      className={cn("flex-none rounded-card object-cover", asset.status !== "active" && "opacity-55 grayscale")}
+      className={cn("flex-none rounded-card object-cover", muted && "opacity-55 grayscale")}
       style={{ width: size, height: size }}
     />
   );
@@ -329,13 +333,19 @@ function CardLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) =
             onClick={() => onOpen(a.id)}
             className="flex flex-col overflow-hidden rounded-card border border-line bg-surface text-left shadow-card hover:border-brand-100"
           >
-            <Image
-              src={a.photo ?? "/asset-photos/rent1.svg"}
-              alt=""
-              width={480}
-              height={200}
-              className={cn("h-[140px] w-full object-cover", a.status !== "active" && "opacity-55 grayscale")}
-            />
+            {a.photo ? (
+              <Image
+                src={a.photo}
+                alt=""
+                width={480}
+                height={200}
+                className={cn("h-[140px] w-full object-cover", a.status !== "active" && "opacity-55 grayscale")}
+              />
+            ) : (
+              <div className={cn("flex h-[140px] w-full items-center justify-center border-b border-line", a.status !== "active" ? "bg-canvas" : "bg-brand-50")}>
+                <AssetKindIcon kind={a.kind} size={88} muted={a.status !== "active"} className="border-0 bg-transparent" />
+              </div>
+            )}
             <div className="flex flex-1 flex-col gap-2.5 p-[16px_18px]">
               <div className="flex items-start gap-2">
                 <div className="mr-auto min-w-0">
