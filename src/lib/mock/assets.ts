@@ -70,9 +70,12 @@ export type AssetRef = {
   location?: {
     province?: string;
     address?: string;
-    /** ลิงก์หรือพิกัดตามที่กรอกมา — ไฟล์จริงมีทั้ง DMS, goo.gl และชื่อสถานที่เฉยๆ */
+    /**
+     * ลิงก์ Google Maps ที่ผู้ใช้วางมา — **นี่คือสิ่งที่คนกรอก**
+     * ไฟล์เดิมของลูกพี่มีทั้งลิงก์เต็ม ลิงก์ย่อ พิกัด DMS และชื่อสถานที่เฉยๆ ปนกัน
+     */
     mapsUrl?: string;
-    /** พิกัดทศนิยม — มีเฉพาะที่แปลงได้ ใช้ปักหมุดบนแผนที่ */
+    /** พิกัดที่ระบบดึงออกมาเอง — ไม่ให้คนกรอก เพราะพิมพ์ผิดแล้วทรัพย์ไปอยู่ผิดจังหวัด */
     lat?: number;
     lng?: number;
   };
@@ -134,7 +137,7 @@ export const ASSETS: AssetRef[] = [
     cost: 2450000,
     status: "active",
     photo: "/asset-photos/rent1.svg",
-    location: { province: "กรุงเทพมหานคร", address: "พหลโยธิน 24", mapsUrl: "https://maps.app.goo.gl/example1", lat: 13.8186, lng: 100.5612 },
+    location: { province: "กรุงเทพมหานคร", address: "พหลโยธิน 24", mapsUrl: "https://www.google.com/maps/place/SRI/@13.8200000,100.5600000,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d13.8186!4d100.5612", lat: 13.8186, lng: 100.5612 },
     legal: { titleDeedName: "ธนากร", landOffice: "สำนักงานที่ดินกรุงเทพมหานคร สาขาจตุจักร", sizeLabel: "28 ตร.ม." },
     valuation: { appraised: 2600000, market: 2850000, asOf: "30/06/2026" },
     bank: { outstanding: 980000, instalmentPerMonth: 4300, lender: "SCB" },
@@ -174,7 +177,7 @@ export const ASSETS: AssetRef[] = [
     status: "inactive",
     statusNote: "ผู้เช่าย้ายออก 31/08 · รอปรับปรุงก่อนปล่อยใหม่",
     photo: "/asset-photos/rent3.svg",
-    location: { province: "ปทุมธานี", address: "ลำลูกกา คลอง 2", mapsUrl: "https://maps.app.goo.gl/example3", lat: 13.9876, lng: 100.7123 },
+    location: { province: "ปทุมธานี", address: "ลำลูกกา คลอง 2", mapsUrl: "https://www.google.com/maps/@13.9876,100.7123,16z", lat: 13.9876, lng: 100.7123 },
     legal: { titleDeedName: "SRI Corporation", landOffice: "สำนักงานที่ดินจังหวัดปทุมธานี", sizeLabel: "2 คูหา · 32 ตร.ว." },
     valuation: { appraised: 5200000, market: 5800000, asOf: "30/06/2026" },
     bank: { outstanding: 2150000, instalmentPerMonth: 18500, lender: "KBank" },
@@ -192,7 +195,7 @@ export const ASSETS: AssetRef[] = [
     cost: 3100000,
     status: "active",
     photo: "/asset-photos/th_b.svg",
-    location: { province: "กรุงเทพมหานคร", address: "ลาดพร้าว 101", mapsUrl: "13° 47' 4.9636\" N 100° 37' 36.2597\" E", lat: 13.7847, lng: 100.6267 },
+    location: { province: "กรุงเทพมหานคร", address: "ลาดพร้าว 101", mapsUrl: "https://maps.google.com/?q=13.7847,100.6267", lat: 13.7847, lng: 100.6267 },
     legal: { titleDeedName: "สุธี", landOffice: "สำนักงานที่ดินกรุงเทพมหานคร สาขาบางกะปิ", sizeLabel: "24 ตร.ว." },
     valuation: { appraised: 3400000, market: 4100000, asOf: "30/06/2026" },
     contract: {
@@ -219,7 +222,7 @@ export const ASSETS: AssetRef[] = [
     cost: 1800000,
     status: "active",
     photo: "/asset-photos/land_d.svg",
-    location: { province: "เชียงใหม่", address: "สันทราย", mapsUrl: "18° 51' 10.9883\" N 98° 59' 33.8532\" E", lat: 18.8530, lng: 98.9927 },
+    location: { province: "เชียงใหม่", address: "สันทราย", mapsUrl: "https://maps.app.goo.gl/Fhf2m5K2jCUkj3aL" },
     legal: { titleDeedName: "SRI Corporation", landOffice: "สำนักงานที่ดินจังหวัดเชียงใหม่", sizeLabel: "1 ไร่ 2 งาน" },
     valuation: { appraised: 2100000, market: 2400000, asOf: "30/06/2026" },
     contract: {

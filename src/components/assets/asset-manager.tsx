@@ -17,6 +17,7 @@ import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/field";
 import { Dialog, SheetContent, DialogHeader, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { AssetMap } from "./asset-map";
+import { MapsLinkField } from "./maps-link-field";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -405,17 +406,13 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
               items={[
                 ["จังหวัด", asset.location?.province],
                 ["ที่ตั้ง", asset.location?.address],
-                [
-                  "พิกัด Google Maps",
-                  asset.location?.mapsUrl?.startsWith("http") ? (
-                    <a href={asset.location.mapsUrl} target="_blank" rel="noreferrer noopener">
-                      เปิดใน Google Maps
-                    </a>
-                  ) : (
-                    asset.location?.mapsUrl
-                  ),
-                ],
               ]}
+            />
+            <MapsLinkField
+              key={asset.id}
+              value={asset.location?.mapsUrl ?? ""}
+              lat={asset.location?.lat}
+              lng={asset.location?.lng}
             />
           </Section>
 
