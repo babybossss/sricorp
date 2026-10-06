@@ -24,7 +24,6 @@ export type TxDraft = {
   subCode: string;
   holderId: string;
   bankId: string;
-  holderReason: string;
   amount: string;
   docDate: string;
   cashDate: string;
@@ -52,11 +51,12 @@ const EMPTY: TxDraft = {
   subCode: "",
   holderId: HOLDERS[0].id,
   bankId: "",
-  holderReason: "asset_personal",
   amount: "",
   docDate: "01/09/2026",
   cashDate: "03/09/2026",
-  notYetPaid: false,
+  // ตั้งต้นเป็น "ยังไม่ได้รับ-จ่าย" ตามที่ลูกพี่สั่ง 06/10 — ต้องติ๊กยืนยันถึงจะเป็นเงินสด
+  // สอดคล้องกับ D-068: เงินเข้าบัญชีต่อเมื่อมีคนยืนยันว่าเงินเคลื่อนจริง
+  notYetPaid: true,
   assetId: "",
   contactId: "",
   note: "",
@@ -78,23 +78,33 @@ const EMPTY: TxDraft = {
  * ประเด็นสำคัญของ Backlog ข้อ 3: state ตัวนี้อยู่เหนือ dialog สร้างผู้ติดต่อ
  * ปิด dialog แล้วค่าที่กรอกไว้ทุกช่องยังอยู่ครบ แค่ `contactId` ถูกเซ็ตให้
  */
+/**
+ * ธงค้างรับ-ค้างจ่ายตอนเปลี่ยนหมวดย่อย
+ *
+ * หมวดที่ตั้งค้างไม่ได้ → บังคับเป็นเงินสด ไม่งั้นช่องติ๊กจะแสดงว่า "กดไม่ได้"
+ * ขณะที่ค่าจริงยังเป็น true แล้วปุ่มบันทึกจะถูกล็อกโดยไม่มีทางปลดจากหน้าจอ
+ *
+ * ย้อนกลับมาหมวดที่ตั้งค้างได้ → คืนค่าตั้งต้น ไม่ใช่ค่าที่ถูกบังคับทิ้งไว้
+ * ไม่งั้นแค่แวะหมวดที่ตั้งค้างไม่ได้ครั้งเดียว รายการที่เหลือทั้งวันจะกลายเป็น
+ * "รับเงินแล้ว" เงียบๆ ทั้งที่ผู้ใช้ไม่เคยติ๊กอะไรเลย
+ */
+function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
+  if (!findSub(nextSub)?.sub.accrualCoa) return false;
+  return findSub(prevSub)?.sub.accrualCoa ? current : EMPTY.notYetPaid;
+}
+
 export function useTxForm() {
   const [step, setStep] = React.useState(1);
   const [draft, setDraft] = React.useState<TxDraft>(EMPTY);
 
   const patch = React.useCallback((p: Partial<TxDraft>) => setDraft((d) => ({ ...d, ...p })), []);
 
-  /**
-   * เปลี่ยนหมวดย่อยไปหมวดที่ตั้งค้างไม่ได้ → ล้างธงค้างรับ-ค้างจ่ายทิ้ง
-   *
-   * ถ้าปล่อยค้างไว้ ช่องติ๊กจะแสดงว่า "ไม่ติ๊กและกดไม่ได้" ขณะที่ค่าจริงยังเป็น true
-   * ผู้ใช้จะเห็นปุ่มบันทึกถูกล็อกโดยไม่มีทางปลดจากหน้าจอ
-   */
+
   const pickSub = React.useCallback((subCode: string) => {
     setDraft((d) => ({
       ...d,
       subCode,
-      notYetPaid: findSub(subCode)?.sub.accrualCoa ? d.notYetPaid : false,
+      notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
     }));
   }, []);
 
@@ -107,7 +117,7 @@ export function useTxForm() {
         ...d,
         typeKey,
         subCode,
-        notYetPaid: findSub(subCode)?.sub.accrualCoa ? d.notYetPaid : false,
+        notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
       };
     });
   }, []);

@@ -107,15 +107,6 @@ export function StepHolder({ api }: { api: TxFormApi }) {
           ))}
         </Select>
       </Field>
-
-      <Field label="เหตุผลที่เลือกผู้ถือรายนี้">
-        <Select value={api.draft.holderReason} onChange={(e) => api.patch({ holderReason: e.target.value })}>
-          <option value="asset_personal">ทรัพย์ถือในชื่อบุคคล</option>
-          <option value="contract_corp">สัญญาทำในชื่อบริษัท</option>
-          <option value="paid_personal">ใช้เงินส่วนตัวจ่ายก่อน</option>
-          <option value="internal">โอนภายในกลุ่ม</option>
-        </Select>
-      </Field>
     </div>
   );
 }
@@ -153,21 +144,33 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         </Field>
       </div>
 
+      {/*
+        ตั้งต้นเป็น "ยังไม่ได้รับ-จ่าย" ติ๊กเพื่อยืนยันว่าเงินเคลื่อนจริง (ลูกพี่สั่ง 06/10)
+
+        ทิศทางนี้สำคัญ: ค่าตั้งต้นที่ปลอดภัยคือยังไม่แตะเงินสด เพราะถ้าตั้งต้นว่ารับเงินแล้ว
+        คนที่กดผ่านโดยไม่อ่านจะทำให้ยอดธนาคารมีเงินที่ยังไม่เข้า แล้วกระทบยอดไม่ได้
+      */}
       <label className="flex min-h-control items-start gap-2.5 text-base">
         <Checkbox
           className="mt-0.5"
-          checked={draft.notYetPaid && api.canAccrue}
+          checked={!draft.notYetPaid}
           disabled={!api.canAccrue}
-          onChange={(e) => patch({ notYetPaid: e.target.checked })}
+          onChange={(e) => patch({ notYetPaid: !e.target.checked })}
         />
-        <span className={cn("leading-[26px]", !api.canAccrue && "text-ink-400")}>
-          ยังไม่ได้รับ/จ่ายเงิน (บันทึกเป็นค้างรับ-ค้างจ่าย)
-          {api.canAccrue && sub?.accrualCoa ? (
+        <span className="leading-[26px]">
+          ยืนยันว่าเงินเข้า/ออกจริงแล้ว
+          {!api.canAccrue ? (
+            <span className="block text-sm text-ink-400">
+              หมวดนี้ยังไม่มีบัญชีค้างรับ-ค้างจ่าย จึงตั้งค้างไม่ได้ — ต้องมีเงินเข้า/ออกจริง
+            </span>
+          ) : draft.notYetPaid && sub?.accrualCoa ? (
             <span className="block text-sm text-ink-600">
-              จะลงเป็น {coa(sub.accrualCoa).nameTh} แทนเงินสด ยอดธนาคารยังไม่ขยับ
+              ยังไม่ติ๊ก → ลงเป็น {coa(sub.accrualCoa).nameTh} ยอดธนาคารและกระแสเงินสดยังไม่ขยับ
             </span>
           ) : (
-            <span className="block text-sm">หมวดนี้ตั้งค้างไม่ได้ — ต้องมีเงินเข้า/ออกจริง</span>
+            <span className="block text-sm text-ink-600">
+              ติ๊กแล้ว → ลงเงินเข้าบัญชีธนาคาร และกระแสเงินสดวิ่งทันที
+            </span>
           )}
         </span>
       </label>
@@ -187,8 +190,6 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           ))}
         </Select>
       </Field>
-
-      {sub ? <ImpactPreview subCode={sub.code} /> : null}
 
       <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
         <Field
@@ -252,6 +253,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       <Field label="หมายเหตุ" hint="ไม่จำเป็นต้องกรอก">
         <Input value={draft.note} onChange={(e) => patch({ note: e.target.value })} placeholder="ไม่จำเป็นต้องกรอก" />
       </Field>
+
+      {/* สรุปว่าจะลงบัญชีอย่างไร อยู่ล่างสุดเสมอ — อ่านหลังกรอกครบ ไม่ใช่คั่นกลางฟอร์ม */}
+      {sub ? <ImpactPreview subCode={sub.code} accrued={draft.notYetPaid} /> : null}
     </div>
   );
 }
@@ -383,14 +387,26 @@ function LoanTermsSection({ api, contactLayer }: { api: TxFormApi; contactLayer:
   );
 }
 
-/** แสดงว่าระบบจะลงบัญชีให้อย่างไร ก่อนกดยืนยัน */
-export function ImpactPreview({ subCode }: { subCode: string }) {
+/**
+ * แสดงว่าระบบจะลงบัญชีให้อย่างไร ก่อนกดยืนยัน
+ *
+ * `accrued` = ยังไม่ติ๊กยืนยันรับ-จ่าย · ข้อความ `plain` กับ `impactLines()` ในตารางกฎ
+ * เขียนไว้สำหรับเส้นทางเงินสด จึงต้องบอกให้ชัดว่าสองบรรทัดเรื่องเงินยังไม่เกิดขึ้นตอนนี้
+ * ไม่งั้นผู้ใช้จะอ่านว่า "เงินเข้าบัญชีเพิ่มขึ้น" ทั้งที่ธนาคารยังไม่ขยับ
+ */
+export function ImpactPreview({ subCode, accrued }: { subCode: string; accrued?: boolean }) {
   const found = React.useMemo(() => TX_TYPES.flatMap((t) => t.subs).find((s) => s.code === subCode), [subCode]);
   if (!found) return null;
 
   return (
     <div className="flex flex-col gap-2 rounded-card border border-line bg-canvas p-4">
       <div className="text-base font-semibold">ระบบจะบันทึกให้ดังนี้</div>
+      {accrued && found.accrualCoa ? (
+        <div className="rounded border border-warn bg-warn-bg p-[10px_12px] text-sm leading-6 text-warn-fg">
+          ยังไม่ได้ติ๊กยืนยันรับ-จ่าย → รายการนี้ลงเป็น <b>{coa(found.accrualCoa).nameTh}</b> แทนเงินสด
+          <span className="block">สองบรรทัดล่างที่พูดถึงเงินสดและกระแสเงินสด <b>ยังไม่เกิดขึ้นตอนนี้</b></span>
+        </div>
+      ) : null}
       <div className="text-base leading-7 text-ink-600">{found.plain}</div>
       <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm text-ink-600">
         {impactLines(found).map((l) => (

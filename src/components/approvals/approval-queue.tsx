@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { ReviewPanel } from "./review-panel";
 import { DialogPrimitive } from "@/components/ui/dialog";
 import { TYPE_PILL } from "@/lib/tone";
 import { useApp } from "@/lib/store";
@@ -23,6 +24,8 @@ export function ApprovalQueue() {
   const showToast = useApp((s) => s.showToast);
   const [sel, setSel] = React.useState<Record<string, boolean>>({});
   const [dialog, setDialog] = React.useState<Confirm | null>(null);
+  /** แถวที่กางดูอยู่ในแผงขวา — null = ยังไม่ได้กางอะไร */
+  const [reviewAt, setReviewAt] = React.useState<number | null>(null);
 
   const selected = APPROVALS.filter((a) => sel[a.id]);
   const selSum = selected.reduce((t, a) => t + Math.abs(a.amount), 0);
@@ -88,9 +91,15 @@ export function ApprovalQueue() {
                     <Pill className={TYPE_PILL[type.tone]}>{type.label}</Pill>
                   </Td>
                   <Td className="whitespace-nowrap text-ink-600">{sub?.label ?? "—"}</Td>
-                  <Td>
-                    <div className="font-semibold">{a.detail}</div>
-                    <div className="text-sm text-ink-400">{a.source}</div>
+                  <Td className="p-0">
+                    <button
+                      type="button"
+                      className="flex w-full min-h-control flex-col items-start gap-0.5 p-[14px_16px] text-left hover:bg-brand-50"
+                      onClick={() => setReviewAt(APPROVALS.findIndex((x) => x.id === a.id))}
+                    >
+                      <span className="font-semibold underline decoration-line underline-offset-4">{a.detail}</span>
+                      <span className="text-sm text-ink-400">{a.source}</span>
+                    </button>
                   </Td>
                   <Td className="whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
@@ -142,6 +151,33 @@ export function ApprovalQueue() {
           </tbody>
         </Table>
       </TableShell>
+
+      <ReviewPanel
+        item={reviewAt === null ? null : APPROVALS[reviewAt]}
+        position={{ index: reviewAt ?? 0, total: APPROVALS.length }}
+        onClose={() => setReviewAt(null)}
+        onStep={(d) => setReviewAt((i) => Math.min(APPROVALS.length - 1, Math.max(0, (i ?? 0) + d)))}
+        onApprove={(a) => {
+          setReviewAt(null);
+          ask({
+            title: "ยืนยันอนุมัติรายการนี้",
+            body: `ยืนยันอนุมัติ "${a.detail}" ยอด ฿ ${Math.abs(a.amount).toLocaleString("en-US")} เข้าสมุดบัญชีใช่หรือไม่`,
+            cta: "ยืนยันอนุมัติ",
+            onConfirm: () => showToast("อนุมัติแล้ว 1 รายการ"),
+          });
+        }}
+        onReject={(a) => {
+          setReviewAt(null);
+          ask({
+            title: "ไม่อนุมัติรายการนี้",
+            body: `รายการ "${a.detail}" จะถูกส่งกลับให้ ${a.by} แก้ไข`,
+            cta: "ยืนยันไม่อนุมัติ",
+            danger: true,
+            needReason: true,
+            onConfirm: () => showToast("ส่งกลับให้แก้ไขแล้ว"),
+          });
+        }}
+      />
 
       <div className="rounded-card border border-brand-100 bg-brand-50 p-[14px_18px] text-base leading-7">
         มุมมองของ User/Manager: รายการที่สร้างจะแสดงสถานะ <b>&ldquo;รอ Management อนุมัติ&rdquo;</b> จนกว่าจะมีการอนุมัติ

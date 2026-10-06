@@ -64,10 +64,40 @@ function DialogHeader({ title, onClose }: { title: string; onClose?: () => void 
   );
 }
 
+/**
+ * แผงเลื่อนเข้ามาจากขอบขวา — ใช้ตอนต้องกางดูรายละเอียดโดยไม่ออกจากตารางที่กำลังไล่อยู่
+ *
+ * ต่างจาก DialogContent ตรงที่ไม่บังตารางทั้งจอ คนตรวจยังเห็นว่าตัวเองอยู่แถวไหน
+ * และกดถัดไปไล่ทีละรายการได้ต่อเนื่อง
+ */
+const SheetContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { width?: string; layer?: number }
+>(({ className, children, width = "max-w-[560px]", layer = 0, ...props }, ref) => (
+  <DialogPrimitive.Portal>
+    <DialogOverlay style={{ zIndex: 60 + layer * 10 }} />
+    <div className="pointer-events-none fixed inset-0 flex justify-end" style={{ zIndex: 61 + layer * 10 }}>
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "pointer-events-auto flex h-full w-full flex-col overflow-hidden bg-surface shadow-modal",
+          "animate-fadein border-l border-line",
+          width,
+          className
+        )}
+        {...props}
+      >
+        {children}
+      </DialogPrimitive.Content>
+    </div>
+  </DialogPrimitive.Portal>
+));
+SheetContent.displayName = "SheetContent";
+
 const DialogDescription = DialogPrimitive.Description;
 
 function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex flex-wrap justify-end gap-3 border-t border-line bg-surface p-[16px_24px]", className)} {...props} />;
 }
 
-export { Dialog, DialogTrigger, DialogClose, DialogContent, DialogHeader, DialogFooter, DialogDescription, DialogPrimitive };
+export { Dialog, DialogTrigger, DialogClose, DialogContent, SheetContent, DialogHeader, DialogFooter, DialogDescription, DialogPrimitive };

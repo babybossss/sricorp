@@ -110,14 +110,18 @@ export type Approval = {
   amount: number;
   by: string;
   date: string;
+  /** ทรัพย์ที่ผูก — บางหมวดย่อยบังคับ ถ้าไม่มีจะพรีวิวบรรทัดบัญชีไม่ได้ */
+  assetId?: string;
+  /** คู่ค้า — ฝั่งนิติบุคคลบังคับทุกรายการ */
+  contactId?: string;
 };
 
 export const APPROVALS: Approval[] = [
-  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026" },
-  { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026" },
-  { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026" },
-  { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026" },
-  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026" },
-  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026" },
-  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026" },
+  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026", assetId: "rent2", contactId: "c2" },
+  { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026", assetId: "rent2", contactId: "c2" },
+  { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026", assetId: "rent1", contactId: "c2" },
+  { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026", contactId: "c2" },
+  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026", contactId: "c2" },
+  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026", assetId: "land_d", contactId: "c2" },
+  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2" },
 ];
