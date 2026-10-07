@@ -51,7 +51,7 @@ SQL
 
 # migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพื่อให้แทรกสถานะจริงของ project
 # (policy ที่ใส่มือไว้ ไม่อยู่ในรีโป) ก่อน แล้วค่อยปล่อยของใหม่ทับ
-UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql"}
+UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql 20261007000003_permission_tables_read_only.sql"}
 in_under_test() { case " $UNDER_TEST " in *" $1 "*) return 0;; *) return 1;; esac; }
 LOG=${TMPDIR:-/tmp}/srios-mig.log
 

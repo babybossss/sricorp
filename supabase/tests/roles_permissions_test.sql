@@ -367,31 +367,82 @@ begin
   raise notice 'ok 7.6b · Manager ปิดงวดไม่ได้ · Management เปิดงวดได้';
 end $$;
 
--- 7.7 ตารางสิทธิ์: อ่านได้ทุกคน · แก้ได้เฉพาะ users.manage (Management ก็แก้ไม่ได้)
+-- 7.7 ตารางสิทธิ์: อ่านได้ทุกตำแหน่ง · **เขียนไม่ได้เลยทุกตำแหน่งรวม Super Admin**
+--     แก้โครงสร้างสิทธิ์ได้จาก migration เท่านั้น (20261007000003)
+--     RLS ปฏิเสธเงียบๆ (0 แถว ไม่ error) → ต้องเช็ค row_count ไม่ใช่รอ exception
 do $$
-declare n int;
+declare r text; t text; n int;
 begin
-  perform pg_temp.login('mgmt');
-  if (select count(*) from sri_os.permissions) = 0 then
-    raise exception 'FAIL: อ่านตาราง permissions ไม่ได้ UI จะไม่รู้ว่าปุ่มไหนกดได้';
-  end if;
-  delete from sri_os.role_permissions where role_key = 'manager' and permission_key = 'ledger.approve';
-  get diagnostics n = row_count;
-  if n <> 0 then raise exception 'FAIL: Management แก้ตารางสิทธิ์ได้ (ต้องเป็น users.manage)'; end if;
+  -- 7.7a อ่านได้ทุกตำแหน่ง · ถ้าไม่มี read policy หน้าจอจะว่างเปล่าแบบไม่มีอะไรบอกว่าทำไม
+  foreach r in array array['staff', 'mgr', 'mgmt', 'super'] loop
+    perform pg_temp.login(r);
+    if (select count(*) from sri_os.permissions) = 0 then
+      raise exception 'FAIL: % อ่านตาราง permissions ไม่ได้ UI จะไม่รู้ว่าปุ่มไหนกดได้ และหน้า "ไม่มีสิทธิ์" จะว่าง', r;
+    end if;
+    if (select count(*) from sri_os.roles) = 0 then
+      raise exception 'FAIL: % อ่านตาราง roles ไม่ได้ · /settings/users จะไม่มีรายการตำแหน่ง', r;
+    end if;
+    if (select count(*) from sri_os.role_permissions) = 0 then
+      raise exception 'FAIL: % อ่านตาราง role_permissions ไม่ได้', r;
+    end if;
+  end loop;
 
-  perform pg_temp.login('super');
-  delete from sri_os.role_permissions where role_key = 'manager' and permission_key = 'ledger.approve';
-  get diagnostics n = row_count;
-  if n <> 1 then raise exception 'FAIL: Super Admin แก้ตารางสิทธิ์ไม่ได้'; end if;
+  -- 7.7b เขียนไม่ได้เลย — เคสที่สำคัญที่สุด เพราะนี่คือทางเลื่อนสิทธิ์ตัวเอง
+  foreach r in array array['staff', 'mgr', 'mgmt', 'super'] loop
+    perform pg_temp.login(r);
 
-  -- ย้ายสิทธิ์แล้วมีผลทันทีโดยไม่ต้องแก้โค้ด = เหตุผลทั้งหมดของ D-073
+    delete from sri_os.role_permissions where role_key = 'manager' and permission_key = 'ledger.approve';
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'FAIL: % ลบแถวในตารางสิทธิ์ได้ (% แถว)', r, n; end if;
+
+    update sri_os.roles set label = 'แก้ได้' where key = 'staff';
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'FAIL: % แก้ตาราง roles ได้', r; end if;
+
+    foreach t in array array['roles', 'permissions', 'role_permissions'] loop
+      begin
+        case t
+          when 'roles' then
+            insert into sri_os.roles(key, label, rank_order) values ('zz_' || r, 'ของปลอม', 99);
+          when 'permissions' then
+            insert into sri_os.permissions(key, label) values ('zz.' || r, 'ของปลอม');
+          else
+            insert into sri_os.role_permissions(role_key, permission_key) values (r, 'ledger.post');
+        end case;
+        raise exception 'FAIL: % เพิ่มแถวในตาราง % ได้ = เปิดสิทธิ์ให้ตัวเองได้', r, t;
+      exception when insufficient_privilege then null;
+        when raise_exception then if sqlerrm like 'FAIL:%' then raise; end if;
+      end;
+    end loop;
+  end loop;
+
+  -- 7.7c เส้นทางเลื่อนสิทธิ์ที่ชัดที่สุด: Staff แจก portfolio.view_all ให้ตำแหน่งตัวเอง
+  perform pg_temp.login('staff');
+  begin
+    insert into sri_os.role_permissions(role_key, permission_key) values ('staff', 'portfolio.view_all');
+    raise exception 'FAIL: Staff แจกสิทธิ์ portfolio.view_all ให้ตำแหน่งตัวเองได้';
+  exception when insufficient_privilege then null;
+    when raise_exception then if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
+  perform pg_temp.expect_can('staff', 'portfolio.view_all', false);
+
+  -- 7.7d Staff เลื่อนตัวเองเป็น super_admin ผ่าน app_users (ควรล้มที่ users_write)
+  perform pg_temp.login('staff');
+  update sri_os.app_users set role = 'super_admin' where id = auth.uid();
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: Staff เลื่อนตำแหน่งตัวเองเป็น super_admin ได้'; end if;
+  perform pg_temp.expect_can('staff', 'users.manage', false);
+
+  -- 7.7e ขาบวก: กลไกของ D-073 ยังอยู่ — fn_can อ่านจากตารางสด ไม่ได้ hard-code
+  --      (แก้ตารางต้องทำจาก migration · ที่นี่พิสูจน์ด้วยสิทธิ์ของ cluster superuser)
+  reset role;
+  delete from sri_os.role_permissions where role_key = 'manager' and permission_key = 'ledger.approve';
   perform pg_temp.expect_can('mgr', 'ledger.approve', false);
-
-  -- คืนให้เหมือน seed ไม่งั้นข้อถัดๆ ไปทดสอบบนตารางสิทธิ์ที่ถูกแก้ไปแล้ว
-  perform pg_temp.login('super');
+  reset role;
   insert into sri_os.role_permissions(role_key, permission_key) values ('manager', 'ledger.approve');
   perform pg_temp.expect_can('mgr', 'ledger.approve', true);
-  raise notice 'ok 7.7 · แก้ตารางสิทธิ์ได้เฉพาะ users.manage และมีผลทันที';
+
+  raise notice 'ok 7.7 · ตารางสิทธิ์: อ่านได้ทุกตำแหน่ง · เขียนไม่ได้เลยรวม Super Admin · เลื่อนสิทธิ์ตัวเองไม่ได้ทั้งสองทาง';
 end $$;
 
 reset role;
@@ -423,9 +474,11 @@ begin
     ('user_owner_access','owner_access_read'),('user_owner_access','owner_access_write'),
     ('period_closes','period_closes_read'),('period_closes','period_closes_insert'),
     ('period_closes','period_closes_reopen'),
-    ('roles','roles_read'),('roles','roles_write'),
-    ('permissions','permissions_read'),('permissions','permissions_write'),
-    ('role_permissions','role_permissions_read'),('role_permissions','role_permissions_write');
+    -- ตารางสิทธิ์: **อ่านอย่างเดียว** ไม่มี *_write โดยตั้งใจ (20261007000003)
+    -- ถ้ามีใครเพิ่มกลับมา ข้อ "policy เกินที่ตั้งใจ" จะจับได้
+    ('roles','roles_read'),
+    ('permissions','permissions_read'),
+    ('role_permissions','role_permissions_read');
 
   select string_agg(p.tablename || '.' || p.policyname, ', ') into v_extra
     from pg_policies p
