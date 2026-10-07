@@ -31,7 +31,9 @@
 -- สิ่งที่ migration นี้ **ไม่** ทำ และห้ามทำ:
 --   ไม่มี permission ที่ปิดกฎเงิน (invariant.skip · evidence.waive · delete.posted)
 --   กฎ 6 ข้อที่บังคับด้วย trigger ใช้กับทุกคนเท่ากัน **รวม super_admin**
---   มี CHECK บนตาราง permissions กันการเผลอเพิ่มคีย์แบบนั้นผ่านหน้า Settings
+--   มี CHECK บนตาราง permissions กันการ**เผลอ**เพิ่มคีย์แบบนั้นผ่านหน้า Settings
+--   แต่ CHECK เป็นแค่ regex บนชื่อ **กันคนตั้งใจไม่ได้** (txn.delete · lines.remove ผ่านฉลุย)
+--   ของจริงที่กันได้คือ trigger กฎเงินไม่เรียก fn_can() เลย → ไม่มีคีย์ใดปิดกฎได้
 --
 -- ย้อนกลับ (rollback):
 --   -- 1. คืน policy ชุดเดิม: รัน supabase/migrations/20260917000004_rls.sql ซ้ำ
@@ -89,7 +91,7 @@ alter table permissions add constraint permissions_no_money_bypass check (
   and key !~* '^(delete|purge|hard_delete|truncate)\.'
 );
 comment on constraint permissions_no_money_bypass on permissions is
-  'D-073: สิทธิ์ที่สื่อถึงการข้ามกฎเงินสร้างไม่ได้เลย แม้แต่ super_admin · ตัวอย่างที่ถูกบล็อก: invariant.skip · evidence.waive · delete.posted · ledger.override';
+  'กันพลาดเท่านั้น ไม่ใช่กลไกความปลอดภัย — เป็น regex บนชื่อคีย์ จึงกันได้แค่ชื่อที่นึกออก (txn.delete · lines.remove · ledger.no_proof ผ่านฉลุย) · สิ่งที่กันได้จริงคือ trigger ที่บังคับกฎเงินต้องไม่เรียก fn_can() เลย ไม่ว่าจะมีคีย์ชื่ออะไรในตาราง (มีเทสต์อ่าน pg_proc ยืนยัน)';
 
 create table if not exists role_permissions (
   role_key       text not null references roles(key) on update cascade on delete cascade,
@@ -245,6 +247,40 @@ language sql stable security definer set search_path = '' as $fn$
          );
 $fn$;
 
+-- ขอบเขตทรัพย์แบบเข้ม — ใช้กับทุกที่ที่มี "มูลค่า"
+create or replace function fn_can_see_asset(p_asset uuid) returns boolean
+language sql stable security definer set search_path = '' as $fn$
+  select sri_os.fn_can('portfolio.view_all')
+      or (
+           sri_os.fn_can('asset.view_assigned')
+           and exists (
+             select 1 from sri_os.assets a
+              where a.id = p_asset and a.manager_user_id = auth.uid()
+           )
+         );
+$fn$;
+comment on function fn_can_see_asset(uuid) is
+  'ขอบเขตทรัพย์: เห็นทั้งพอร์ต (portfolio.view_all) หรือเฉพาะที่ตัวเองถูกมอบหมาย · manager_user_id is null = ไม่มีใครเห็นนอกจากคนที่มี portfolio.view_all';
+
+-- รายการเงินหนึ่งรายการ ใครอ่านได้ — เขียนที่เดียว ใช้ทั้ง transactions และ transaction_lines
+-- **รับค่าของแถวเข้ามา ไม่ใช่ id** เพราะถ้าฟังก์ชันไปอ่านตารางเอง แถวที่กำลัง insert
+-- จะยังมองไม่เห็นใน snapshot ของคำสั่งเดียวกัน → `insert ... returning` จะพังทันที
+-- (เจอตอนเทสต์ 9.6 · RETURNING ต้องผ่าน policy ฝั่ง select ด้วย)
+drop function if exists fn_can_read_txn(uuid);
+create or replace function fn_can_read_txn(p_owner uuid, p_asset uuid, p_created_by uuid)
+returns boolean
+language sql stable set search_path = '' as $fn$
+  select sri_os.fn_can_see_owner(p_owner)                -- ชั้นเดิม ยังต้องผ่าน
+     and sri_os.fn_can('ledger.read')                    -- Staff ตกที่ชั้นนี้ = 0 แถวเสมอ
+     and (
+          sri_os.fn_can('portfolio.view_all')
+       or p_created_by = auth.uid()                      -- รายการที่ไม่ผูกทรัพย์ เห็นได้เฉพาะของตัวเอง
+       or (p_asset is not null and sri_os.fn_can_see_asset(p_asset))
+     );
+$fn$;
+comment on function fn_can_read_txn(uuid, uuid, uuid) is
+  'แหล่งความจริงเดียวของ "ใครอ่านรายการเงินแถวนี้ได้" · ใช้ทั้ง transactions และ transaction_lines เพื่อไม่ให้รวมยอดผ่าน lines ได้';
+
 -- (2) ตารางอ้างอิง (owners · ผังบัญชี · ตารางกฎ · contacts) = ข้อมูลตั้งค่า
 do $$
 declare t text;
@@ -295,17 +331,46 @@ create policy txn_update on transactions
 --     ของเดิมเป็น ALL/ledger.approve ซึ่งแปลว่า Manager อ่าน transaction_lines ได้ทุกแถว
 --     แล้ว `select sum(debit) from transaction_lines` = ยอดรวมทั้งพอร์ต (เทสต์ 9.2 จับได้)
 --     การอ่านต้องมาจาก lines_by_txn ที่เดียว (ข้อ 11b)
+--     และทั้งสามคำสั่ง **ต้องผูกกับหัวรายการ** ไม่ใช่เช็คแค่ว่ามีสิทธิ์อะไร
+--     ไม่งั้นคนที่มองรายการนั้นไม่เห็นด้วยซ้ำ ยัดบรรทัดเข้าไปในรายการของ owner อื่นได้
+--     (ชั้นนี้เป็น RLS · การห้ามแก้บรรทัดของรายการที่ post แล้วบังคับด้วย trigger
+--      ใน 20261007000000 เพราะ policy ในอนาคตเขียนทับ RLS ได้ แต่เขียนทับ trigger ไม่ได้)
 drop policy if exists lines_write on transaction_lines;
 drop policy if exists lines_insert on transaction_lines;
 create policy lines_insert on transaction_lines
-  for insert to authenticated with check (fn_can('ledger.approve'));
+  for insert to authenticated
+  with check (
+    fn_can('ledger.approve')
+    and exists (
+      select 1 from transactions t
+       where t.id = transaction_id
+         and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by)
+    )
+  );
 drop policy if exists lines_update on transaction_lines;
 create policy lines_update on transaction_lines
   for update to authenticated
-  using (fn_can('ledger.approve')) with check (fn_can('ledger.approve'));
+  using (
+    fn_can('ledger.approve')
+    and exists (select 1 from transactions t
+                 where t.id = transaction_id
+                   and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by))
+  )
+  with check (
+    fn_can('ledger.approve')
+    and exists (select 1 from transactions t
+                 where t.id = transaction_id
+                   and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by))
+  );
 drop policy if exists lines_delete on transaction_lines;
 create policy lines_delete on transaction_lines
-  for delete to authenticated using (fn_can('txn.void'));
+  for delete to authenticated
+  using (
+    fn_can('txn.void')
+    and exists (select 1 from transactions t
+                 where t.id = transaction_id
+                   and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by))
+  );
 
 -- (9) audit log = คนที่เห็นข้อมูลทั้งบ้าน · ไม่มีใครแก้ได้
 drop policy if exists audit_read on audit_log;
@@ -372,6 +437,27 @@ drop policy if exists confirmations_update on cash_confirmations;
 create policy confirmations_update on cash_confirmations
   for update to authenticated
   using (fn_can('cash.confirm')) with check (fn_can('cash.confirm'));
+
+-- การอ่าน: ของเดิม (ไฟล์ 004) กั้นแค่ owner ของบัญชีธนาคาร → Staff เห็น expected/actual
+-- ซึ่งคือยอดเงินเข้า-ออกจริง · เปลี่ยนเป็น "เห็นใบยืนยันได้เมื่อเห็นเอกสารต้นทาง"
+-- และต้องมี ledger.read (Staff ไม่มี)
+drop policy if exists confirmations_read on cash_confirmations;
+create policy confirmations_read on cash_confirmations
+  for select to authenticated
+  using (
+    fn_can('ledger.read')
+    and exists (
+      select 1 from bank_accounts b
+       where b.id = bank_account_id and fn_can_see_owner(b.owner_id)
+    )
+    and (
+      exists (select 1 from transactions t
+               where t.id = transaction_id
+                 and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by))
+      or exists (select 1 from draft_entries d
+                  where d.id = draft_entry_id and fn_can_see_owner(d.owner_id))
+    )
+  );
 
 -- ------------------------------------------------------------
 -- 10 · สองตารางที่เปิด RLS อยู่แล้วแต่ policy ถูกใส่มือ ไม่อยู่ใน migration
@@ -465,40 +551,6 @@ create policy contact_links_write on contact_links
 -- จะ error เพราะ RETURNING ต้องผ่าน policy ฝั่ง select ด้วย
 alter table transactions   alter column created_by set default auth.uid();
 alter table draft_entries  alter column created_by set default auth.uid();
-
--- ขอบเขตทรัพย์แบบเข้ม — ใช้กับทุกที่ที่มี "มูลค่า"
-create or replace function fn_can_see_asset(p_asset uuid) returns boolean
-language sql stable security definer set search_path = '' as $fn$
-  select sri_os.fn_can('portfolio.view_all')
-      or (
-           sri_os.fn_can('asset.view_assigned')
-           and exists (
-             select 1 from sri_os.assets a
-              where a.id = p_asset and a.manager_user_id = auth.uid()
-           )
-         );
-$fn$;
-comment on function fn_can_see_asset(uuid) is
-  'ขอบเขตทรัพย์: เห็นทั้งพอร์ต (portfolio.view_all) หรือเฉพาะที่ตัวเองถูกมอบหมาย · manager_user_id is null = ไม่มีใครเห็นนอกจากคนที่มี portfolio.view_all';
-
--- รายการเงินหนึ่งรายการ ใครอ่านได้ — เขียนที่เดียว ใช้ทั้ง transactions และ transaction_lines
--- **รับค่าของแถวเข้ามา ไม่ใช่ id** เพราะถ้าฟังก์ชันไปอ่านตารางเอง แถวที่กำลัง insert
--- จะยังมองไม่เห็นใน snapshot ของคำสั่งเดียวกัน → `insert ... returning` จะพังทันที
--- (เจอตอนเทสต์ 9.6 · RETURNING ต้องผ่าน policy ฝั่ง select ด้วย)
-drop function if exists fn_can_read_txn(uuid);
-create or replace function fn_can_read_txn(p_owner uuid, p_asset uuid, p_created_by uuid)
-returns boolean
-language sql stable set search_path = '' as $fn$
-  select sri_os.fn_can_see_owner(p_owner)                -- ชั้นเดิม ยังต้องผ่าน
-     and sri_os.fn_can('ledger.read')                    -- Staff ตกที่ชั้นนี้ = 0 แถวเสมอ
-     and (
-          sri_os.fn_can('portfolio.view_all')
-       or p_created_by = auth.uid()                      -- รายการที่ไม่ผูกทรัพย์ เห็นได้เฉพาะของตัวเอง
-       or (p_asset is not null and sri_os.fn_can_see_asset(p_asset))
-     );
-$fn$;
-comment on function fn_can_read_txn(uuid, uuid, uuid) is
-  'แหล่งความจริงเดียวของ "ใครอ่านรายการเงินแถวนี้ได้" · ใช้ทั้ง transactions และ transaction_lines เพื่อไม่ให้รวมยอดผ่าน lines ได้';
 
 -- assets: Manager เห็นเฉพาะที่ตัวเองดูแล
 -- Staff ต้องเห็น **ชื่อ** ทรัพย์ไม่งั้นคีย์ไม่ได้ → สาขาอ้างอิงสำหรับคนที่ไม่มีสิทธิ์ขอบเขตทรัพย์เลย

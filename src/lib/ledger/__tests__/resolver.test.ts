@@ -133,7 +133,16 @@ describe("lib/ledger ต้องไม่ผูกกับข้อมูล�
     // ถ้าอ่านไฟล์ไม่เจอเลย เทสต์นี้จะผ่านแบบไร้ความหมาย — กันไว้ก่อน
     expect(files.length, "ต้องอ่านไฟล์ใน lib/ledger เจอ").toBeGreaterThan(3);
 
-    const offenders = files.filter((f) => /lib\/mock/.test(fs.readFileSync(f, "utf8"))).map((f) => path.relative(dir, f));
+    /**
+     * จับที่ตัว import/require จริง ไม่ใช่ทุกที่ที่สะกดคำว่า mock —
+     * ไม่งั้นคอมเมนต์ที่อธิบายว่า "ห้าม import จาก lib/mock" จะทำให้เทสต์แดงเอง
+     * แล้วคนถัดไปจะลบคอมเมนต์ทิ้งแทนที่จะได้ประโยชน์จากมัน
+     */
+    const IMPORT_FROM_MOCK = /(?:\bfrom\s*|\brequire\(\s*|\bimport\(\s*)["'][^"']*\/?mock\//;
+
+    const offenders = files
+      .filter((f) => IMPORT_FROM_MOCK.test(fs.readFileSync(f, "utf8")))
+      .map((f) => path.relative(dir, f));
     expect(
       offenders,
       "engine บัญชีต้องรับข้อมูลผู้ถือ/บัญชีผ่าน LedgerResolver เท่านั้น ห้าม import ข้อมูลจำลองกลับเข้ามา"
