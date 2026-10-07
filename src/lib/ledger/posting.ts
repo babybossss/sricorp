@@ -11,7 +11,7 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { findSub, isValidPair, accrualCheck, type SubCategory } from "@/lib/rules/tx-rules";
+import { accrualCheck, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
@@ -32,6 +32,8 @@ import {
   assertEvidencePolicy,
   assertLinesValid,
   assertOwnerSelectable,
+  assertRequiredDimensions,
+  assertTypeAndSub,
   blankToUndefined,
   line,
   money,
@@ -47,14 +49,15 @@ import {
  */
 export { assertBalanced, totalDebit, totalCredit };
 
-/** ตรวจว่ากรอกครบตามที่หมวดย่อยบังคับ ก่อนจะลงบัญชี */
+/**
+ * ตรวจว่ากรอกครบตามที่หมวดย่อยบังคับ ก่อนจะลงบัญชี
+ *
+ * ทรัพย์/คู่ค้าใช้ด่านร่วมที่ `guards.ts` (`assertRequiredDimensions`) เพราะเส้นทาง
+ * ล้างยอดค้าง (`buildClearing()`) ต้องบังคับชุดเดียวกัน — กฎเดียวกันห้ามเขียนสองที่
+ * ส่วนขายทรัพย์/แยกเงินต้น-ดอกเบี้ยเป็นเรื่องของเส้นทางบันทึกอย่างเดียว จึงอยู่ที่นี่
+ */
 function assertRequirements(sub: SubCategory, input: PostingInput): void {
-  if (sub.requires?.includes("asset") && !input.assetId) {
-    throw new PostingError(`หมวด "${sub.label}" ต้องผูกทรัพย์`);
-  }
-  if (sub.requires?.includes("contact") && !input.contactId) {
-    throw new PostingError(`หมวด "${sub.label}" ต้องระบุผู้ติดต่อ`);
-  }
+  assertRequiredDimensions(sub, input);
   if (sub.requires?.includes("capitalGain") && !input.disposal) {
     throw new PostingError(
       `หมวด "${sub.label}" ต้องระบุต้นทุนและราคาขาย ไม่งั้นจะตัดทรัพย์ผิดจำนวนและไม่รับรู้กำไร/ขาดทุน`
@@ -98,13 +101,8 @@ function accrualAccount(sub: SubCategory): string {
  * - โอนข้ามผู้ถือ → **สอง transaction คู่กัน** ฝ่ายละหนึ่ง (Money Invariant 3)
  */
 export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver): PostingResult {
-  const found = findSub(input.subCode);
-  if (!found) throw new PostingError(`ไม่พบหมวดย่อย ${input.subCode} ในตารางกฎ`);
-  if (!isValidPair(input.typeKey, input.subCode)) {
-    throw new PostingError(`หมวดย่อย "${found.sub.label}" ไม่อยู่ใต้ประเภท "${found.type.label}"`);
-  }
-
-  const { sub } = found;
+  // ประเภท + หมวดย่อยผ่านปากทางเดียวที่แปลงข้อมูลไม่ครบเป็น PostingError (ดู guards.ts)
+  const { sub } = assertTypeAndSub(input.typeKey, input.subCode);
   const amount = money(input.amount, "จำนวนเงิน");
   if (amount === 0) throw new PostingError("จำนวนเงินต้องมากกว่า 0");
 

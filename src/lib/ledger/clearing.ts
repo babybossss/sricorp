@@ -16,7 +16,7 @@
  *  ที่คัดทางล้างด้วยหมวด CF ให้แล้ว จึงตรงกันโดยโครงสร้าง ไม่ใช่โดยความบังเอิญ)
  */
 
-import { findSub, isValidPair, accrualCheck, clearingSubsFor, type SubCategory } from "@/lib/rules/tx-rules";
+import { accrualCheck, clearingSubsFor, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount } from "@/lib/rules/coa";
 import {
   PostingError,
@@ -34,6 +34,8 @@ import {
   assertEvidencePolicy,
   assertLinesValid,
   assertOwnerSelectable,
+  assertRequiredDimensions,
+  assertTypeAndSub,
   blankToUndefined,
   line,
   money,
@@ -119,12 +121,8 @@ function clearedSoFar(input: ClearingInput): number {
  * ผู้ใช้จึงควรเห็นบรรทัดก่อนไปหาสลิป **แต่ปุ่มยืนยันต้องกั้นด้วย `buildClearing()`**
  */
 export function buildClearingDraft(input: ClearingInput, resolve: LedgerResolver): PostingResult {
-  const found = findSub(input.subCode);
-  if (!found) throw new PostingError(`ไม่พบหมวดย่อย ${input.subCode} ในตารางกฎ`);
-  if (!isValidPair(input.typeKey, input.subCode)) {
-    throw new PostingError(`หมวดย่อย "${found.sub.label}" ไม่อยู่ใต้ประเภท "${found.type.label}"`);
-  }
-  const { sub } = found;
+  // ประเภท + หมวดย่อยผ่านปากทางเดียวกับ `buildPosting()` (ดู guards.ts)
+  const { sub } = assertTypeAndSub(input.typeKey, input.subCode);
 
   if (!blankToUndefined(input.sourceId)) {
     throw new PostingError("ต้องระบุรายการค้างที่จะยืนยัน");
@@ -138,6 +136,17 @@ export function buildClearingDraft(input: ClearingInput, resolve: LedgerResolver
 
   const account = accrualAccountOf(sub);
   const route = clearingRouteOf(sub, account, input.clearingSubCode);
+
+  /**
+   * มิติบังคับของหมวดย่อย **ต้นทาง** — อ่านจากตารางกฎ (`requires`) ด่านเดียวกับ
+   * `buildPosting()` เพราะการยืนยันคือ transaction จริงอีกใบของเหตุการณ์เดียวกัน
+   * ถ้าใบที่ตั้งยอดผูกทรัพย์ไว้ แต่ใบที่ล้างไม่ผูก บัญชีย่อยรายทรัพย์จะไม่หักกลบกัน
+   * และลูกหนี้/เจ้าหนี้ของทรัพย์ชิ้นนั้นจะค้างอยู่ตลอดไปทั้งที่เงินเข้าแล้ว
+   *
+   * อยู่ **หลัง** การหาบัญชีพัก/ทางล้างโดยตั้งใจ: หมวดที่ล้างไม่ได้เลยต้องได้ข้อความว่า
+   * "ไม่มียอดค้างให้ยืนยัน" ซึ่งชี้ตรงจุดกว่า "ต้องผูกทรัพย์"
+   */
+  assertRequiredDimensions(sub, input);
 
   const accrued = money(input.accruedAmount, "ยอดค้าง");
   if (accrued === 0) {

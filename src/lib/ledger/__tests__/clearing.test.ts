@@ -33,7 +33,14 @@ const receivable: ClearingInput = {
   contactId: "c1",
 };
 
-/** ค่าซ่อมค้างจ่าย 8,600 — ฝั่งเจ้าหนี้ */
+/**
+ * ค่าซ่อมค้างจ่าย 8,600 — ฝั่งเจ้าหนี้
+ *
+ * `assetId` มีเพราะตารางกฎของ `exp.repair` บังคับ (`requires: ["asset"]`) เหมือนกับที่
+ * ใบตั้งค้างต้นทางถูกบังคับ — ถ้าใบล้างไม่ผูกทรัพย์ บัญชีย่อยรายทรัพย์จะไม่หักกลบกัน
+ * (ดูชุด `clearing-dimensions.test.ts` ที่ทดสอบทั้งหมวดที่บังคับและไม่บังคับ)
+ * ทรัพย์ไม่ติดไปกับบรรทัดเจ้าหนี้ (2100 เป็นหนี้สิน) จึงไม่เปลี่ยนตัวเลขของเคสด้านล่าง
+ */
 const payable: ClearingInput = {
   sourceId: "tx-repair-09",
   typeKey: "expense",
@@ -44,6 +51,7 @@ const payable: ClearingInput = {
   amount: 8_600,
   bankAccountId: "b4",
   date: "2026-10-03",
+  assetId: "rent1",
   contactId: "c1",
 };
 

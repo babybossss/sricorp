@@ -75,6 +75,25 @@ export const useApp = create<AppState>((set, get) => ({
   clearToast: () => set({ toast: null }),
 }));
 
+/**
+ * บัญชีนี้ยังเปิดใช้งานอยู่ไหม — **ค่าสด** อ่านตอนถูกเรียก ไม่ใช่ค่าที่แช่ไว้ตอน import
+ *
+ * นี่คือแหล่งความจริงเดียวของสถานะปิด-เปิด ทั้งหน้าจอ (`useOrderedBanks`) และ
+ * เครื่องยนต์ (ผ่าน `MOCK_RESOLVER`) ต้องอ่านจากที่นี่ที่เดียว —
+ * `BANKS[].off` เป็นแค่ค่า **seed** ตอนตั้งต้น store ห้ามใช้ตัดสินอะไรหลังจากนั้น
+ *
+ * เคยมีรู: หน้าจออ่าน `bankOff` แต่ resolver อ่าน `BANKS[].off` ผลคือปิดบัญชีแล้ว
+ * หน้าจอซ่อนให้ แต่เครื่องยนต์ยังคิดว่าเปิด = การกันบัญชีปิด (D-092) ไม่ทำงานจริง
+ *
+ * ไม่รู้สถานะ (ไม่มีคีย์นี้ใน store) = **ถือว่าปิด** ไม่ใช่เดาว่าเปิด เพราะถ้าเดาว่าเปิด
+ * วันที่แหล่งข้อมูลลืมส่งสถานะมา การกันบัญชีปิดจะหายไปเงียบๆ ทั้งระบบ
+ */
+export function isBankActive(id: string): boolean {
+  const off = useApp.getState().bankOff;
+  if (!(id in off)) return false;
+  return !off[id];
+}
+
 /** บัญชีธนาคารเรียงตามลำดับที่ตั้งไว้ใน Config */
 export function useOrderedBanks(onlyActive = false) {
   const order = useApp((s) => s.bankOrder);

@@ -12,6 +12,7 @@
  */
 
 import type { BankInfo, LedgerResolver, OwnerInfo } from "@/lib/ledger/types";
+import { isBankActive } from "@/lib/store";
 import { ENTITIES } from "./entities";
 import { BANKS } from "./banks";
 
@@ -26,9 +27,20 @@ const toBankInfo = (b: (typeof BANKS)[number]): BankInfo => ({
   id: b.id,
   name: b.name,
   ownerId: b.ownerId,
-  // `off` คือ "ปิดใช้งาน" จึงกลับด้านเป็น `isActive` — engine ใช้ฟิลด์นี้กันการลงรายการใหม่
-  // เข้าบัญชีที่ปิด (D-092) ต้องส่งค่าจริงเสมอ ห้ามปล่อยว่างหรือ hard-code true
-  isActive: !b.off,
+  /**
+   * สถานะปิด-เปิดอ่าน **ค่าสดจาก store** ที่เดียวกับที่หน้าจออ่าน (`isBankActive`)
+   * **ห้ามอ่าน `b.off`** — นั่นเป็นค่า seed ที่ถูกแช่ไว้ในไฟล์ตั้งแต่ตอน import
+   *
+   * เคยอ่าน `b.off` แล้วเกิดรูนี้: ผู้ใช้ปิดบัญชีในหน้าตั้งค่า (เปลี่ยน `bankOff` ใน store)
+   * หน้าจอซ่อนบัญชีให้ แต่เครื่องยนต์ยังเห็นว่าเปิดอยู่ = การกันบัญชีปิด (D-092)
+   * ไม่ทำงานจริงในแอป ทั้งที่เทสต์ของเครื่องยนต์ผ่านหมด
+   *
+   * ฟังก์ชันนี้ถูกเรียก **ตอน `bankAccount()` ถูกเรียก** ไม่ใช่ตอนสร้างโมดูล จึงได้ค่าสด
+   * ข้อนี้ยังสำคัญวันที่ resolver ตัวจริงอ่านจาก `sri_os.bank_accounts`: ห้ามห่อสถานะ
+   * เป็น snapshot ที่สร้างครั้งเดียว ไม่งั้นบัญชีที่ปิดใน DB จะยังรับรายการใหม่ได้
+   * จนกว่าจะ deploy ใหม่ — รูเดิมในรูปแบบใหม่
+   */
+  isActive: isBankActive(b.id),
 });
 
 /**

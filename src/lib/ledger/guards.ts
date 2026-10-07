@@ -11,6 +11,14 @@
 
 import { isCashAccount } from "@/lib/rules/coa";
 import {
+  TX_TYPES,
+  findSub,
+  isValidPair,
+  type SubCategory,
+  type TxType,
+  type TxTypeKey,
+} from "@/lib/rules/tx-rules";
+import {
   PostingError,
   type LedgerResolver,
   type OwnerInfo,
@@ -96,6 +104,80 @@ export function assertCashLinesHaveAccount(transactions: PostingTransaction[]): 
         throw new PostingError("ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก");
       }
     }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * ปากทางเข้าตารางกฎ — ประเภทรายการ · หมวดย่อย · ช่องบังคับ
+ *
+ * ทุกเส้นทางที่สร้างรายการเงินต้องเข้าทางนี้ จึงมีการแปลง "ข้อมูลไม่ครบ" เป็น
+ * `PostingError` ที่ผู้ใช้อ่านได้อยู่ **ที่เดียว**
+ * ------------------------------------------------------------------ */
+
+/**
+ * ประเภทรายการ + หมวดย่อยต้องมีจริงในตารางกฎ และต้องเข้าคู่กัน
+ *
+ * ทำไมต้องเช็ค `typeKey` ก่อนเรียก `isValidPair()`: `isValidPair()` เรียก `getTxType()`
+ * ซึ่งโยน **`Error` ธรรมดา** เมื่อไม่รู้จักประเภท ไม่ใช่ `PostingError` ผลคือ
+ * `previewPosting()` และ `attempt()` ในหน้าจอ (ที่จับเฉพาะ `PostingError` แล้ว re-throw
+ * ตัวอื่นโดยตั้งใจ) ปล่อย error ดิบขึ้นจอ ผู้ใช้เห็นข้อความที่อ่านไม่รู้เรื่อง
+ * และไม่ได้รู้เลยว่าสิ่งที่ขาดคือ "ประเภทรายการ"
+ *
+ * `typeKey` เป็นช่องที่มาจากฟอร์ม/DB จึงเป็น "ข้อมูลผู้ใช้ไม่ครบ" → `PostingError`
+ * ไม่ใช่ bug ของโปรแกรมเมอร์ (เส้นแบ่งนี้คือเหตุผลที่ `coa()` ยังโยน `Error` ธรรมดาได้
+ * เพราะรับรหัสบัญชีจากตารางกฎเท่านั้น ถ้าพังคือตารางกฎพัง ไม่ใช่ผู้ใช้กรอกผิด)
+ */
+export function assertTypeAndSub(
+  typeKey: TxTypeKey | undefined,
+  subCode: string | undefined
+): { type: TxType; sub: SubCategory } {
+  const code = blankToUndefined(subCode);
+  if (!code) {
+    throw new PostingError(
+      "ต้องเลือกหมวดย่อยของรายการ เพราะหมวดย่อยคือคนบอกคู่บัญชีและผลกระทบต่องบ"
+    );
+  }
+  const found = findSub(code);
+  if (!found) throw new PostingError(`ไม่พบหมวดย่อย ${code} ในตารางกฎ`);
+
+  const key = blankToUndefined(typeKey);
+  if (!key) {
+    throw new PostingError(
+      `ต้องระบุประเภทรายการ — หมวด "${found.sub.label}" อยู่ใต้ประเภท "${found.type.label}"`
+    );
+  }
+  // ถามตารางกฎแบบไม่โยน ก่อนส่งต่อให้ `isValidPair()` ซึ่งโยน Error ดิบถ้าไม่รู้จักประเภท
+  if (!TX_TYPES.some((t) => t.key === key)) {
+    throw new PostingError(`ไม่พบประเภทรายการ "${key}" ในตารางกฎ`);
+  }
+  if (!isValidPair(key as TxTypeKey, code)) {
+    throw new PostingError(
+      `หมวดย่อย "${found.sub.label}" ไม่อยู่ใต้ประเภท "${found.type.label}"`
+    );
+  }
+  return found;
+}
+
+/** ส่วนของ input ที่มิติบังคับใช้ตัดสิน — เส้นทางไหนก็ส่งรูปนี้มาได้ */
+export type DimensionInput = { assetId?: string; contactId?: string };
+
+/**
+ * มิติที่หมวดย่อยบังคับ — อ่านจาก `sub.requires` ในตารางกฎ **ห้ามเช็ครหัสหมวดตรงๆ**
+ *
+ * ใช้ร่วมกันทั้งเส้นทางบันทึก (`buildPosting()`) และเส้นทางล้างยอดค้าง
+ * (`buildClearing()`) เพราะการยืนยันเงินเข้า-ออกคือ transaction จริงอีกใบของ
+ * เหตุการณ์เดียวกัน ถ้าใบแรกต้องผูกทรัพย์/คู่ค้า ใบที่สองก็ต้อง ไม่งั้นบัญชีย่อย
+ * รายทรัพย์ของลูกหนี้/เจ้าหนี้ตั้งยอดด้วยทรัพย์หนึ่ง แล้วล้างแบบไม่มีทรัพย์ = ไม่หักกลบกัน
+ *
+ * กฎนี้เคยอยู่แค่ใน `posting.ts` ส่วน `clearing.ts` ปล่อยผ่าน — กฎเดียวกันอยู่สองที่
+ * (หรือหายไปที่หนึ่ง) คือทางที่ตัวเลขสองใบไม่ตรงกันแบบเงียบๆ (บทเรียนข้อ 5)
+ */
+export function assertRequiredDimensions(sub: SubCategory, input: DimensionInput): void {
+  if (sub.requires?.includes("asset") && !blankToUndefined(input.assetId)) {
+    throw new PostingError(`หมวด "${sub.label}" ต้องผูกทรัพย์`);
+  }
+  if (sub.requires?.includes("contact") && !blankToUndefined(input.contactId)) {
+    throw new PostingError(`หมวด "${sub.label}" ต้องระบุผู้ติดต่อ`);
   }
 }
 
