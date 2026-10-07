@@ -127,7 +127,16 @@ insert into permissions (key, label, note) values
   ('users.manage',    'จัดการผู้ใช้และสิทธิ์',
    'สร้าง/ปิดผู้ใช้ · ย้ายระดับ · ติ๊ก role_permissions · มอบสิทธิ์เห็น owner'),
   ('owner.view_all',  'เห็นข้อมูลทุก Entity',
-   'ข้ามตาราง user_owner_access · รวมถึงอ่าน audit log')
+   'ข้ามตาราง user_owner_access · รวมถึงอ่าน audit log'),
+  -- ---- ชั้น "ใครเห็นอะไรได้" (ลูกพี่เพิ่ม 07/10) ----
+  ('portfolio.view_all', 'เห็นภาพรวมการลงทุนทั้งพอร์ต',
+   'NAV · งบรวมข้ามทรัพย์/ข้ามผู้ถือ · **Manager ไม่มี** → เห็นได้แค่ทรัพย์ที่ตัวเองบริหาร'),
+  ('asset.view_assigned', 'เห็นทรัพย์ที่ตัวเองถูกมอบหมายให้ดูแล',
+   'ขอบเขต = assets.manager_user_id = ตัวเอง · ทรัพย์ที่ยังไม่มอบหมายก็ไม่เห็น'),
+  ('ledger.read',      'เห็นรายการเงินที่ลงแล้ว',
+   '**Staff ไม่มี** = ลงข้อมูลได้แต่อ่าน ledger ไม่ได้ · Manager มีแต่ถูกจำกัดขอบเขตด้วยทรัพย์ที่ดูแล'),
+  ('draft.read_own',   'เห็นร่างที่ตัวเองคีย์',
+   'ทุกระดับมี · คนที่ไม่มี ledger.read จะเห็นแค่ร่างของตัวเอง')
 on conflict (key) do update
   set label = excluded.label, note = excluded.note;
 
@@ -146,7 +155,12 @@ select r.key, p.key
     ('period.reopen',    true,  true,  false, false),
     ('settings.manage',  true,  true,  false, false),
     ('users.manage',     true,  false, false, false),
-    ('owner.view_all',   true,  true,  false, false)
+    ('owner.view_all',   true,  true,  false, false),
+    -- ชั้นการมองเห็น
+    ('portfolio.view_all',  true, true,  false, false),
+    ('asset.view_assigned', true, true,  true,  false),
+    ('ledger.read',         true, true,  true,  false),
+    ('draft.read_own',      true, true,  true,  true)
   ) as p(key, super_admin, management, manager, staff)
   cross join lateral (values
     ('super_admin', p.super_admin),
