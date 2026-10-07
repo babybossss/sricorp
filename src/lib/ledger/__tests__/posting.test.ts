@@ -1,6 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { buildPosting, buildPostingDraft, assertBalanced, totalDebit, totalCredit, allLines } from "../posting";
-import { PostingError } from "../types";
+import {
+  buildPosting as buildPostingWith,
+  buildPostingDraft as buildPostingDraftWith,
+  assertBalanced,
+  totalDebit,
+  totalCredit,
+  allLines,
+} from "../posting";
+import { PostingError, type PostingInput } from "../types";
+import { TEST_RESOLVER } from "./fixture-resolver";
+
+/**
+ * engine รับ resolver เป็นพารามิเตอร์ (ไม่มี default ที่ชี้ไปข้อมูลจำลอง)
+ * เทสต์ชุดนี้จึงผูกกับ fixture ของตัวเองที่นี่ที่เดียว แล้วเคสด้านล่างเรียกเหมือนเดิม
+ */
+const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
+const buildPostingDraft = (input: PostingInput) => buildPostingDraftWith(input, TEST_RESOLVER);
 import { isCashAccount } from "@/lib/rules/coa";
 import { TX_TYPES, findSub, canAccrueFromForm } from "@/lib/rules/tx-rules";
 

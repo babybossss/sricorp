@@ -12,9 +12,8 @@
  */
 
 import { buildPostingDraft, allLines } from "./posting";
-import { PostingError, type PostingInput, type PostingLine } from "./types";
+import { PostingError, type LedgerResolver, type PostingInput, type PostingLine } from "./types";
 import { coa } from "@/lib/rules/coa";
-import { entityById } from "@/lib/mock/entities";
 
 export type PreviewLine = PostingLine & { label: string };
 
@@ -32,14 +31,23 @@ export type PreviewResult =
 
 const describe = (l: PostingLine): PreviewLine => ({ ...l, label: coa(l.coaCode).nameTh });
 
-/** ลองสร้างบรรทัดบัญชี — ถ้าข้อมูลยังไม่ครบให้บอกว่าขาดอะไร ไม่ throw */
-export function previewPosting(input: PostingInput): PreviewResult {
+const ownerName = (resolve: LedgerResolver, id: string): string => resolve.owner(id)?.name ?? id;
+
+/**
+ * ลองสร้างบรรทัดบัญชี — ถ้าข้อมูลยังไม่ครบให้บอกว่าขาดอะไร ไม่ throw
+ *
+ * `resolve` ส่งมาจากชั้นนอก (หน้าจอ) เหมือนกับ `buildPosting()` —
+ * ไม่มีค่า default ที่ชี้ไปข้อมูลจำลอง เพื่อไม่ให้ที่เรียกลืมส่งแล้วทำงานเงียบๆ ผิดชุด
+ */
+export function previewPosting(input: PostingInput, resolve: LedgerResolver): PreviewResult {
   try {
-    const result = buildPostingDraft(input);
+    const result = buildPostingDraft(input, resolve);
     const transactions = result.transactions.map((t) => ({
       ownerId: t.ownerId,
-      ownerName: entityById(t.ownerId).name,
-      counterOwnerName: t.counterOwnerId ? entityById(t.counterOwnerId).name : undefined,
+      // ชื่อผู้ถือมาจาก resolver เดียวกับที่ engine ใช้ตัดสิน จึงไม่มีทางโชว์คนละคน
+      // ผู้ถือที่ resolver ไม่รู้จักถูกปฏิเสธใน buildPostingDraft() ไปก่อนแล้ว
+      ownerName: ownerName(resolve, t.ownerId),
+      counterOwnerName: t.counterOwnerId ? ownerName(resolve, t.counterOwnerId) : undefined,
       lines: t.lines.map(describe),
     }));
 

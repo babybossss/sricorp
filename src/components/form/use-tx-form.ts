@@ -16,6 +16,9 @@ import { parseAmount } from "@/lib/format";
 import { computeDisposal, type DisposalResult } from "@/lib/disposal/capital-gain";
 import { splitRepayment, type RepaymentSplit } from "@/lib/disposal/repayment";
 import { buildPosting } from "@/lib/ledger/posting";
+// resolver ของผู้ถือ/บัญชี ส่งเข้า engine จากชั้นนี้ — engine ไม่ import ข้อมูลเองแล้ว
+// ต่อ Supabase จริงให้สลับ resolver ตรงบรรทัดนี้ ไม่ต้องแตะ lib/ledger
+import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { PostingError, type IntercompanyNature, type PostingInput } from "@/lib/ledger/types";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
 import {
@@ -327,7 +330,7 @@ export function useTxForm() {
   const postingError = React.useMemo(() => {
     if (!postingInput) return null;
     try {
-      buildPosting(postingInput);
+      buildPosting(postingInput, MOCK_RESOLVER);
       return null;
     } catch (e) {
       // ห้ามโยนต่อระหว่าง render — จอจะขาวทั้งหน้า ทั้งที่แค่กรอกยังไม่ครบ

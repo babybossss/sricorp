@@ -11,8 +11,11 @@ import { COA, coa, isCashAccount } from "../coa";
 import { findLayoutGaps, statementOf } from "../statements";
 // เดินสองขั้นผ่าน engine ตัวจริง — ถ้ายืนยันแค่ตารางกฎ จะไม่รู้ว่า `cfCategory`
 // ที่ลงบรรทัดจริงตรงกับหมวดต้นทางหรือไม่ ซึ่งเป็นจุดที่เงินไปโผล่ผิดหมวด
-import { buildPosting, allLines } from "@/lib/ledger/posting";
-import { PostingError } from "@/lib/ledger/types";
+import { buildPosting as buildPostingWith, allLines } from "@/lib/ledger/posting";
+import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
+
+const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 
 const allSubs = TX_TYPES.flatMap((t) => t.subs);
 const movingSubs = allSubs.filter((s) => s.cash === "in" || s.cash === "out");

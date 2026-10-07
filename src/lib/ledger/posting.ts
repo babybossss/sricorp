@@ -14,11 +14,11 @@
 import { findSub, isValidPair, accrualCheck, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
-import { entityById } from "@/lib/mock/entities";
-import { BANKS } from "@/lib/mock/banks";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
 import {
   PostingError,
+  type LedgerResolver,
+  type OwnerInfo,
   type PostingInput,
   type PostingLine,
   type PostingResult,
@@ -70,8 +70,21 @@ function line(p: Omit<PostingLine, "debit" | "credit"> & { debit?: number; credi
   return { debit: 0, credit: 0, ...p };
 }
 
-function bankOwner(bankAccountId: string): string {
-  const b = BANKS.find((x) => x.id === bankAccountId);
+/**
+ * ผู้ถือและบัญชีมาจาก resolver ที่ผู้เรียกส่งเข้ามาเท่านั้น
+ *
+ * หาไม่เจอ = ข้อมูลไม่ครบ ต้องปฏิเสธด้วย `PostingError` ที่ผู้ใช้อ่านได้
+ * ไม่ใช่ปล่อย error ดิบขึ้นจอ และไม่ใช่เดาเป็นผู้ถือ/บัญชีอื่น
+ * เพราะผู้ถือผิดแปลว่าเงินไปอยู่ในงบของคนผิดแบบเงียบๆ
+ */
+function ownerOf(resolve: LedgerResolver, ownerId: string): OwnerInfo {
+  const o = resolve.owner(ownerId);
+  if (!o) throw new PostingError(`ไม่พบผู้ถือ: ${ownerId}`);
+  return o;
+}
+
+function bankOwner(resolve: LedgerResolver, bankAccountId: string): string {
+  const b = resolve.bankAccount(bankAccountId);
   if (!b) throw new PostingError(`ไม่พบบัญชีธนาคาร: ${bankAccountId}`);
   return b.ownerId;
 }
@@ -120,8 +133,8 @@ function accrualAccount(sub: SubCategory): string {
  * ผู้ถือต้องเป็นตัวตนที่ถือทรัพย์ได้จริง — "SRI Family (รวม)" เป็นมุมมองรวม ไม่ใช่เจ้าของ
  * เป็นเงื่อนไขเชิงโครงสร้าง ไม่ใช่นโยบายเอกสาร จึงตรวจตั้งแต่ตอนสร้างบรรทัด
  */
-function assertOwnerSelectable(ownerId: string): void {
-  const owner = entityById(ownerId);
+function assertOwnerSelectable(resolve: LedgerResolver, ownerId: string): void {
+  const owner = ownerOf(resolve, ownerId);
   if (!owner.selectableAsHolder) {
     throw new PostingError(`"${owner.name}" เป็นมุมมองรวม เลือกเป็นผู้ถือของรายการไม่ได้`);
   }
@@ -134,8 +147,8 @@ function assertOwnerSelectable(ownerId: string): void {
  * แยกออกจากการสร้างบรรทัดโดยตั้งใจ: เอกสารหลักฐานไม่ได้เปลี่ยนคู่บัญชี
  * พรีวิวจึงแสดงบรรทัดได้ทั้งที่ยังไม่แนบไฟล์ แต่ `buildPosting()` จะไม่ยอมปล่อยผ่าน
  */
-function assertEvidencePolicy(input: PostingInput, ownerId: string): void {
-  const owner = entityById(ownerId);
+function assertEvidencePolicy(input: PostingInput, ownerId: string, resolve: LedgerResolver): void {
+  const owner = ownerOf(resolve, ownerId);
   if (owner.policy !== "corporate_strict") return;
   if ((input.attachments?.length ?? 0) === 0) {
     throw new PostingError(
@@ -156,7 +169,7 @@ function assertEvidencePolicy(input: PostingInput, ownerId: string): void {
  * - โอนภายในผู้ถือเดียวกัน → สองบรรทัดเงินสด คนละบัญชี
  * - โอนข้ามผู้ถือ → **สอง transaction คู่กัน** ฝ่ายละหนึ่ง (Money Invariant 3)
  */
-export function buildPostingDraft(input: PostingInput): PostingResult {
+export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver): PostingResult {
   const found = findSub(input.subCode);
   if (!found) throw new PostingError(`ไม่พบหมวดย่อย ${input.subCode} ในตารางกฎ`);
   if (!isValidPair(input.typeKey, input.subCode)) {
@@ -169,13 +182,13 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
   if (!input.bankAccountId) throw new PostingError("ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก");
 
   // ผู้ถือต้องถือทรัพย์ได้จริงก่อน ไม่งั้นข้อความจะไปโผล่เป็น "บัญชีไม่ตรงผู้ถือ" ซึ่งชี้ผิดจุด
-  assertOwnerSelectable(input.ownerId);
+  assertOwnerSelectable(resolve, input.ownerId);
 
   // ตรวจว่าบัญชีมีอยู่จริง และเป็นของผู้ถือที่ระบุ
-  const sourceOwner = bankOwner(input.bankAccountId);
+  const sourceOwner = bankOwner(resolve, input.bankAccountId);
   if (sourceOwner !== input.ownerId) {
     throw new PostingError(
-      `บัญชีที่เลือกเป็นของ ${entityById(sourceOwner).name} แต่รายการระบุผู้ถือเป็น ${entityById(input.ownerId).name}`
+      `บัญชีที่เลือกเป็นของ ${ownerOf(resolve, sourceOwner).name} แต่รายการระบุผู้ถือเป็น ${ownerOf(resolve, input.ownerId).name}`
     );
   }
 
@@ -202,7 +215,7 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
     if (to === input.bankAccountId) throw new PostingError("โอนเข้าบัญชีเดียวกันไม่ได้");
 
     // อ่านผู้ถือจากบัญชีปลายทางเอง ไม่เชื่อฟิลด์ที่ผู้ใช้เว้นได้
-    const targetOwner = bankOwner(to);
+    const targetOwner = bankOwner(resolve, to);
     const crossOwner = targetOwner !== input.ownerId;
 
     if (!crossOwner) {
@@ -219,11 +232,11 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
       const nature = input.intercompanyNature;
       if (!nature) {
         throw new PostingError(
-          `โอนไปบัญชีของ ${entityById(targetOwner).name} เป็นรายการข้ามผู้ถือ ` +
+          `โอนไปบัญชีของ ${ownerOf(resolve, targetOwner).name} เป็นรายการข้ามผู้ถือ ` +
             "ต้องระบุลักษณะ (เงินทดรอง / กู้ยืม / เพิ่มทุน / ปันผล)"
         );
       }
-      assertOwnerSelectable(targetOwner);
+      assertOwnerSelectable(resolve, targetOwner);
 
       const rule = INTERCOMPANY_RULES[nature];
 
@@ -251,8 +264,8 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
 
       summary.push(
         `ข้ามผู้ถือ (${rule.label}) — สร้างสองรายการคู่กัน: ` +
-          `${entityById(input.ownerId).name} ลง ${coa(rule.payer.coa).nameTh} · ` +
-          `${entityById(targetOwner).name} ลง ${coa(rule.receiver.coa).nameTh}`
+          `${ownerOf(resolve, input.ownerId).name} ลง ${coa(rule.payer.coa).nameTh} · ` +
+          `${ownerOf(resolve, targetOwner).name} ลง ${coa(rule.receiver.coa).nameTh}`
       );
       summary.push(rule.note);
       summary.push("งบรวมจะตัดรายการระหว่างกันออก ยอดกองกลางจึงไม่เปลี่ยน");
@@ -419,9 +432,9 @@ export function buildPostingDraft(input: PostingInput): PostingResult {
  *
  * ทุกเส้นทางที่จะ post ลงฐานข้อมูลต้องผ่านฟังก์ชันนี้ ห้ามเรียก draft ตรงๆ
  */
-export function buildPosting(input: PostingInput): PostingResult {
-  const result = buildPostingDraft(input);
-  for (const t of result.transactions) assertEvidencePolicy(input, t.ownerId);
+export function buildPosting(input: PostingInput, resolve: LedgerResolver): PostingResult {
+  const result = buildPostingDraft(input, resolve);
+  for (const t of result.transactions) assertEvidencePolicy(input, t.ownerId, resolve);
   return result;
 }
 

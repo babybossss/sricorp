@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { previewPosting } from "../preview";
-import { buildPostingDraft, allLines } from "../posting";
+import { previewPosting as previewPostingWith } from "../preview";
+import { buildPostingDraft as buildPostingDraftWith, allLines } from "../posting";
 import type { PostingInput } from "../types";
 import { coa } from "@/lib/rules/coa";
+import { TEST_RESOLVER } from "./fixture-resolver";
+
+const previewPosting = (input: PostingInput) => previewPostingWith(input, TEST_RESOLVER);
+const buildPostingDraft = (input: PostingInput) => buildPostingDraftWith(input, TEST_RESOLVER);
 
 const sale: PostingInput = {
   typeKey: "invest_sell",

@@ -94,3 +94,33 @@ export class PostingError extends Error {
     this.name = "PostingError";
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Resolver — ทางเดียวที่ engine รู้จักผู้ถือและบัญชีธนาคาร
+ *
+ * engine ไม่ import ข้อมูลผู้ถือ/บัญชีจากที่ไหนเลย ผู้เรียกต้องส่งเข้ามา
+ * (ตอนนี้ชั้นนอกสร้างจาก `src/lib/mock/resolver.ts` · ของจริงจะอ่านจาก
+ *  `sri_os.owners` / `sri_os.bank_accounts` แล้วสลับที่ชั้นนั้น ไม่ต้องแตะ engine)
+ *
+ * **ห้ามทำเป็นตัวแปรระดับโมดูลที่สลับได้** เพราะนั่นคือสถานะซ่อน
+ * ที่ทำให้เทสต์สองตัวรบกวนกัน และตอบไม่ได้จากการอ่านโค้ดว่าใช้ข้อมูลชุดไหน
+ * ------------------------------------------------------------------ */
+
+/** ผู้ถือกรรมสิทธิ์ — เท่าที่ engine ต้องรู้ ไม่เอาสี/กลุ่มที่เป็นเรื่องของหน้าจอ */
+export type OwnerInfo = {
+  id: string;
+  name: string;
+  /** ตรงกับคอลัมน์ `policy` ในตาราง `sri_os.owners` */
+  policy: "corporate_strict" | "personal_flexible";
+  /** "SRI Family (รวมทุกชื่อ)" เป็นมุมมองรวม เลือกเป็นผู้ถือไม่ได้ */
+  selectableAsHolder: boolean;
+};
+
+/** บัญชีธนาคาร/กระเป๋าเงินสด — `ownerId` คือความจริงเรื่องผู้ถือของบัญชีนั้น */
+export type BankInfo = { id: string; name: string; ownerId: string };
+
+export type LedgerResolver = {
+  /** หาไม่เจอให้คืน null — engine จะแปลงเป็น PostingError เอง ห้าม throw ดิบ ห้ามเดา */
+  owner(id: string): OwnerInfo | null;
+  bankAccount(id: string): BankInfo | null;
+};

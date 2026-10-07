@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { computeDisposal } from "../capital-gain";
 import { splitRepayment } from "../repayment";
 import { buildSchedule } from "@/lib/loan/schedule";
-import { buildPosting, allLines, totalDebit, totalCredit } from "@/lib/ledger/posting";
+import { buildPosting as buildPostingWith, allLines, totalDebit, totalCredit } from "@/lib/ledger/posting";
+import type { PostingInput } from "@/lib/ledger/types";
+// fixture ของเทสต์ engine ไม่ใช่ข้อมูลจำลองของแอป — เทสต์บัญชีต้องไม่พังเพราะ mock เปลี่ยน
+import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
+
+const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 
 /**
  * บรรทัดบัญชีไม่ได้สร้างในไฟล์ `lib/disposal/` แล้ว — engine เดียวคือ `lib/ledger/posting.ts`
