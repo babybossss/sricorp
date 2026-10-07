@@ -11,8 +11,19 @@
 --   4. app_users.role: CHECK 3 ค่า → FK roles(key) · 'user' → 'staff'
 --   5. แปลง policy ที่เรียก fn_is_management() ทั้ง 12 จุด → fn_can('<permission>')
 --      fn_is_management() เก็บไว้เป็น wrapper (DEPRECATED) ของ fn_can('owner.view_all')
---   6. ปิดช่องที่เจอระหว่างทำ: user_owner_access และ period_closes ยังไม่มี RLS
---      = ใครก็เพิ่มสิทธิ์ดู owner ให้ตัวเอง / ลบแถวปิดงวดเพื่อเปิดงวดได้
+--   6. **ลบ policy เก่าทุกตัวบนตารางที่ไฟล์นี้ดูแล** ก่อนปล่อยของใหม่
+--      RLS policy ของ Postgres เป็น permissive และ **OR กัน** — ถ้าเหลือของเก่าที่กว้างกว่าไว้
+--      สิทธิ์ใหม่ที่แคบกว่าจะไม่มีผลอะไรเลย (เงียบๆ)
+--      บน project จริงมี policy ที่ **ไม่อยู่ใน migration ไฟล์ไหนเลย** (ใส่มือไว้):
+--        user_owner_access · access_manage      ← ตัวที่อันตรายที่สุด
+--        period_closes      · period_write · period_read
+--        cash_confirmations · confirmations_write
+--        contact_links      · contact_links_all
+--      `access_manage` กั้นด้วย fn_is_management() ซึ่งตอนนี้ = fn_can('owner.view_all')
+--      ที่ Management มี · ถ้าไม่ลบ Management จะยังแจกสิทธิ์ดูข้อมูลทุก Entity ให้ใครก็ได้
+--      แม้ดีไซน์ใหม่จะย้ายไปเป็น users.manage (super_admin เท่านั้น) แล้ว
+--      ท้ายไฟล์จึงมี sweep: ลบทุก policy บนตารางที่ไฟล์นี้ดูแลซึ่งไม่อยู่ในรายการ
+--      สุดท้ายที่ประกาศไว้ → ชื่อที่ยังไม่รู้จักก็ไม่หลุดรอด และไฟล์นี้เป็นแหล่งความจริงเดียว
 --
 -- สิ่งที่ migration นี้ **ไม่** ทำ และห้ามทำ:
 --   ไม่มี permission ที่ปิดกฎเงิน (invariant.skip · evidence.waive · delete.posted)
@@ -28,12 +39,16 @@
 --   --    alter table sri_os.app_users alter column role set default 'user';
 --   --    alter table sri_os.app_users add constraint app_users_role_check
 --   --      check (role in ('management','manager','user'));
---   -- 3. alter table sri_os.period_closes disable row level security;
---   --    alter table sri_os.user_owner_access disable row level security;
+--   -- 3. policy ที่เคยใส่มือไว้และไฟล์นี้ลบไป ต้องสร้างคืนเองถ้าต้องการของเดิม
+--   --    (ชื่อเดิม: access_manage · period_write · period_read · confirmations_write ·
+--   --     contact_links_all — ทั้งหมดกั้นด้วย fn_is_management())
+--   --    ของที่ไฟล์นี้สร้างแทนให้แล้วชื่อ owner_access_* · period_closes_* ·
+--   --    confirmations_write/update · contact_links_* จึงไม่ต้องทำอะไรถ้าไม่ย้อน
 --   -- 4. drop function sri_os.fn_can(text);
 --   -- 5. drop table sri_os.role_permissions, sri_os.permissions, sri_os.roles;
---   -- หมายเหตุ: fn_period_locked() ที่ migration นี้ทำเป็น security definer
---   --   **ไม่ต้องย้อน** — ย้อนแล้วการล็อกงวดจะอ่าน period_closes ไม่เห็นถ้า RLS ยังเปิด
+--   -- หมายเหตุ 1: RLS บนทุกตารางเปิดอยู่ก่อนไฟล์นี้แล้ว **ห้าม disable ตอนย้อน**
+--   -- หมายเหตุ 2: fn_period_locked() ที่ไฟล์นี้ทำเป็น security definer **ไม่ต้องย้อน**
+--   --   ย้อนแล้วการล็อกงวดจะขึ้นกับสิทธิ์อ่าน period_closes ของคนคีย์ = หลุดได้
 --
 -- idempotent: create table if not exists · insert ... on conflict ·
 --   create or replace function · drop policy if exists ก่อน create policy
@@ -310,8 +325,9 @@ begin
 end $$;
 
 -- ------------------------------------------------------------
--- 9 · cash.confirm ที่ DB — เดิม cash_confirmations เปิด RLS แต่มีแต่ policy อ่าน
---     แปลว่าเขียนไม่ได้เลย (ฟีเจอร์ยืนยันเงินทำงานไม่ได้) · ใส่ policy เขียนให้ตรง D-072
+-- 9 · cash.confirm ที่ DB — ของเดิมบน project จริงคือ confirmations_write (ALL)
+--     ที่กั้นด้วย fn_is_management() และไม่อยู่ใน migration ไฟล์ไหน
+--     แทนด้วยสิทธิ์ตรงตัว cash.confirm (Manager ไม่มี) + จำกัดขอบเขตบัญชีธนาคาร
 -- ------------------------------------------------------------
 drop policy if exists confirmations_write on cash_confirmations;
 create policy confirmations_write on cash_confirmations
@@ -330,12 +346,16 @@ create policy confirmations_update on cash_confirmations
   using (fn_can('cash.confirm')) with check (fn_can('cash.confirm'));
 
 -- ------------------------------------------------------------
--- 10 · ปิดช่องที่เจอระหว่างทำ — สองตารางนี้ยังไม่เคยเปิด RLS
+-- 10 · สองตารางที่เปิด RLS อยู่แล้วแต่ policy ถูกใส่มือ ไม่อยู่ใน migration
+--      ย้ายมาเป็นของในไฟล์นี้ และเปลี่ยนจาก fn_is_management() เป็นสิทธิ์ที่ตรงความหมาย
 -- ------------------------------------------------------------
 
--- user_owner_access: ถ้าไม่เปิด ใครก็ insert สิทธิ์ดู owner ให้ตัวเองได้
+-- user_owner_access: การแจกสิทธิ์ "ใครเห็น Entity ไหน" คือการจัดการผู้ใช้
+-- เดิม access_manage กั้นด้วย fn_is_management() = Management แจกได้
+-- ใหม่ต้อง users.manage (super_admin) · ถ้าไม่ลบของเก่า OR กันแล้วข้อจำกัดนี้ไม่มีผล
 -- fn_can_see_owner() เป็น security definer จึงยังอ่านตารางนี้ได้ครบเหมือนเดิม
 alter table user_owner_access enable row level security;
+drop policy if exists access_manage on user_owner_access;
 drop policy if exists owner_access_read on user_owner_access;
 create policy owner_access_read on user_owner_access
   for select to authenticated
@@ -345,8 +365,11 @@ create policy owner_access_write on user_owner_access
   for all to authenticated
   using (fn_can('users.manage')) with check (fn_can('users.manage'));
 
--- period_closes: ถ้าไม่เปิด ใครก็ลบแถวปิดงวด = เปิดงวดเองได้โดยไม่ต้องมีสิทธิ์
+-- period_closes: เดิม period_write (ALL) + period_read ใส่มือไว้
+-- แยกเป็น "ปิดงวด" (settings.manage) กับ "เปิดงวดที่ปิดแล้ว" (period.reopen) คนละสิทธิ์
 alter table period_closes enable row level security;
+drop policy if exists period_write on period_closes;
+drop policy if exists period_read on period_closes;
 drop policy if exists period_closes_read on period_closes;
 create policy period_closes_read on period_closes
   for select to authenticated using (fn_can_see_owner(owner_id));
@@ -379,3 +402,109 @@ begin
   end if;
   return new;
 end $fn$;
+
+-- ------------------------------------------------------------
+-- 11 · contact_links: เดิม contact_links_all (ALL) ใส่มือไว้ กั้นด้วย fn_is_management()
+--      ลบแล้วไม่สร้างแทน = ตารางนี้เขียนไม่ได้เลย จึงแทนด้วยคู่ read/write
+--      ให้เท่ากับ contacts (ข้อมูลตั้งค่า + ทุกคนอ่านได้)
+-- ------------------------------------------------------------
+alter table contact_links enable row level security;
+drop policy if exists contact_links_all on contact_links;
+drop policy if exists contact_links_read on contact_links;
+create policy contact_links_read on contact_links
+  for select to authenticated using (true);
+drop policy if exists contact_links_write on contact_links;
+create policy contact_links_write on contact_links
+  for all to authenticated
+  using (fn_can('settings.manage')) with check (fn_can('settings.manage'));
+
+-- ============================================================
+-- 12 · SWEEP — ตารางที่ไฟล์นี้ดูแล ต้องมี policy เท่าที่ประกาศไว้ข้างล่างเท่านั้น
+--
+--   เหตุผล: policy เป็น permissive และ OR กัน · ของเก่าที่กว้างกว่าหนึ่งตัวที่ค้างอยู่
+--   ลบล้างข้อจำกัดใหม่ทั้งหมดได้เงียบๆ · และ project จริงมี policy ที่ใส่มือไว้
+--   ซึ่งไม่มีใน migration ไฟล์ไหน จึง drop ตามชื่อเพียงอย่างเดียวไม่พอ
+--   ชื่อที่ไม่อยู่ในรายการนี้ = ของเก่า/ของใส่มือ → ลบ แล้ว raise notice บอกว่าลบอะไร
+--
+--   ตารางที่ไฟล์นี้ **ไม่** ดูแล (bank_accounts · assets · contracts · asset_valuations ·
+--   schedules · asset_classes · asset_categories) ไม่ถูก sweep เพราะสิทธิ์ของโมดูลทรัพย์
+--   ยังไม่ได้ออกแบบ · แต่ข้อ 13 จะรายงานออกมาว่ามีตัวไหนยังผูกกับ fn_is_management()
+-- ============================================================
+do $$
+declare r record; n int := 0;
+begin
+  for r in
+    select p.tablename, p.policyname
+      from pg_policies p
+     where p.schemaname = 'sri_os'
+       and p.tablename in (
+             'owners', 'chart_of_accounts', 'txn_types', 'contacts', 'contact_links',
+             'transactions', 'transaction_lines', 'draft_entries', 'cash_confirmations',
+             'audit_log', 'app_users', 'settings', 'user_owner_access', 'period_closes',
+             'roles', 'permissions', 'role_permissions'
+           )
+       and (p.tablename, p.policyname) not in (values
+             ('owners',             'owners_read'),
+             ('owners',             'owners_write'),
+             ('chart_of_accounts',  'chart_of_accounts_read'),
+             ('chart_of_accounts',  'chart_of_accounts_write'),
+             ('txn_types',          'txn_types_read'),
+             ('txn_types',          'txn_types_write'),
+             ('contacts',           'contacts_read'),
+             ('contacts',           'contacts_insert'),
+             ('contacts',           'contacts_update'),
+             ('contact_links',      'contact_links_read'),
+             ('contact_links',      'contact_links_write'),
+             ('transactions',       'transactions_by_owner'),
+             ('transactions',       'txn_insert'),
+             ('transactions',       'txn_update'),
+             ('transaction_lines',  'lines_by_txn'),
+             ('transaction_lines',  'lines_write'),
+             ('draft_entries',      'draft_entries_by_owner'),
+             ('draft_entries',      'draft_insert'),
+             ('draft_entries',      'draft_review'),
+             ('cash_confirmations', 'confirmations_read'),
+             ('cash_confirmations', 'confirmations_write'),
+             ('cash_confirmations', 'confirmations_update'),
+             ('audit_log',          'audit_read'),
+             ('app_users',          'users_read'),
+             ('app_users',          'users_write'),
+             ('settings',           'settings_read'),
+             ('settings',           'settings_write'),
+             ('user_owner_access',  'owner_access_read'),
+             ('user_owner_access',  'owner_access_write'),
+             ('period_closes',      'period_closes_read'),
+             ('period_closes',      'period_closes_insert'),
+             ('period_closes',      'period_closes_reopen'),
+             ('roles',              'roles_read'),
+             ('roles',              'roles_write'),
+             ('permissions',        'permissions_read'),
+             ('permissions',        'permissions_write'),
+             ('role_permissions',   'role_permissions_read'),
+             ('role_permissions',   'role_permissions_write')
+           )
+  loop
+    execute format('drop policy if exists %I on sri_os.%I', r.policyname, r.tablename);
+    raise notice 'sweep: ลบ policy ที่ค้างอยู่ %.% (จะ OR ทับสิทธิ์ใหม่)', r.tablename, r.policyname;
+    n := n + 1;
+  end loop;
+  raise notice 'sweep: ลบของค้างทั้งหมด % ตัว', n;
+end $$;
+
+-- ============================================================
+-- 13 · รายงานของที่ยังผูกกับ fn_is_management() บนตารางที่ไฟล์นี้ไม่ดูแล
+--      ไม่ลบให้ เพราะสิทธิ์โมดูลทรัพย์ยังไม่ได้ออกแบบ (D-083) แต่ต้องไม่เงียบ
+-- ============================================================
+do $$
+declare v text;
+begin
+  select string_agg(tablename || '.' || policyname, ', ') into v
+    from pg_policies
+   where schemaname = 'sri_os'
+     and (coalesce(qual, '') || coalesce(with_check, '')) ~ 'fn_is_management';
+  if v is not null then
+    raise notice 'เหลือ policy ที่ยังเรียก fn_is_management() (deprecated) ต้องแปลงในงานถัดไป: %', v;
+  else
+    raise notice 'ไม่มี policy ไหนเรียก fn_is_management() แล้ว';
+  end if;
+end $$;

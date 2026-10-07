@@ -45,19 +45,34 @@ alter default privileges in schema sri_os grant all on tables to authenticated;
 alter default privileges in schema sri_os grant all on sequences to authenticated;
 SQL
 
+# migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพื่อให้แทรกสถานะจริงของ project
+# (policy ที่ใส่มือไว้ ไม่อยู่ในรีโป) ก่อน แล้วค่อยปล่อยของใหม่ทับ
+UNDER_TEST=${UNDER_TEST:-20261006190000_roles_permissions.sql}
+LOG=${TMPDIR:-/tmp}/srios-mig.log
+
 fail=0
 for f in "$REPO"/supabase/migrations/*.sql; do
   name=$(basename "$f")
-  if psql_run < "$f" >/tmp/mig.log 2>&1; then
+  [ "$name" = "$UNDER_TEST" ] && continue
+  if psql_run < "$f" >"$LOG" 2>&1; then
     echo "  migration ok    $name"
   else
     # สองไฟล์ seed txn_types รันจาก DB เปล่าไม่ผ่านอยู่แล้วก่อนงานนี้
     # (ลำดับ seed ของ DB จริงต่างจากลำดับไฟล์) ไม่เกี่ยวกับ RLS จึงข้ามได้
-    echo "  migration SKIP  $name  ($(tail -1 /tmp/mig.log | cut -c1-90))"
+    echo "  migration SKIP  $name  ($(tail -1 "$LOG" | cut -c1-90))"
   fi
 done
 
-for t in "$REPO"/supabase/tests/*.sql; do
+# สถานะจริงที่รีโปไม่มี — ถ้าไม่ใส่ เทสต์จะผ่านทั้งที่ของจริงยังมีช่องโหว่
+echo "  legacy state    _legacy_db_state.sql"
+psql_run < "$REPO/supabase/tests/_legacy_db_state.sql"
+
+if [ -f "$REPO/supabase/migrations/$UNDER_TEST" ]; then
+  psql_run < "$REPO/supabase/migrations/$UNDER_TEST"
+  echo "  migration ok    $UNDER_TEST  (รันหลังสถานะจริง)"
+fi
+
+for t in "$REPO"/supabase/tests/*_test.sql; do
   echo "== test $(basename "$t")"
   if psql_run < "$t"; then :; else fail=1; fi
 done

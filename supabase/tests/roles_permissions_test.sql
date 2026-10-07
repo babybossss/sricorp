@@ -316,18 +316,55 @@ begin
   raise notice 'ok 7.5 · การล็อกงวดยังบังคับได้หลังเปิด RLS บน period_closes';
 end $$;
 
--- 7.6 user_owner_access: ใครก็เพิ่มสิทธิ์ดู owner ให้ตัวเองไม่ได้
+-- 7.6 user_owner_access: การแจกสิทธิ์ดู Entity = users.manage (super_admin เท่านั้น)
+--     เคส Management คือตัวจับ policy เก่า `access_manage` ที่ค้างอยู่ —
+--     ของเก่ากั้นด้วย fn_is_management() ซึ่ง Management ผ่าน · policy OR กัน
+--     ถ้า migration ไม่ลบของเก่า ข้อจำกัดใหม่จะไม่มีผลเลย
 do $$
-declare v_owner uuid;
+declare v_owner uuid; n int;
 begin
   select id into v_owner from sri_os.owners where code = 'SRI_HOLDING';
+
   perform pg_temp.login('mgr');
   begin
     insert into sri_os.user_owner_access(user_id, owner_id) values (pg_temp.uid('mgr'), v_owner);
     raise exception 'FAIL: Manager เพิ่มสิทธิ์ดู owner ให้ตัวเองได้';
   exception when insufficient_privilege then null;
   end;
-  raise notice 'ok 7.6 · เพิ่มสิทธิ์ดู owner ให้ตัวเองไม่ได้ (ต้องมี users.manage)';
+
+  perform pg_temp.login('mgmt');
+  begin
+    insert into sri_os.user_owner_access(user_id, owner_id) values (pg_temp.uid('staff'), v_owner);
+    raise exception 'FAIL: Management ยังแจกสิทธิ์ดู Entity ได้ = policy เก่าค้างและ OR ทับของใหม่';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- ขาบวก: super_admin ต้องทำได้ ไม่งั้นแปลว่าปิดตายทั้งตาราง
+  perform pg_temp.login('super');
+  insert into sri_os.user_owner_access(user_id, owner_id) values (pg_temp.uid('staff'), v_owner);
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: super_admin แจกสิทธิ์ดู Entity ไม่ได้'; end if;
+  raise notice 'ok 7.6 · แจกสิทธิ์ดู Entity ได้เฉพาะ users.manage (Management ก็ไม่ได้)';
+end $$;
+
+-- 7.6b ปิดงวด = settings.manage · เปิดงวด = period.reopen (คนละสิทธิ์)
+do $$
+declare v_owner uuid; n int;
+begin
+  select id into v_owner from sri_os.owners where code = 'SUTEE';
+  perform pg_temp.login('mgr');
+  begin
+    insert into sri_os.period_closes(owner_id, period)
+    values (v_owner, date_trunc('month', current_date)::date);
+    raise exception 'FAIL: Manager ปิดงวดได้';
+  exception when insufficient_privilege then null;
+  end;
+
+  perform pg_temp.login('mgmt');
+  delete from sri_os.period_closes;
+  get diagnostics n = row_count;
+  if n = 0 then raise exception 'FAIL: Management เปิดงวดที่ปิดแล้วไม่ได้ (มี period.reopen)'; end if;
+  raise notice 'ok 7.6b · Manager ปิดงวดไม่ได้ · Management เปิดงวดได้';
 end $$;
 
 -- 7.7 ตารางสิทธิ์: อ่านได้ทุกคน · แก้ได้เฉพาะ users.manage (Management ก็แก้ไม่ได้)
@@ -353,6 +390,71 @@ begin
 end $$;
 
 reset role;
+
+-- ============================================================
+-- 8 · ตารางที่ migration ดูแล ต้องมี policy เท่าที่ตั้งใจ ไม่เกินไม่ขาด
+--     policy เป็น permissive และ OR กัน · ของเก่าที่ค้างอยู่หนึ่งตัวลบล้างสิทธิ์ใหม่ได้
+--     (รายการนี้เขียนซ้ำในเทสต์โดยตั้งใจ ไม่ได้อ่านจาก migration)
+-- ============================================================
+do $$
+declare v_extra text; v_missing text; v_dup text;
+begin
+  create temporary table t_expect(tbl text, pol text) on commit drop;
+  insert into t_expect values
+    ('owners','owners_read'),('owners','owners_write'),
+    ('chart_of_accounts','chart_of_accounts_read'),('chart_of_accounts','chart_of_accounts_write'),
+    ('txn_types','txn_types_read'),('txn_types','txn_types_write'),
+    ('contacts','contacts_read'),('contacts','contacts_insert'),('contacts','contacts_update'),
+    ('contact_links','contact_links_read'),('contact_links','contact_links_write'),
+    ('transactions','transactions_by_owner'),('transactions','txn_insert'),('transactions','txn_update'),
+    ('transaction_lines','lines_by_txn'),('transaction_lines','lines_write'),
+    ('draft_entries','draft_entries_by_owner'),('draft_entries','draft_insert'),('draft_entries','draft_review'),
+    ('cash_confirmations','confirmations_read'),('cash_confirmations','confirmations_write'),
+    ('cash_confirmations','confirmations_update'),
+    ('audit_log','audit_read'),
+    ('app_users','users_read'),('app_users','users_write'),
+    ('settings','settings_read'),('settings','settings_write'),
+    ('user_owner_access','owner_access_read'),('user_owner_access','owner_access_write'),
+    ('period_closes','period_closes_read'),('period_closes','period_closes_insert'),
+    ('period_closes','period_closes_reopen'),
+    ('roles','roles_read'),('roles','roles_write'),
+    ('permissions','permissions_read'),('permissions','permissions_write'),
+    ('role_permissions','role_permissions_read'),('role_permissions','role_permissions_write');
+
+  select string_agg(p.tablename || '.' || p.policyname, ', ') into v_extra
+    from pg_policies p
+   where p.schemaname = 'sri_os'
+     and p.tablename in (select tbl from t_expect)
+     and not exists (select 1 from t_expect e where e.tbl = p.tablename and e.pol = p.policyname);
+  if v_extra is not null then
+    raise exception 'FAIL: มี policy เกินที่ตั้งใจ (จะ OR ทับสิทธิ์ใหม่): %', v_extra;
+  end if;
+
+  select string_agg(e.tbl || '.' || e.pol, ', ') into v_missing
+    from t_expect e
+   where not exists (
+     select 1 from pg_policies p
+      where p.schemaname = 'sri_os' and p.tablename = e.tbl and p.policyname = e.pol);
+  if v_missing is not null then
+    raise exception 'FAIL: policy ที่ต้องมีหายไป (ตารางอาจเข้าถึงไม่ได้เลย): %', v_missing;
+  end if;
+
+  -- ห้ามมี policy ของ cmd เดียวกันซ้อนกันบนตารางเดียว
+  select string_agg(tablename || ' · ' || cmd || ' ซ้อน ' || c::text || ' ตัว', ', ') into v_dup
+    from (
+      select tablename, cmd, count(*) c
+        from pg_policies
+       where schemaname = 'sri_os' and permissive = 'PERMISSIVE'
+         and tablename in (select tbl from t_expect)
+       group by tablename, cmd
+    ) x where c > 1;
+  if v_dup is not null then
+    raise exception 'FAIL: policy ซ้อน cmd เดียวกัน: %', v_dup;
+  end if;
+
+  raise notice 'ok 8 · ตารางที่ดูแลมี policy ครบและไม่เกิน (% ตัว) ไม่มี cmd ซ้อน',
+    (select count(*) from t_expect);
+end $$;
 
 do $$ begin raise notice '=== ผ่านทั้งหมด ==='; end $$;
 
