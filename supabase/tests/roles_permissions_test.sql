@@ -386,6 +386,11 @@ begin
 
   -- ย้ายสิทธิ์แล้วมีผลทันทีโดยไม่ต้องแก้โค้ด = เหตุผลทั้งหมดของ D-073
   perform pg_temp.expect_can('mgr', 'ledger.approve', false);
+
+  -- คืนให้เหมือน seed ไม่งั้นข้อถัดๆ ไปทดสอบบนตารางสิทธิ์ที่ถูกแก้ไปแล้ว
+  perform pg_temp.login('super');
+  insert into sri_os.role_permissions(role_key, permission_key) values ('manager', 'ledger.approve');
+  perform pg_temp.expect_can('mgr', 'ledger.approve', true);
   raise notice 'ok 7.7 · แก้ตารางสิทธิ์ได้เฉพาะ users.manage และมีผลทันที';
 end $$;
 
@@ -407,7 +412,8 @@ begin
     ('contacts','contacts_read'),('contacts','contacts_insert'),('contacts','contacts_update'),
     ('contact_links','contact_links_read'),('contact_links','contact_links_write'),
     ('transactions','transactions_by_owner'),('transactions','txn_insert'),('transactions','txn_update'),
-    ('transaction_lines','lines_by_txn'),('transaction_lines','lines_write'),
+    ('transaction_lines','lines_by_txn'),('transaction_lines','lines_insert'),
+    ('transaction_lines','lines_update'),('transaction_lines','lines_delete'),
     ('draft_entries','draft_entries_by_owner'),('draft_entries','draft_insert'),('draft_entries','draft_review'),
     ('cash_confirmations','confirmations_read'),('cash_confirmations','confirmations_write'),
     ('cash_confirmations','confirmations_update'),
@@ -455,6 +461,211 @@ begin
   raise notice 'ok 8 · ตารางที่ดูแลมี policy ครบและไม่เกิน (% ตัว) ไม่มี cmd ซ้อน',
     (select count(*) from t_expect);
 end $$;
+
+-- ============================================================
+-- 9 · ชั้นการมองเห็น — Manager เห็นแค่ทรัพย์ที่ตัวเองบริหาร · Staff อ่าน ledger ไม่ได้
+-- ============================================================
+
+-- ผู้จัดการคนที่สอง เพื่อพิสูจน์ว่าไม่เห็นข้ามกัน
+insert into t_uid(label) values ('mgr2');
+insert into auth.users(id) select id from t_uid where label = 'mgr2';
+insert into sri_os.app_users(id, email, display_name, role)
+values (pg_temp.uid('mgr2'), 'mgr2@test.local', 'mgr2', 'manager');
+insert into sri_os.user_owner_access(user_id, owner_id)
+select pg_temp.uid('mgr2'), id from sri_os.owners where code = 'SRI_CORP';
+
+-- ทรัพย์สามตัว: ของ mgr · ของ mgr2 · ยังไม่มอบหมาย
+insert into sri_os.assets(id, code, name, class_id, category_id, owner_id, manager_user_id)
+select x.id, x.code, x.name,
+       (select class_id from sri_os.asset_categories limit 1),
+       (select id from sri_os.asset_categories limit 1),
+       (select id from sri_os.owners where code = 'SRI_CORP'),
+       x.mgr
+  from (values
+    ('00000000-0000-0000-0000-00000000a001'::uuid, 'TST-A1', 'ทรัพย์ของ mgr',  pg_temp.uid('mgr')),
+    ('00000000-0000-0000-0000-00000000a002'::uuid, 'TST-A2', 'ทรัพย์ของ mgr2', pg_temp.uid('mgr2')),
+    ('00000000-0000-0000-0000-00000000a003'::uuid, 'TST-A3', 'ยังไม่มอบหมาย',  null)
+  ) as x(id, code, name, mgr);
+
+insert into sri_os.asset_valuations(asset_id, as_of, method, value)
+values ('00000000-0000-0000-0000-00000000a001', current_date, 'manual', 1000000),
+       ('00000000-0000-0000-0000-00000000a002', current_date, 'manual', 9000000);
+
+-- รายการเงิน 4 แบบ · ทุกอันลงโดย Management (ยกเว้น T4 ที่ mgr ลงเอง)
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, asset_id, attachments, created_by)
+select x.id, (select id from sri_os.owners where code = 'SUTEE'),
+       'inc.other', current_date, x.asset_id, array['e.pdf'], x.creator
+  from (values
+    ('00000000-0000-0000-0000-00000000c001'::uuid, '00000000-0000-0000-0000-00000000a001'::uuid, pg_temp.uid('mgmt')),
+    ('00000000-0000-0000-0000-00000000c002'::uuid, '00000000-0000-0000-0000-00000000a002'::uuid, pg_temp.uid('mgmt')),
+    ('00000000-0000-0000-0000-00000000c003'::uuid, null,                                          pg_temp.uid('mgmt')),
+    ('00000000-0000-0000-0000-00000000c004'::uuid, null,                                          pg_temp.uid('mgr'))
+  ) as x(id, asset_id, creator);
+
+-- บรรทัดบัญชี: คู่เดบิต/เครดิตที่ไม่ใช่บัญชีเงินสด (เลี่ยง invariant บรรทัดเงินสด)
+insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+select t.id, c.id,
+       case when c.rn = 1 then t.amt else 0 end,
+       case when c.rn = 2 then t.amt else 0 end
+  from (values
+    ('00000000-0000-0000-0000-00000000c001'::uuid, 100),
+    ('00000000-0000-0000-0000-00000000c002'::uuid, 900),
+    ('00000000-0000-0000-0000-00000000c003'::uuid,  10),
+    ('00000000-0000-0000-0000-00000000c004'::uuid,   7)
+  ) as t(id, amt)
+  cross join (
+    select id, row_number() over (order by code) rn
+      from sri_os.chart_of_accounts
+     where code not like '11%' order by code limit 2
+  ) c;
+
+set local role authenticated;
+
+-- 9.1 assets: Manager เห็นเฉพาะของตัวเอง · ไม่เห็นของ Manager อีกคน · ไม่เห็นที่ยังไม่มอบหมาย
+do $$
+declare v text;
+begin
+  perform pg_temp.login('mgr');
+  select string_agg(code, ',' order by code) into v
+    from sri_os.assets where code like 'TST-%';
+  if v is distinct from 'TST-A1' then
+    raise exception 'FAIL: Manager ควรเห็นเฉพาะ TST-A1 แต่เห็น %', coalesce(v, '(ไม่เห็นอะไร)');
+  end if;
+
+  perform pg_temp.login('mgr2');
+  select string_agg(code, ',' order by code) into v
+    from sri_os.assets where code like 'TST-%';
+  if v is distinct from 'TST-A2' then
+    raise exception 'FAIL: Manager คนที่สองควรเห็นเฉพาะ TST-A2 แต่เห็น %', coalesce(v, '(ไม่เห็นอะไร)');
+  end if;
+
+  perform pg_temp.login('mgmt');
+  if (select count(*) from sri_os.assets where code like 'TST-%') <> 3 then
+    raise exception 'FAIL: Management ต้องเห็นทรัพย์ทั้งพอร์ต';
+  end if;
+  raise notice 'ok 9.1 · Manager เห็นแค่ทรัพย์ที่ตัวเองบริหาร · ทรัพย์ที่ยังไม่มอบหมายไม่เห็น';
+end $$;
+
+-- 9.1b ตารางที่การอ่านถูกจำกัดขอบเขต ห้ามมี policy แบบ FOR ALL
+--      policy ALL เอา USING ไปใช้กับ SELECT ด้วย = ขอบเขตการอ่านถูกยกเลิกเงียบๆ
+--      (lines_write เดิมเป็น ALL/ledger.approve ทำให้ Manager รวมยอดทั้งพอร์ตได้)
+do $$
+declare v text;
+begin
+  select string_agg(tablename || '.' || policyname, ', ') into v
+    from pg_policies
+   where schemaname = 'sri_os'
+     and cmd = 'ALL'
+     and tablename in ('transactions', 'transaction_lines', 'assets',
+                       'asset_valuations', 'draft_entries');
+  if v is not null then
+    raise exception 'FAIL: policy FOR ALL บนตารางที่การอ่านถูกจำกัดขอบเขต: % → USING จะปล่อย SELECT ทุกแถว', v;
+  end if;
+  raise notice 'ok 9.1b · ไม่มี policy FOR ALL บนตารางที่การอ่านถูกจำกัดขอบเขต';
+end $$;
+
+-- 9.2 Manager รวมยอดทั้งพอร์ตไม่ได้ — ข้อนี้คือหัวใจ กั้นที่ row ไม่ใช่ที่หน้าจอ
+do $$
+declare v_txn text; v_sum numeric;
+begin
+  perform pg_temp.login('mgr');
+  select string_agg(right(id::text, 4), ',' order by id) into v_txn
+    from sri_os.transactions where id::text like '00000000-0000-0000-0000-00000000c%';
+  -- c001 = ทรัพย์ที่ดูแล · c004 = ที่ตัวเองลง · c002 (ทรัพย์คนอื่น) และ c003 (ไม่ผูกทรัพย์ คนอื่นลง) ต้องไม่เห็น
+  if v_txn is distinct from 'c001,c004' then
+    raise exception 'FAIL: Manager ควรเห็น c001,c004 แต่เห็น %', coalesce(v_txn, '(ไม่เห็นอะไร)');
+  end if;
+
+  select coalesce(sum(debit), 0) into v_sum from sri_os.transaction_lines;
+  if v_sum <> 107 then
+    raise exception 'FAIL: Manager รวมยอดได้ % ซึ่งไม่ใช่ 107 (= เฉพาะ c001 + c004) → รวมยอดทั้งพอร์ตได้', v_sum;
+  end if;
+
+  if (select count(*) from sri_os.asset_valuations) <> 1 then
+    raise exception 'FAIL: Manager เห็นมูลค่าทรัพย์ของคนอื่น';
+  end if;
+
+  -- ขาบวก: Management ต้องรวมได้ทั้งพอร์ต ไม่งั้นเทสต์ข้างบนผ่านเพราะปิดตายทุกคน
+  perform pg_temp.login('mgmt');
+  select coalesce(sum(debit), 0) into v_sum from sri_os.transaction_lines;
+  if v_sum < 1017 then
+    raise exception 'FAIL: Management รวมยอดทั้งพอร์ตไม่ได้ (ได้ %)', v_sum;
+  end if;
+  raise notice 'ok 9.2 · Manager รวมยอดได้แค่ส่วนของตัวเอง (107) · Management ได้ทั้งพอร์ต (%)', v_sum;
+end $$;
+
+-- 9.3 Staff: อ่าน ledger ไม่ได้เลย แต่อ่านข้อมูลอ้างอิงเพื่อคีย์ได้
+do $$
+begin
+  perform pg_temp.login('staff');
+  if (select count(*) from sri_os.transactions) <> 0 then
+    raise exception 'FAIL: Staff อ่าน transactions ได้ (ต้องได้ 0 แถวเสมอ)';
+  end if;
+  if (select count(*) from sri_os.transaction_lines) <> 0 then
+    raise exception 'FAIL: Staff อ่าน transaction_lines ได้ = รวมยอดเองได้';
+  end if;
+  if (select count(*) from sri_os.asset_valuations) <> 0 then
+    raise exception 'FAIL: Staff เห็นมูลค่าทรัพย์';
+  end if;
+  if (select count(*) from sri_os.bank_accounts) = 0 then
+    raise exception 'FAIL: Staff อ่านชื่อบัญชีธนาคารไม่ได้ = คีย์รายการไม่ได้';
+  end if;
+  if (select count(*) from sri_os.assets where code like 'TST-%') <> 3 then
+    raise exception 'FAIL: Staff อ่านชื่อทรัพย์ไม่ได้ = เลือกทรัพย์ตอนคีย์ไม่ได้';
+  end if;
+  if (select count(*) from sri_os.txn_types) = 0 or (select count(*) from sri_os.owners) = 0
+     or (select count(*) from sri_os.chart_of_accounts) = 0 then
+    raise exception 'FAIL: Staff อ่านตารางอ้างอิงไม่ได้';
+  end if;
+  raise notice 'ok 9.3 · Staff อ่าน ledger/มูลค่าไม่ได้ แต่อ่านข้อมูลอ้างอิงเพื่อคีย์ได้';
+end $$;
+
+-- 9.4 ผู้ใช้ที่ปิดใช้งานต้องไม่ได้สาขาอ้างอิงของ assets ไปด้วย
+do $$
+begin
+  perform pg_temp.login('mgr_inactive');
+  if (select count(*) from sri_os.assets) <> 0 then
+    raise exception 'FAIL: ผู้ใช้ที่ปิดใช้งานยังเห็นทรัพย์';
+  end if;
+  raise notice 'ok 9.4 · ผู้ใช้ที่ปิดใช้งานไม่เห็นอะไรเลย';
+end $$;
+
+-- 9.5 ร่าง: คนที่ไม่มี ledger.read เห็นแค่ของตัวเอง
+do $$
+declare n_staff int; n_mgr int;
+begin
+  perform pg_temp.login('staff');
+  select count(*) into n_staff from sri_os.draft_entries;
+  if n_staff = 0 then raise exception 'FAIL: Staff ไม่เห็นร่างของตัวเอง'; end if;
+  if exists (select 1 from sri_os.draft_entries where created_by is distinct from pg_temp.uid('staff')) then
+    raise exception 'FAIL: Staff เห็นร่างของคนอื่น';
+  end if;
+
+  perform pg_temp.login('mgr');
+  select count(*) into n_mgr from sri_os.draft_entries;
+  if n_mgr < n_staff then raise exception 'FAIL: Manager เห็นคิวร่างไม่ครบ (มี ledger.read)'; end if;
+  raise notice 'ok 9.5 · Staff เห็นร่างแค่ของตัวเอง · Manager เห็นคิวทั้งขอบเขต owner';
+end $$;
+
+-- 9.6 Manager ต้องอ่านแถวที่ตัวเองเพิ่งลงได้ (insert ... returning ต้องผ่าน policy ฝั่ง select)
+do $$
+declare v uuid;
+begin
+  perform pg_temp.login('mgr');
+  insert into sri_os.transactions(owner_id, txn_type_code, doc_date)
+  select id, 'inc.other', current_date from sri_os.owners where code = 'SUTEE'
+  returning id into v;
+  if v is null then raise exception 'FAIL: Manager อ่านรายการที่ตัวเองเพิ่งลงไม่ได้'; end if;
+
+  -- เส้นทาง post จริงเขียนบรรทัดบัญชีต่อท้ายและอ่านกลับด้วย ต้องไม่ติด policy
+  insert into sri_os.transaction_lines(transaction_id, coa_id, debit)
+  select v, id, 50 from sri_os.chart_of_accounts where code not like '11%' order by code limit 1
+  returning id into v;
+  if v is null then raise exception 'FAIL: Manager อ่านบรรทัดบัญชีที่ตัวเองเพิ่งลงไม่ได้'; end if;
+  raise notice 'ok 9.6 · created_by default auth.uid() ทำให้ insert ... returning (หัวรายการ + บรรทัด) ใช้ได้';
+end $$;
+
+reset role;
 
 do $$ begin raise notice '=== ผ่านทั้งหมด ==='; end $$;
 

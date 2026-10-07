@@ -24,6 +24,9 @@
 --      แม้ดีไซน์ใหม่จะย้ายไปเป็น users.manage (super_admin เท่านั้น) แล้ว
 --      ท้ายไฟล์จึงมี sweep: ลบทุก policy บนตารางที่ไฟล์นี้ดูแลซึ่งไม่อยู่ในรายการ
 --      สุดท้ายที่ประกาศไว้ → ชื่อที่ยังไม่รู้จักก็ไม่หลุดรอด และไฟล์นี้เป็นแหล่งความจริงเดียว
+--   7. ชั้น **การมองเห็น** (ลูกพี่สั่ง 07/10): portfolio.view_all · asset.view_assigned ·
+--      ledger.read · draft.read_own · Manager เห็นเฉพาะทรัพย์ที่ตัวเองบริหาร
+--      Staff อ่าน ledger ไม่ได้เลย แต่ยังอ่านข้อมูลอ้างอิงเพื่อคีย์ได้
 --
 -- สิ่งที่ migration นี้ **ไม่** ทำ และห้ามทำ:
 --   ไม่มี permission ที่ปิดกฎเงิน (invariant.skip · evidence.waive · delete.posted)
@@ -288,10 +291,21 @@ create policy txn_update on transactions
   using (fn_can('txn.void')) with check (fn_can('txn.void'));
 
 -- (8) บรรทัดบัญชี = ledger.approve (เขียนพร้อม post)
+--     **ห้ามใช้ FOR ALL** — policy แบบ ALL เอา USING ไปใช้กับ SELECT ด้วย
+--     ของเดิมเป็น ALL/ledger.approve ซึ่งแปลว่า Manager อ่าน transaction_lines ได้ทุกแถว
+--     แล้ว `select sum(debit) from transaction_lines` = ยอดรวมทั้งพอร์ต (เทสต์ 9.2 จับได้)
+--     การอ่านต้องมาจาก lines_by_txn ที่เดียว (ข้อ 11b)
 drop policy if exists lines_write on transaction_lines;
-create policy lines_write on transaction_lines
-  for all to authenticated
+drop policy if exists lines_insert on transaction_lines;
+create policy lines_insert on transaction_lines
+  for insert to authenticated with check (fn_can('ledger.approve'));
+drop policy if exists lines_update on transaction_lines;
+create policy lines_update on transaction_lines
+  for update to authenticated
   using (fn_can('ledger.approve')) with check (fn_can('ledger.approve'));
+drop policy if exists lines_delete on transaction_lines;
+create policy lines_delete on transaction_lines
+  for delete to authenticated using (fn_can('txn.void'));
 
 -- (9) audit log = คนที่เห็นข้อมูลทั้งบ้าน · ไม่มีใครแก้ได้
 drop policy if exists audit_read on audit_log;
@@ -433,6 +447,135 @@ create policy contact_links_write on contact_links
   using (fn_can('settings.manage')) with check (fn_can('settings.manage'));
 
 -- ============================================================
+-- 11b · ชั้นการมองเห็น (ลูกพี่สั่ง 07/10)
+--   "Manager ไม่สามารถดูภาพรวมการลงทุนได้ ดูได้แต่ทรัพย์สินที่บริหารจัดการ"
+--   "Staff ทำได้แค่ลงข้อมูล"
+--
+--   หลักสามข้อ
+--   1. ขอบเขตทรัพย์เป็นชั้น **เพิ่ม** ไม่ใช่ชั้นแทน — ต้องผ่าน fn_can_see_owner() ด้วยทุกครั้ง
+--   2. กั้นที่ row ไม่ใช่ที่หน้าจอ · ถ้า Manager ยังอ่าน transaction_lines ของทรัพย์คนอื่นได้
+--      ก็ `select sum(...)` รวมพอร์ตเองได้อยู่ดี แม้ไม่มีเมนูให้กด
+--   3. ทรัพย์ที่ยังไม่มอบหมาย (manager_user_id is null) Manager ต้องไม่เห็น
+--      — "ไม่มีใครดูแล" ไม่ใช่ "ของทุกคน"
+-- ============================================================
+
+-- created_by ต้องไม่ว่าง ไม่ใช่เรื่องความเรียบร้อยแต่เป็นเรื่องใช้งานได้จริง:
+-- Manager ที่คีย์รายการไม่ผูกทรัพย์ (เงินเดือน · ค่าธรรมเนียม) อ่านได้เฉพาะของตัวเอง
+-- ถ้า created_by ว่าง เขาจะอ่านแถวที่ตัวเองเพิ่งลงไม่ได้ และ `insert ... returning`
+-- จะ error เพราะ RETURNING ต้องผ่าน policy ฝั่ง select ด้วย
+alter table transactions   alter column created_by set default auth.uid();
+alter table draft_entries  alter column created_by set default auth.uid();
+
+-- ขอบเขตทรัพย์แบบเข้ม — ใช้กับทุกที่ที่มี "มูลค่า"
+create or replace function fn_can_see_asset(p_asset uuid) returns boolean
+language sql stable security definer set search_path = '' as $fn$
+  select sri_os.fn_can('portfolio.view_all')
+      or (
+           sri_os.fn_can('asset.view_assigned')
+           and exists (
+             select 1 from sri_os.assets a
+              where a.id = p_asset and a.manager_user_id = auth.uid()
+           )
+         );
+$fn$;
+comment on function fn_can_see_asset(uuid) is
+  'ขอบเขตทรัพย์: เห็นทั้งพอร์ต (portfolio.view_all) หรือเฉพาะที่ตัวเองถูกมอบหมาย · manager_user_id is null = ไม่มีใครเห็นนอกจากคนที่มี portfolio.view_all';
+
+-- รายการเงินหนึ่งรายการ ใครอ่านได้ — เขียนที่เดียว ใช้ทั้ง transactions และ transaction_lines
+-- **รับค่าของแถวเข้ามา ไม่ใช่ id** เพราะถ้าฟังก์ชันไปอ่านตารางเอง แถวที่กำลัง insert
+-- จะยังมองไม่เห็นใน snapshot ของคำสั่งเดียวกัน → `insert ... returning` จะพังทันที
+-- (เจอตอนเทสต์ 9.6 · RETURNING ต้องผ่าน policy ฝั่ง select ด้วย)
+drop function if exists fn_can_read_txn(uuid);
+create or replace function fn_can_read_txn(p_owner uuid, p_asset uuid, p_created_by uuid)
+returns boolean
+language sql stable set search_path = '' as $fn$
+  select sri_os.fn_can_see_owner(p_owner)                -- ชั้นเดิม ยังต้องผ่าน
+     and sri_os.fn_can('ledger.read')                    -- Staff ตกที่ชั้นนี้ = 0 แถวเสมอ
+     and (
+          sri_os.fn_can('portfolio.view_all')
+       or p_created_by = auth.uid()                      -- รายการที่ไม่ผูกทรัพย์ เห็นได้เฉพาะของตัวเอง
+       or (p_asset is not null and sri_os.fn_can_see_asset(p_asset))
+     );
+$fn$;
+comment on function fn_can_read_txn(uuid, uuid, uuid) is
+  'แหล่งความจริงเดียวของ "ใครอ่านรายการเงินแถวนี้ได้" · ใช้ทั้ง transactions และ transaction_lines เพื่อไม่ให้รวมยอดผ่าน lines ได้';
+
+-- assets: Manager เห็นเฉพาะที่ตัวเองดูแล
+-- Staff ต้องเห็น **ชื่อ** ทรัพย์ไม่งั้นคีย์ไม่ได้ → สาขาอ้างอิงสำหรับคนที่ไม่มีสิทธิ์ขอบเขตทรัพย์เลย
+-- ผูกกับ fn_can('txn.create') ไม่ใช่ "ไม่มีสิทธิ์อะไร" เพราะผู้ใช้ที่ปิดใช้งานต้องไม่เห็นอะไรทั้งนั้น
+-- มูลค่าทั้งหมดอยู่ที่ asset_valuations / transaction_lines ซึ่งสาขานี้เข้าไม่ถึง
+drop policy if exists assets_by_owner on assets;
+create policy assets_by_owner on assets
+  for select to authenticated
+  using (
+    fn_can_see_owner(owner_id)
+    and (
+         fn_can_see_asset(id)
+      or (fn_can('txn.create') and not fn_can('asset.view_assigned'))
+    )
+  );
+
+-- asset_valuations = มูลค่า → ขอบเขตทรัพย์แบบเข้ม ไม่มีสาขาอ้างอิง
+drop policy if exists valuations_by_asset on asset_valuations;
+create policy valuations_by_asset on asset_valuations
+  for select to authenticated
+  using (exists (
+    select 1 from assets a
+     where a.id = asset_id and fn_can_see_owner(a.owner_id) and fn_can_see_asset(a.id)
+  ));
+
+drop policy if exists transactions_by_owner on transactions;
+create policy transactions_by_owner on transactions
+  for select to authenticated
+  using (fn_can_read_txn(owner_id, asset_id, created_by));
+
+-- บรรทัดบัญชีต้องกั้นด้วยกฎเดียวกับหัวรายการ ไม่งั้นรวมยอดผ่าน lines ได้ทั้งพอร์ต
+drop policy if exists lines_by_txn on transaction_lines;
+create policy lines_by_txn on transaction_lines
+  for select to authenticated
+  using (exists (
+    select 1 from transactions t
+     where t.id = transaction_id
+       and fn_can_read_txn(t.owner_id, t.asset_id, t.created_by)
+  ));
+
+-- ร่าง: คนที่มี ledger.read เห็นทั้งคิวในขอบเขต owner · ที่เหลือเห็นแค่ของตัวเอง
+drop policy if exists draft_entries_by_owner on draft_entries;
+create policy draft_entries_by_owner on draft_entries
+  for select to authenticated
+  using (
+    fn_can_see_owner(owner_id)
+    and (
+         fn_can('ledger.read')
+      or (fn_can('draft.read_own') and created_by = auth.uid())
+    )
+  );
+
+-- ============================================================
+-- 11c · กันช่องโหว่แบบเดียวกับ access_manage บนตารางที่ชั้นการมองเห็นพึ่งพา
+--   policy เป็น permissive และ OR กัน · SELECT/ALL ที่ค้างอยู่หนึ่งตัวบน assets หรือ
+--   asset_valuations ลบล้างขอบเขตทรัพย์ทั้งหมด · ผมมองของจริงไม่เห็น จึงให้ migration
+--   **หยุด** และบอกชื่อออกมา ดีกว่าปล่อยผ่านแล้วคิดว่ากั้นแล้ว
+--   (policy ฝั่งเขียนไม่รื้อให้ เพราะสิทธิ์โมดูลทรัพย์ยังไม่ได้ออกแบบ · D-083)
+-- ============================================================
+do $$
+declare v text;
+begin
+  select string_agg(tablename || '.' || policyname || ' (' || cmd || ')', ', ') into v
+    from pg_policies
+   where schemaname = 'sri_os'
+     and tablename in ('assets', 'asset_valuations')
+     and cmd in ('SELECT', 'ALL')
+     and (tablename, policyname) not in (values
+           ('assets',           'assets_by_owner'),
+           ('asset_valuations', 'valuations_by_asset')
+         );
+  if v is not null then
+    raise exception 'พบ policy อ่านที่ค้างอยู่บนตารางทรัพย์ จะ OR ทับขอบเขตของ Manager: % · ให้ตรวจแล้ว drop หรือเพิ่มเข้า allow-list ก่อนรัน migration นี้', v;
+  end if;
+end $$;
+
+-- ============================================================
 -- 12 · SWEEP — ตารางที่ไฟล์นี้ดูแล ต้องมี policy เท่าที่ประกาศไว้ข้างล่างเท่านั้น
 --
 --   เหตุผล: policy เป็น permissive และ OR กัน · ของเก่าที่กว้างกว่าหนึ่งตัวที่ค้างอยู่
@@ -473,7 +616,9 @@ begin
              ('transactions',       'txn_insert'),
              ('transactions',       'txn_update'),
              ('transaction_lines',  'lines_by_txn'),
-             ('transaction_lines',  'lines_write'),
+             ('transaction_lines',  'lines_insert'),
+             ('transaction_lines',  'lines_update'),
+             ('transaction_lines',  'lines_delete'),
              ('draft_entries',      'draft_entries_by_owner'),
              ('draft_entries',      'draft_insert'),
              ('draft_entries',      'draft_review'),
