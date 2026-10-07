@@ -1,4 +1,5 @@
 import type { TxTypeKey } from "@/lib/rules/tx-rules";
+import type { PostedClearing } from "@/lib/ledger/types";
 
 export type LedgerStatus = "wait" | "saved" | "done" | "late" | "off";
 
@@ -73,29 +74,47 @@ export const CF_ACCOUNTS = [
   { name: "เบ็ญจพร - BBL", open: 318900, in: 8000, out: 0, close: 326900 },
 ];
 
-/** ยืนยันรับ-จ่าย · จับคู่กับ statement */
-export const CASH_GROUPS = [
+/**
+ * ยืนยันรับ-จ่าย · จับคู่กับ statement
+ *
+ * กลุ่มผูกกับ **รหัสบัญชี** (`bankAccountId`) ไม่ใช่ชื่อธนาคาร — ชื่อเป็นแค่สิ่งที่แสดง
+ * หน้าจอหาชื่อจาก resolver ตอนวาด ไม่เก็บชื่อไว้ที่นี่ เพราะชื่อเปลี่ยนได้ รหัสไม่เปลี่ยน
+ * (ผูกกับสตริงชื่อ = เงินลอยไม่รู้ว่าเข้าบัญชีไหนจริง ขัด Money Invariant 2)
+ * ทุกแถวถือรหัสบัญชีของตัวเองด้วย เพราะแถวคือสิ่งที่ส่งเข้า `buildClearing()` — มีทดสอบกันไม่ให้แถวกับกลุ่มขัดกัน
+ *
+ * ยอดที่ยังค้างอยู่ไม่เก็บเป็นข้อความในแถว (เดิมมี `partial: "รับบางส่วน คงค้าง ฿ 15,000"`)
+ * เพราะคือยอดที่ engine เป็นคนตัดสิน — ข้อความที่พิมพ์ไว้จะขัดกับ engine เมื่อไรก็ได้
+ */
+export const CASH_GROUPS: {
+  bankAccountId: string;
+  system: number;
+  stmt: string;
+  match: string;
+  matched: boolean;
+  rows: PendingCashRow[];
+}[] = [
   {
-    bank: "SRI - SCB",
+    bankAccountId: "b1",
     system: 2340120,
     stmt: "2,340,120.00",
     match: "ตรงกัน",
     matched: true,
     rows: [
-      { id: "cc1", name: "ดอกเบี้ยขายฝาก งวด 9", sub: "ทาวน์โฮมตัวอย่าง B", due: "16/09/2026", expect: 36000, actual: "36,000.00", date: "16/09/2026", checked: true, partial: "" },
-      { id: "cc2", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "SRI Corporation", due: "15/09/2026", expect: -8600, actual: "8,600.00", date: "15/09/2026", checked: true, partial: "" },
-      { id: "cc3", name: "ค่าเช่าอาคารพาณิชย์ E", sub: "SRI Corporation", due: "05/09/2026", expect: 45000, actual: "30,000.00", date: "12/09/2026", checked: false, partial: "รับบางส่วน คงค้าง ฿ 15,000" },
+      { id: "cc1", name: "ดอกเบี้ยขายฝาก งวด 9", sub: "ทาวน์โฮมตัวอย่าง B", ownerId: "corp", typeKey: "income", subCode: "inc.interest_srr", accruedAmount: 36000, postedClearings: [], assetId: "th_b", contactId: "c2", bankAccountId: "b1", attachments: ["ตารางงวดสัญญาขายฝาก.pdf"], due: "16/09/2026", actual: "36,000.00", date: "16/09/2026", checked: true },
+      { id: "cc2", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "SRI Corporation", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", bankAccountId: "b1", attachments: ["บิลค่าน้ำไฟ-ก.ย..pdf"], due: "15/09/2026", actual: "8,600.00", date: "15/09/2026", checked: true },
+      // ตั้งใจไม่มีหลักฐาน — นิติบุคคลต้องแนบสลิปก่อนจึงยืนยันได้ ห้ามเติมให้ผ่าน
+      { id: "cc3", name: "ค่าเช่าอาคารพาณิชย์ E", sub: "SRI Corporation", ownerId: "corp", typeKey: "income", subCode: "inc.rent", accruedAmount: 45000, postedClearings: [], assetId: "rent3", contactId: "c2", bankAccountId: "b1", due: "05/09/2026", actual: "30,000.00", date: "12/09/2026" },
     ],
   },
   {
-    bank: "ธนากร - BBL 888",
+    bankAccountId: "b4",
     system: 1286500,
     stmt: "1,274,500.00",
     match: "ต่าง ฿ 12,000",
     matched: false,
     rows: [
-      { id: "cc4", name: "ค่าเช่าคอนโดตัวอย่าง C", sub: "คุณสมชาย (ผู้เช่า)", due: "01/09/2026", expect: 12000, actual: "12,000.00", date: "03/09/2026", checked: true, partial: "" },
-      { id: "cc5", name: "ค่าส่วนกลาง Q3", sub: "คอนโดตัวอย่าง C", due: "05/09/2026", expect: -9800, actual: "9,800.00", date: "05/09/2026", checked: false, partial: "" },
+      { id: "cc4", name: "ค่าเช่าคอนโดตัวอย่าง C", sub: "คุณสมชาย (ผู้เช่า)", ownerId: "thanakorn", typeKey: "income", subCode: "inc.rent", accruedAmount: 12000, postedClearings: [], assetId: "rent1", contactId: "c1", bankAccountId: "b4", due: "01/09/2026", actual: "12,000.00", date: "03/09/2026", checked: true },
+      { id: "cc5", name: "ค่าส่วนกลาง Q3", sub: "คอนโดตัวอย่าง C", ownerId: "thanakorn", typeKey: "expense", subCode: "exp.common", accruedAmount: 9800, postedClearings: [], assetId: "rent1", bankAccountId: "b4", due: "05/09/2026", actual: "9,800.00", date: "05/09/2026" },
     ],
   },
 ];
@@ -157,11 +176,22 @@ export const APPROVALS: Approval[] = [
 ];
 
 /**
- * รายการค้างรับ-ค้างจ่ายที่ยังไม่เคยระบุบัญชี รอยืนยันว่าเงินเคลื่อนจริง
+ * รายการค้างรับ-ค้างจ่ายที่รอยืนยันว่าเงินเคลื่อนจริง
  *
- * ขั้นยืนยันเป็นขั้นที่ทำให้งบกระแสเงินสดวิ่ง จึงต้องรู้บัญชีเสมอ — รายการเหล่านี้
- * คีย์ตอนยังไม่มีขาเงินสด จึงไม่มีบัญชีมาด้วย ต้องให้เลือกตอนยืนยัน
+ * ขั้นยืนยันเป็นขั้นที่ทำให้งบกระแสเงินสดวิ่ง จึงต้องรู้บัญชีเสมอ — รายการที่คีย์ตอนยังไม่มีขาเงินสด
+ * ไม่มีบัญชีมาด้วย (`bankAccountId` ว่าง) ต้องให้เลือกตอนยืนยัน
  * `ownerId` ใช้กรองตัวเลือก: เงินของคนหนึ่งจะไปโผล่ในบัญชีของอีกคนไม่ได้
+ *
+ * **ข้อมูลที่กติกาใช้ตัดสินต้องเดินทางมากับตัวรายการ** (เหตุผลเดียวกับ `Approval.notYetPaid` /
+ * `bankAccountId` / `attachments`) — ไม่ใช่ให้ตัวยืนยันเดาจากชื่อรายการหรือจากข้อความที่แสดง:
+ * - `typeKey` / `subCode`  ตารางกฎใช้หาบัญชีพักและทางล้าง · เดาผิดคือล้างผิดบัญชี
+ * - `accruedAmount`        ยอดที่ตั้งค้างไว้ตอนต้นทาง (บวกเสมอ) ทิศทางรับ/จ่ายอ่านจากตารางกฎ ไม่เก็บเครื่องหมายซ้ำ
+ * - `postedClearings`      ประวัติการยืนยันที่ post แล้ว · engine ใช้กันยืนยันซ้ำและล้างเกิน
+ *                          ห้ามให้หน้าจอสรุปเป็น "ยอดที่เคยล้าง" ส่งไปเอง ถ้าละไว้ engine ต้องปฏิเสธ ไม่ใช่เดาว่า []
+ * - `attachments`          ฝั่ง `corporate_strict` กติกาของ `buildClearing()` ใช้ตัดสินว่ายืนยันได้ไหม
+ *                          ไม่มีฟิลด์นี้ทุกรายการของนิติบุคคลจะถูกยืนยันโดยไม่มีหลักฐาน = override กติกาที่ห้าม override
+ *                          ฝั่งบุคคลเว้นว่างได้ — ใครบังคับหรือไม่ engine เป็นคนตัดสิน
+ * - `assetId` / `contactId` บัญชีย่อยรายทรัพย์และกติกาคู่ค้าของนิติบุคคล
  */
 export type PendingCashRow = {
   id: string;
@@ -169,13 +199,25 @@ export type PendingCashRow = {
   sub: string;
   ownerId: string;
   due: string;
-  /** บวก = รับเข้า · ลบ = จ่ายออก */
-  expect: number;
+  typeKey: TxTypeKey;
+  subCode: string;
+  accruedAmount: number;
+  postedClearings: PostedClearing[];
+  assetId?: string;
+  contactId?: string;
+  /**
+   * รหัสบัญชีที่เงินเข้า-ออก — ไม่ใช่ชื่อ · ว่างได้เฉพาะรายการที่ยังไม่เคยระบุบัญชี (ต้องเลือกตอนยืนยัน)
+   * ถ้าไม่ว่าง ใช้ค่านี้เสมอ ไม่ให้ช่องเลือกบัญชีทับ
+   */
+  bankAccountId?: string;
+  attachments?: string[];
+  /** ค่าเริ่มต้นของช่องกรอก — ผู้ใช้แก้ได้ */
   actual: string;
   date: string;
+  checked?: boolean;
 };
 
 export const UNASSIGNED_CASH_ROWS: PendingCashRow[] = [
-  { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", due: "30/09/2026", expect: -8600, actual: "8,600.00", date: "30/09/2026" },
-  { id: "cu2", name: "ค่าเช่าคอนโดตัวอย่าง C เดือน ก.ย.", sub: "คุณสมชาย (ผู้เช่า) · ตั้งค้างรับไว้", ownerId: "thanakorn", due: "01/09/2026", expect: 12000, actual: "12,000.00", date: "03/09/2026" },
+  { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", attachments: ["บิลค่าน้ำไฟ-ก.ย..pdf"], due: "30/09/2026", actual: "8,600.00", date: "30/09/2026" },
+  { id: "cu2", name: "ค่าเช่าคอนโดตัวอย่าง C เดือน ก.ย.", sub: "คุณสมชาย (ผู้เช่า) · ตั้งค้างรับไว้", ownerId: "thanakorn", typeKey: "income", subCode: "inc.rent", accruedAmount: 12000, postedClearings: [], assetId: "rent1", contactId: "c1", due: "01/09/2026", actual: "12,000.00", date: "03/09/2026" },
 ];
