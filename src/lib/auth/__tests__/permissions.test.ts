@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { PERMISSIONS } from "../permissions";
+import { PERMISSIONS, isPermission } from "../permissions";
 import { diffPermissions, isInSync, permissionKeysFromMigration } from "../permission-check";
 import { ROUTE_ACCESS, canOpen, hasAccess, routeFor } from "../routes";
 import { checkSupabaseEnv } from "@/lib/supabase/env";
@@ -21,6 +21,18 @@ describe("permissions: union type ตรงกับ migration ที่ seed �
     const keys = permissionSql.flatMap(permissionKeysFromMigration);
     const diff = diffPermissions(keys);
     expect(diff).toEqual({ missingInTs: [], missingInDb: [] });
+  });
+
+  it("มี 15 สิทธิ์ รวม asset.draft · asset.manage · asset.value ที่สะกดตรง migration", () => {
+    expect(PERMISSIONS).toHaveLength(15);
+    for (const k of ["asset.draft", "asset.manage", "asset.value"]) {
+      expect(isPermission(k)).toBe(true);
+      expect(permissionSql.flatMap(permissionKeysFromMigration)).toContain(k);
+    }
+    // ชื่อใกล้เคียงที่สะกดผิดต้องไม่ผ่าน (ตัวพิมพ์ · จุด · ขีดล่าง)
+    for (const bad of ["Asset.draft", "asset_manage", "asset.values", "asset.valuation"]) {
+      expect(isPermission(bad)).toBe(false);
+    }
   });
 
   it("ไม่ถือบล็อก role_permissions เป็นรายการสิทธิ์", () => {

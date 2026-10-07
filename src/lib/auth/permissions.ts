@@ -9,6 +9,9 @@
  * เทียบให้และพังทันทีถ้าไม่ตรง (เพิ่มสิทธิ์ใน DB แล้วลืมเพิ่มที่นี่ = พัง ไม่ใช่เงียบ)
  */
 export const PERMISSIONS = [
+  "asset.draft",
+  "asset.manage",
+  "asset.value",
   "asset.view_assigned",
   "cash.confirm",
   "draft.read_own",

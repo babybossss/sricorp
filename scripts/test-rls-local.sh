@@ -80,7 +80,7 @@ SQL
 # migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพราะหลายไฟล์ของชุดนี้ sweep/revoke
 # ของที่ไฟล์ก่อนหน้าสร้างไว้ · ถ้ารันเรียงชื่อปกติ ไฟล์ seed ที่มาทีหลังจะทับผลลัพธ์
 # (เดิมเหตุผลคือ "ให้แทรกสถานะจริงของ project ก่อน" — ไฟล์นั้นถูกลบแล้ว ดูหัวไฟล์)
-UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql 20261007000003_permission_tables_read_only.sql 20261007000004_rule_tables_read_only.sql 20261007000005_owners_rule_columns_immutable.sql 20261007000006_asset_taxonomy_rls.sql 20261007000007_function_execute_acl.sql"}
+UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql 20261007000003_permission_tables_read_only.sql 20261007000004_rule_tables_read_only.sql 20261007000005_owners_rule_columns_immutable.sql 20261007000006_asset_taxonomy_rls.sql 20261007000007_function_execute_acl.sql 20261008000000_asset_permissions.sql 20261008000001_valuation_revision.sql"}
 in_under_test() { case " $UNDER_TEST " in *" $1 "*) return 0;; *) return 1;; esac; }
 LOG=${TMPDIR:-/tmp}/srios-mig.log
 
