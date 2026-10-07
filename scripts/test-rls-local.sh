@@ -41,8 +41,18 @@ create or replace function auth.uid() returns uuid
 language sql stable as $fn$ select nullif(current_setting('test.uid', true), '')::uuid $fn$;
 create schema if not exists sri_os;
 grant usage on schema sri_os, auth to anon, authenticated, service_role;
-alter default privileges in schema sri_os grant all on tables to authenticated;
-alter default privileges in schema sri_os grant all on sequences to authenticated;
+-- ** สิทธิ์ต้องตรงกับ project จริง ห้ามกว้างกว่า **
+-- เดิมบรรทัดนี้เป็น `grant all on tables` ซึ่ง `all` รวม TRUNCATE (และ REFERENCES/TRIGGER)
+-- ที่ของจริงไม่ได้ให้ → ผู้ตรวจรายงานว่า authenticated ล้างสมุดด้วย TRUNCATE ได้
+-- ทั้งที่เป็นข้อบกพร่องของ harness ไม่ใช่ของ DB (false positive รอบที่สอง นับรวมเรื่อง RLS)
+-- harness ที่หลวมกว่า production ร้ายกว่าตัว finding: เทสต์ที่ผ่านบนนี้เชื่อไม่ได้
+-- ของจริงให้แก่ authenticated เท่าที่ PostgREST ต้องใช้ = DML สี่ตัว + ลำดับเลขสำหรับ nextval
+-- (เทสต์ P1 ใน zz_line_integrity_test.sql assert ว่าไม่มี TRUNCATE — ถ้าวันหนึ่งมีใคร
+--  เผลอ grant เพิ่ม ทั้งที่นี่และที่ของจริง เทสต์จะแดง)
+alter default privileges in schema sri_os
+  grant select, insert, update, delete on tables to authenticated;
+alter default privileges in schema sri_os
+  grant usage, select on sequences to authenticated;
 SQL
 
 # migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพื่อให้แทรกสถานะจริงของ project
@@ -78,6 +88,10 @@ for t in "$REPO"/supabase/tests/*_test.sql; do
   echo "== test $(basename "$t")"
   if psql_run < "$t"; then :; else fail=1; fi
 done
+
+# เคสสอง session ขนาน — พิสูจน์ด้วย psql เดียวไม่ได้ (ต้องมีสองธุรกรรมคาบเกี่ยวกันจริง)
+echo "== test two-session (ลงหัวรายการกับบรรทัดต่าง db transaction)"
+if DB="$DB" bash "$REPO/scripts/test-two-session-local.sh" "$DB"; then :; else fail=1; fi
 
 admin "dropdb --if-exists $DB" >/dev/null
 exit $fail

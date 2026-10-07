@@ -306,6 +306,322 @@ begin
   raise notice 'ok L13 · post ผ่าน savepoint/exception handler ได้ (777)';
 end $$;
 
+-- ============================================================
+-- รอบสาม · รูที่ผู้ตรวจรันได้จริง (L14–L22 + P1/P2)
+-- ============================================================
+
+-- ---------- L14 · ปลอม created_at ตอน INSERT (ทั้งสองตาราง) ----------
+-- นี่คือคานงัดของการโจมตีสอง session: เงื่อนไข "ลงในธุรกรรมเดียวกัน" เดิมอ่าน created_at
+-- ซึ่งผู้เรียกเขียนได้ตอน INSERT (trigger เดิมเป็น BEFORE UPDATE เท่านั้น)
+begin;
+-- ใช้ owner ฝั่งบุคคล เพราะ L15 ต้อง UPDATE แถวนี้ และ corporate_strict ห้ามแก้รายการที่ post แล้ว
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, created_at)
+values ('00000000-0000-0000-0000-0000000f0014',
+        (select id from sri_os.owners where code = 'SUTEE'),
+        'inc.other', current_date, array['e.pdf'], '2001-01-01 00:00:00+00');
+insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, created_at)
+select '00000000-0000-0000-0000-0000000f0014', c.id,
+       case when c.rn = 1 then 140 else 0 end,
+       case when c.rn = 2 then 140 else 0 end,
+       '2001-01-01 00:00:00+00'
+  from (select id, row_number() over (order by code) rn
+          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+commit;
+
+do $$
+declare v_txn timestamptz; v_line timestamptz; v_w text;
+begin
+  select created_at, write_txn_id::text into v_txn, v_w from sri_os.transactions
+   where id = '00000000-0000-0000-0000-0000000f0014';
+  select min(created_at) into v_line from sri_os.transaction_lines
+   where transaction_id = '00000000-0000-0000-0000-0000000f0014';
+
+  if v_txn < now() - interval '1 day' then
+    raise exception 'FAIL: created_at ของหัวรายการถูกผู้เรียกกำหนดได้ตอน INSERT (%)', v_txn;
+  end if;
+  if v_line is null or v_line < now() - interval '1 day' then
+    raise exception 'FAIL: created_at ของบรรทัดบัญชีถูกผู้เรียกกำหนดได้ตอน INSERT (%)', v_line;
+  end if;
+  if v_w is null then
+    raise exception 'FAIL: write_txn_id ไม่ถูกตั้ง = หลักฐาน "ธุรกรรมเดียวกัน" ไม่มีอยู่';
+  end if;
+  raise notice 'ok L14 · created_at ทั้งสองตารางถูกเขียนทับด้วย now() · write_txn_id ถูกตั้งให้ (%)', v_w;
+end $$;
+
+-- ---------- L15 · ปลอม created_at / write_txn_id ตอน UPDATE ----------
+do $$
+declare v_before timestamptz; v_after timestamptz; v_w text; v_w2 text;
+begin
+  select created_at, write_txn_id::text into v_before, v_w from sri_os.transactions
+   where id = '00000000-0000-0000-0000-0000000f0014';
+  update sri_os.transactions
+     set created_at = '2001-01-01 00:00:00+00', write_txn_id = pg_current_xact_id()
+   where id = '00000000-0000-0000-0000-0000000f0014';
+  select created_at, write_txn_id::text into v_after, v_w2 from sri_os.transactions
+   where id = '00000000-0000-0000-0000-0000000f0014';
+  if v_after <> v_before then raise exception 'FAIL: created_at แก้ได้ตอน UPDATE (% → %)', v_before, v_after; end if;
+  if v_w2 <> v_w then
+    raise exception 'FAIL: write_txn_id แก้ได้ตอน UPDATE (% → %) = ทำให้หัวรายการเก่า "กลายเป็นของธุรกรรมนี้" แล้วยัดบรรทัดได้', v_w, v_w2;
+  end if;
+  raise notice 'ok L15 · created_at และ write_txn_id ถูก pin ตอน UPDATE';
+end $$;
+
+-- ---------- L16 · หัวรายการ void ที่ไม่มีบรรทัดเลย ต้อง commit ไม่ผ่าน ----------
+-- เดิม trg_posted_needs_lines ข้าม status ที่ไม่ใช่ posted → แถวนี้ commit ผ่าน
+-- แล้วกลายเป็น "ที่ว่าง" ให้ธุรกรรมอื่นมาวางบรรทัดแล้ว flip เป็น posted
+\set ON_ERROR_STOP 0
+begin;
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, status)
+values ('00000000-0000-0000-0000-0000000f0016',
+        (select id from sri_os.owners where code = 'SRI_HOLDING'),
+        'inc.other', current_date, array['e.pdf'], 'void');
+commit;
+\set ON_ERROR_STOP 1
+
+do $$
+begin
+  if exists (select 1 from sri_os.transactions where id = '00000000-0000-0000-0000-0000000f0016') then
+    raise exception 'FAIL: หัวรายการ status=void ที่มี 0 บรรทัด commit ผ่าน = ที่วางบรรทัดข้ามธุรกรรม';
+  end if;
+  raise notice 'ok L16 · หัวรายการ void 0 บรรทัด commit ไม่ผ่าน (บังคับทุกสถานะ ไม่ใช่แค่ posted)';
+end $$;
+
+-- ---------- L17 · void → posted ย้อนไม่ได้ ทั้ง management และ super_admin ----------
+-- รายได้นับซ้ำ: ขากลับรายการยังอยู่ แต่ต้นฉบับถูกปลุกกลับมา posted → debit 1,400 แทน 700
+-- เป็น Money Invariant จึงต้องบังคับ **ทุก owner** ไม่ใช่แค่ corporate_strict
+insert into auth.users(id) values
+  ('00000000-0000-0000-0000-0000000f1a01'), ('00000000-0000-0000-0000-0000000f1a02')
+on conflict do nothing;
+insert into sri_os.app_users(id, email, display_name, role, is_active) values
+  ('00000000-0000-0000-0000-0000000f1a01', 'sa@zz',  'ZZ SuperAdmin', 'super_admin', true),
+  ('00000000-0000-0000-0000-0000000f1a02', 'mgmt@zz','ZZ Management', 'management',  true)
+on conflict (id) do update set role = excluded.role, is_active = true;
+insert into sri_os.user_owner_access(user_id, owner_id)
+select u, o.id from (values
+  ('00000000-0000-0000-0000-0000000f1a01'::uuid), ('00000000-0000-0000-0000-0000000f1a02'::uuid)
+) as x(u) cross join sri_os.owners o
+on conflict do nothing;
+
+-- รายการของ **บุคคล** (SUTEE) ที่ posted แล้ว → void
+-- ใช้ฝั่งบุคคลเพราะ fn_corporate_immutable ไม่แตะ owner ฝั่งนี้เลย
+-- ถ้าเทสต์นี้ผ่านแปลว่ากฎ "void ปลายทาง" บังคับกับทุก owner จริง ไม่ได้ผ่านเพราะกติกานิติบุคคล
+update sri_os.transactions set status = 'void'
+ where id = '00000000-0000-0000-0000-0000000f0006';
+
+do $$
+declare r record; v_status text; n int;
+begin
+  -- ชั้นที่ 1: superuser ของ cluster (ข้าม RLS ทุกอย่าง) ก็ยังทำไม่ได้
+  -- = กฎอยู่ที่ trigger ไม่ได้อยู่ที่ RLS หรือตารางสิทธิ์
+  begin
+    update sri_os.transactions set status = 'posted'
+     where id = '00000000-0000-0000-0000-0000000f0006';
+    raise exception 'FAIL: superuser ปลุกรายการที่ void แล้วกลับเป็น posted ได้';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+    if sqlerrm not like '%void%' then
+      raise exception 'FAIL: error ไม่ได้บอกเรื่อง void: %', sqlerrm;
+    end if;
+  end;
+
+  -- ชั้นที่ 2: role จริงของแอป · ต้องล้มที่ trigger ไม่ใช่ล้มเพราะ RLS มองไม่เห็นแถว
+  -- (ถ้าล้มเพราะ RLS เทสต์จะผ่านทั้งที่ยังไม่มีกฎ void — จึงแยกสองกรณีออกจากกัน)
+  for r in select * from (values
+      ('00000000-0000-0000-0000-0000000f1a02'::uuid, 'management'),
+      ('00000000-0000-0000-0000-0000000f1a01'::uuid, 'super_admin')
+    ) as x(uid, label)
+  loop
+    begin
+      perform set_config('test.uid', r.uid::text, true);
+      execute 'set local role authenticated';
+      update sri_os.transactions set status = 'posted'
+       where id = '00000000-0000-0000-0000-0000000f0006';
+      get diagnostics n = row_count;
+      execute 'reset role';
+      if n > 0 then
+        raise exception 'FAIL: % ปลุกรายการที่ void แล้วกลับเป็น posted ได้ = รายได้นับซ้ำ', r.label;
+      end if;
+      raise exception 'FAIL: RLS บล็อก % ก่อนถึง trigger (% แถว) — เทสต์นี้จึงไม่ได้พิสูจน์กฎ void', r.label, n;
+    exception when raise_exception then
+      if sqlerrm like 'FAIL:%' then raise; end if;
+      if sqlerrm not like '%void%' then
+        raise exception 'FAIL: error ของ % ไม่ได้บอกเรื่อง void: %', r.label, sqlerrm;
+      end if;
+    end;
+
+    select status::text into v_status from sri_os.transactions
+     where id = '00000000-0000-0000-0000-0000000f0006';
+    if v_status <> 'void' then
+      raise exception 'FAIL: สถานะกลายเป็น % หลัง % ลองปลุก', v_status, r.label;
+    end if;
+  end loop;
+  raise notice 'ok L17 · void → posted ล้มทั้ง superuser · management · super_admin (owner ฝั่งบุคคล = บังคับทุก owner)';
+end $$;
+
+-- ---------- L18 · ขาบวก: void ของรายการที่ถูกต้องยังทำได้ (ไม่กันแน่นเกิน) ----------
+begin;
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
+values ('00000000-0000-0000-0000-0000000f0018',
+        (select id from sri_os.owners where code = 'SRI_HOLDING'),
+        'inc.other', current_date, array['e.pdf']);
+insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+select '00000000-0000-0000-0000-0000000f0018', c.id,
+       case when c.rn = 1 then 700 else 0 end,
+       case when c.rn = 2 then 700 else 0 end
+  from (select id, row_number() over (order by code) rn
+          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+commit;
+
+do $$
+declare v text;
+begin
+  update sri_os.transactions set status = 'void'
+   where id = '00000000-0000-0000-0000-0000000f0018';
+  select status::text into v from sri_os.transactions
+   where id = '00000000-0000-0000-0000-0000000f0018';
+  if v <> 'void' then raise exception 'FAIL: void รายการปกติไม่ได้ (status %)', v; end if;
+  raise notice 'ok L18 · void รายการที่ถูกต้องยังทำได้ (บรรทัดยังอยู่ครบ = void จริงๆ หน้าตาแบบนี้)';
+end $$;
+
+-- ---------- L19 · ขาบวก: reverse ที่ถูกต้องยังข้ามหลักฐานได้ ----------
+-- ต้นฉบับ: corporate posted 700 พร้อมหลักฐาน · ขากลับ: source=reverse ชี้ต้นฉบับ ไม่มีไฟล์แนบ
+begin;
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
+values ('00000000-0000-0000-0000-0000000f0019',
+        (select id from sri_os.owners where code = 'SRI_HOLDING'),
+        'inc.other', current_date, array['invoice.pdf']);
+insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+select '00000000-0000-0000-0000-0000000f0019', c.id,
+       case when c.rn = 1 then 700 else 0 end,
+       case when c.rn = 2 then 700 else 0 end
+  from (select id, row_number() over (order by code) rn
+          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+commit;
+
+begin;
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
+values ('00000000-0000-0000-0000-0000000f001a',
+        (select id from sri_os.owners where code = 'SRI_HOLDING'),
+        'inc.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0019', '{}');
+insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+select '00000000-0000-0000-0000-0000000f001a', l.coa_id, l.credit, l.debit
+  from sri_os.transaction_lines l where l.transaction_id = '00000000-0000-0000-0000-0000000f0019';
+update sri_os.transactions set status = 'void' where id = '00000000-0000-0000-0000-0000000f0019';
+commit;
+
+do $$
+declare n int;
+begin
+  select count(*) into n from sri_os.transaction_lines
+   where transaction_id = '00000000-0000-0000-0000-0000000f001a';
+  if n <> 2 then
+    raise exception 'FAIL: reverse ที่ถูกต้อง (ไม่มีไฟล์แนบ แต่ชี้ต้นฉบับจริง) ลงไม่ได้ · เหลือ % บรรทัด', n;
+  end if;
+  raise notice 'ok L19 · reverse ที่ถูกต้องยังข้ามกติกาหลักฐานได้ (หลักฐานคือต้นฉบับ)';
+end $$;
+
+-- ---------- L20 · source=reverse ที่ reverses_id เป็น null ----------
+-- รูของผู้ตรวจ: posted 5,000,000 ในสมุดนิติบุคคล ไม่มีหลักฐาน ไม่มีคู่ค้า
+do $$
+begin
+  begin
+    insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, attachments)
+    values ('00000000-0000-0000-0000-0000000f0020',
+            (select id from sri_os.owners where code = 'SRI_CORP'),
+            'inc.other', current_date, 'reverse', '{}');
+    raise exception 'FAIL: source=reverse ที่ไม่ชี้รายการไหนเลย ลงได้ = ข้ามหลักฐานด้วยการอ้างคำว่า reverse';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
+  if exists (select 1 from sri_os.transactions where id = '00000000-0000-0000-0000-0000000f0020') then
+    raise exception 'FAIL: แถวยังถูกสร้าง';
+  end if;
+  raise notice 'ok L20 · source=reverse ที่ reverses_id เป็น null ลงไม่ได้';
+end $$;
+
+-- ---------- L21 · reverse ที่ชี้ไปรายการของผู้ถืออื่น ----------
+do $$
+begin
+  begin
+    insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
+    values ('00000000-0000-0000-0000-0000000f0021',
+            (select id from sri_os.owners where code = 'SRI_CORP'),
+            'inc.other', current_date, 'reverse',
+            '00000000-0000-0000-0000-0000000f0006',   -- รายการของ SUTEE
+            '{}');
+    raise exception 'FAIL: กลับรายการข้ามสมุดผู้ถือได้ = ยอดของอีกคนหายไปโดยไม่มีใครรู้';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
+  raise notice 'ok L21 · reverse ที่ชี้ไปรายการของผู้ถืออื่นลงไม่ได้';
+end $$;
+
+-- ---------- L22 · reverse ตัวที่สองของรายการเดิม (กลับรายการซ้ำสองรอบ) ----------
+do $$
+begin
+  begin
+    insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
+    values ('00000000-0000-0000-0000-0000000f0022',
+            (select id from sri_os.owners where code = 'SRI_HOLDING'),
+            'inc.other', current_date, 'reverse',
+            '00000000-0000-0000-0000-0000000f0019',   -- ถูกกลับรายการด้วย f001a แล้ว
+            '{}');
+    raise exception 'FAIL: กลับรายการเดิมได้สองรอบ = เครดิตซ้ำ';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
+  raise notice 'ok L22 · กลับรายการเดิมรอบที่สองลงไม่ได้';
+end $$;
+
+-- ---------- P1 · authenticated ต้องไม่มี TRUNCATE บนตารางการเงิน ----------
+-- ผู้ตรวจรายงานว่ามี — เป็น false positive ที่เกิดจาก harness เอง
+-- (scripts/test-rls-local.sh ให้ `grant all` ซึ่งรวม TRUNCATE กว้างกว่า project จริง)
+-- เทสต์นี้ทำให้ harness ที่หลวมกว่า production แดงทันที ไม่ปล่อยให้ไปเดาอีกรอบ
+do $$
+declare v text; n int;
+begin
+  select string_agg(table_name || '.' || privilege_type, ', '), count(*) into v, n
+    from information_schema.role_table_grants
+   where table_schema = 'sri_os'
+     and grantee = 'authenticated'
+     and table_name in ('transactions', 'transaction_lines', 'audit_log',
+                        'draft_entries', 'cash_confirmations', 'period_closes')
+     and privilege_type in ('TRUNCATE', 'REFERENCES', 'TRIGGER');
+  if n > 0 then
+    raise exception 'FAIL: authenticated มีสิทธิ์ที่ของจริงไม่ได้ให้ (% รายการ): % · TRUNCATE ล้างสมุดได้โดยไม่ยิง trigger และไม่เหลือ audit', n, v;
+  end if;
+
+  -- ขาบวก: ถ้าไม่มีสิทธิ์อะไรเลย เทสต์ข้างบนจะผ่านฟรีๆ ทั้งที่ harness พัง
+  select count(*) into n
+    from information_schema.role_table_grants
+   where table_schema = 'sri_os' and grantee = 'authenticated'
+     and table_name = 'transactions'
+     and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE');
+  if n <> 4 then
+    raise exception 'FAIL: authenticated มีสิทธิ์ DML บน transactions แค่ % ตัว (ต้อง 4) = harness ไม่ตรงกับของจริง เทสต์เชื่อไม่ได้', n;
+  end if;
+  raise notice 'ok P1 · authenticated มี DML สี่ตัว ไม่มี TRUNCATE/REFERENCES/TRIGGER';
+end $$;
+
+-- ---------- P2 · TRUNCATE ถูกบล็อกที่ DB แม้สิทธิ์จะเปิด ----------
+-- รันในฐานะ superuser ของ cluster = สิทธิ์เต็ม · ถ้ายังล้มแปลว่ากันที่ trigger จริง
+-- ไม่ได้ขึ้นกับว่าใคร grant อะไร (หลักเดียวกับที่เลือก trigger แทน RLS)
+do $$
+declare r text; n int;
+begin
+  foreach r in array array['transactions', 'transaction_lines', 'audit_log'] loop
+    begin
+      execute format('truncate table sri_os.%I cascade', r);
+      raise exception 'FAIL: TRUNCATE sri_os.% สำเร็จ = ล้างสมุดได้โดยไม่ยิง trigger ไม่เหลือ audit', r;
+    exception when raise_exception then
+      if sqlerrm like 'FAIL:%' then raise; end if;
+    end;
+  end loop;
+  select count(*) into n from sri_os.transactions;
+  if n = 0 then raise exception 'FAIL: ไม่มีรายการเหลือเลย = TRUNCATE ลงไปแล้ว'; end if;
+  raise notice 'ok P2 · TRUNCATE ตารางการเงินล้มทุกตาราง (% รายการยังอยู่)', n;
+end $$;
+
 -- ---------- L7 · การแก้บรรทัดต้องเหลือร่องรอยใน audit_log ----------
 do $$
 declare n int;
