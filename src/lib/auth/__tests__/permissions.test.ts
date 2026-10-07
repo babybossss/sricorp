@@ -23,9 +23,9 @@ describe("permissions: union type ตรงกับ migration ที่ seed �
     expect(diff).toEqual({ missingInTs: [], missingInDb: [] });
   });
 
-  it("มี 15 สิทธิ์ รวม asset.draft · asset.manage · asset.value ที่สะกดตรง migration", () => {
-    expect(PERMISSIONS).toHaveLength(15);
-    for (const k of ["asset.draft", "asset.manage", "asset.value"]) {
+  it("มี 16 สิทธิ์ รวม asset.draft · asset.manage · asset.value · asset.assign_manager ที่สะกดตรง migration", () => {
+    expect(PERMISSIONS).toHaveLength(16);
+    for (const k of ["asset.draft", "asset.manage", "asset.value", "asset.assign_manager"]) {
       expect(isPermission(k)).toBe(true);
       expect(permissionSql.flatMap(permissionKeysFromMigration)).toContain(k);
     }

@@ -293,11 +293,14 @@ begin
   select id into v_own from sri_os.owners where code = 'SRI_CORP';
   select id, class_id into v_cat, v_cls from sri_os.asset_categories order by code limit 1;
 
+  -- ลูกพี่เปลี่ยนคำตัดสิน (7 ต.ค.): Management มอบหมายผู้บริหารทรัพย์ได้ด้วย
+  -- สิทธิ์แยกเป็น asset.assign_manager (Management + Super Admin) ไม่ใช่ users.manage
+  -- เหตุผลเดิมที่กันไว้ยังอยู่: Manager/Staff ต้องแจกสิทธิ์เห็นมูลค่าให้ตัวเองไม่ได้ (เคส S5b)
   perform pg_temp.login('mgmt');
-  perform pg_temp.must_fail('Management ย้าย manager_user_id', format(
+  perform pg_temp.must_rows('Management ย้าย manager_user_id', format(
     'update sri_os.assets set manager_user_id = %L where id = %L',
-    pg_temp.uid('mgmt'), '00000000-0000-0000-0000-00000000e003'));
-  perform pg_temp.must_fail('Management ตั้ง manager_user_id ตอนสร้างทรัพย์', format(
+    pg_temp.uid('mgmt'), '00000000-0000-0000-0000-00000000e003'), 1);
+  perform pg_temp.must_pass('Management ตั้ง manager_user_id ตอนสร้างทรัพย์', format(
     'insert into sri_os.assets(code, name, class_id, category_id, owner_id, manager_user_id) values (''SMK-ASG'', ''x'', %L, %L, %L, %L)',
     v_cls, v_cat, v_own, pg_temp.uid('mgr')));
 
@@ -305,7 +308,7 @@ begin
   perform pg_temp.must_rows('Super Admin มอบหมายผู้บริหาร', format(
     'update sri_os.assets set manager_user_id = %L where id = %L',
     pg_temp.uid('mgr'), '00000000-0000-0000-0000-00000000e003'), 1);
-  raise notice 'ok S5 · มอบหมายผู้บริหารได้เฉพาะ users.manage (Management ทำไม่ได้ ทั้งตอน insert และ update)';
+  raise notice 'ok S5 · Management และ Super Admin มอบหมายผู้บริหารได้ (asset.assign_manager)';
 end $$;
 
 -- ============================================================
