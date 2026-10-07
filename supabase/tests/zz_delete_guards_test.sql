@@ -977,14 +977,16 @@ end $$;
 --      อย่าง fn_lines_immutable_after_post ที่ปฏิเสธเฉพาะรายการที่ post แล้ว)
 --
 --      **รายชื่อนี้คือของที่ตัดสินแล้วถึงรอบนี้** ถ้าเพิ่มตารางประวัติการเงินใหม่
---      แล้วไม่กันลบ ข้อนี้จะไม่จับให้ — ต้องเติมชื่อเข้ามาเอง (ดูรายงานท้ายงาน
---      เรื่อง contracts/schedules ที่ยังไม่ได้ตัดสิน จึงยังไม่อยู่ในลิสต์นี้)
+--      แล้วไม่กันลบ ข้อนี้จะไม่จับให้ — ต้องเติมชื่อเข้ามาเอง
+--      contracts/schedules เข้ามาในรอบ 20261008000004 (ตัดสินแล้วว่าปิด DELETE
+--      แต่ **UPDATE ยังเปิด** เพราะต้องเลื่อนงวด/แก้อัตราได้ — เทสต์เต็มอยู่ที่
+--      supabase/tests/zz_history_guards_test.sql · ข้อนี้ตรวจแต่ด่าน DELETE/TRUNCATE)
 -- ============================================================
 do $$
 declare r text; v text := '';
 begin
   foreach r in array array['transactions', 'transaction_lines', 'asset_valuations',
-                           'cash_confirmations'] loop
+                           'cash_confirmations', 'contracts', 'schedules'] loop
     if not exists (
       select 1 from pg_trigger tg join pg_proc p on p.oid = tg.tgfoid
        where tg.tgrelid = ('sri_os.' || r)::regclass and not tg.tgisinternal
@@ -1005,7 +1007,7 @@ begin
   if v <> '' then
     raise exception 'FAIL: ตารางประวัติการเงินที่ยังลบได้: %', v;
   end if;
-  raise notice 'ok Z1 · ตารางประวัติการเงินที่ตัดสินแล้ว 4 ตาราง มีด่าน DELETE ระดับแถว + กัน TRUNCATE ครบ';
+  raise notice 'ok Z1 · ตารางประวัติการเงินที่ตัดสินแล้ว 6 ตาราง (รวม contracts/schedules) มีด่าน DELETE ระดับแถว + กัน TRUNCATE ครบ';
 end $$;
 
 do $$ begin raise notice '=== delete guards ผ่านทั้งหมด ==='; end $$;
