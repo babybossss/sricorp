@@ -316,9 +316,11 @@ begin
   -- H4b ขาบวก: settings.manage ต้องเรียกได้จริง (ไม่ใช่ปิดตายจนรายงานใช้ไม่ได้)
   foreach r in array array['mgmt', 'super'] loop
     perform pg_temp.login(r);
+    -- 5 ข้อตั้งแต่ 20261008000002 (เพิ่มธง valuations_present แยกจาก valuations_fresh)
+    -- ตัวเลขตรงนี้คือ canary: ธงที่หายไปเงียบๆ ต้องทำให้เทสต์แดง
     select count(*) into n from sri_os.fn_health_check();
-    if n <> 4 then
-      raise exception 'FAIL: % เรียก fn_health_check ได้ % แถว (ต้องได้ 4) → หน้า Data health พัง', r, n;
+    if n <> 5 then
+      raise exception 'FAIL: % เรียก fn_health_check ได้ % แถว (ต้องได้ 5) → หน้า Data health พัง', r, n;
     end if;
   end loop;
 

@@ -291,14 +291,25 @@ end $$;
 --      วางไว้ก่อน T6/T7 เพราะยังรันเป็น superuser อยู่
 -- ============================================================
 do $$
-declare v_id uuid;
+declare v_id uuid; v_rev int;
 begin
   -- 8.1 ไม่ส่ง revision = เส้นทางปกติ ต้องได้เลขถัดไปให้เอง (ไม่ใช่ error ไม่ใช่ null)
-  insert into sri_os.asset_valuations(asset_id, as_of, method, value)
-  values ('00000000-0000-0000-0000-0000000d0001', current_date - 3, 'appraisal', 181)
-  returning id into v_id;
-  if (select revision from sri_os.asset_valuations where id = v_id) <> 3 then
-    raise exception 'FAIL: ไม่ส่ง revision มา ต้องได้ 3 (ต่อจาก 2)';
+  --     ลงใน sub-transaction แล้วม้วนกลับ เพื่อคืนสภาพให้ T6 นับยอดได้ตรง
+  --     (เดิมคืนสภาพด้วย delete ท้ายบล็อก · ตั้งแต่ 20261008000002 ลบไม่ได้แล้ว
+  --      ทุก role รวม superuser → ต้องเลิกพึ่ง delete ไม่ใช่ไปปิด trigger)
+  begin
+    insert into sri_os.asset_valuations(asset_id, as_of, method, value)
+    values ('00000000-0000-0000-0000-0000000d0001', current_date - 3, 'appraisal', 181)
+    returning id, revision into v_id, v_rev;
+    if v_rev <> 3 then
+      raise exception 'FAIL: ไม่ส่ง revision มา ต้องได้ 3 (ต่อจาก 2) ได้ %', v_rev;
+    end if;
+    raise exception 'T8_1_UNDO';   -- ตั้งใจ raise เพื่อม้วน sub-transaction นี้ทิ้ง
+  exception when raise_exception then
+    if sqlerrm <> 'T8_1_UNDO' then raise; end if;
+  end;
+  if exists (select 1 from sri_os.asset_valuations where id = v_id) then
+    raise exception 'FAIL: แถว 8.1 ยังอยู่ → T6 จะนับยอดเพี้ยน';
   end if;
 
   -- 8.2 ส่ง revision มาเอง = ปฏิเสธ (ไม่งั้นส่งเลขต่ำกว่าเดิมได้ แล้ว "ล่าสุด" ชี้ไปแถวเก่า)
@@ -349,8 +360,6 @@ begin
   exception when check_violation then null;
   end;
 
-  -- คืนสภาพให้ T6 นับยอดได้ตรง (ลบแถว 8.1 ออก — ยังเป็น superuser จึงทำได้)
-  delete from sri_os.asset_valuations where id = v_id;
   raise notice 'ok T8 · ไม่ส่ง revision = ระบบออกให้ · ส่งมาเอง/ไม่ส่ง value,as_of,method/update = ปฏิเสธทุกทาง';
 end $$;
 
