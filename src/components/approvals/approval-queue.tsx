@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { ReviewPanel } from "./review-panel";
+import { previewApproval } from "./approval-preview";
+import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { DialogPrimitive } from "@/components/ui/dialog";
 import { TYPE_PILL } from "@/lib/tone";
 import { useApp } from "@/lib/store";
@@ -27,7 +29,23 @@ export function ApprovalQueue() {
   /** แถวที่กางดูอยู่ในแผงขวา — null = ยังไม่ได้กางอะไร */
   const [reviewAt, setReviewAt] = React.useState<number | null>(null);
 
+  /*
+    ปุ่มอนุมัติทุกจุด (แถว · ที่เลือก · ทั้งหมด · แผงตรวจ) ถาม engine ตัวเดียวกัน
+    รายการที่พรีวิวไม่ได้ = ยังไม่รู้ว่าจะลงบัญชีอย่างไร → อนุมัติไม่ได้ ไม่ว่าจะกดจากทางไหน
+  */
+  const blocked = React.useMemo(
+    () =>
+      new Map(
+        APPROVALS.flatMap((a) => {
+          const p = previewApproval(a, MOCK_RESOLVER);
+          return p.canApprove ? [] : [[a.id, p.blockedReason ?? ""] as const];
+        })
+      ),
+    []
+  );
+
   const selected = APPROVALS.filter((a) => sel[a.id]);
+  const selectedBlocked = selected.filter((a) => blocked.has(a.id));
   const selSum = selected.reduce((t, a) => t + Math.abs(a.amount), 0);
   const allSum = APPROVALS.reduce((t, a) => t + Math.abs(a.amount), 0);
 
@@ -45,6 +63,7 @@ export function ApprovalQueue() {
             เลือกทั้งหมด
           </Button>
           <Button
+            disabled={blocked.size > 0}
             onClick={() =>
               ask({
                 title: "ยืนยันอนุมัติทั้งหมด",
@@ -61,6 +80,14 @@ export function ApprovalQueue() {
           </Button>
         </div>
       </div>
+
+      {blocked.size > 0 ? (
+        <div role="alert" className="rounded-card border border-neg bg-neg-bg p-[14px_18px] text-base leading-7 text-neg-fg">
+          <b>มี {blocked.size} รายการข้อมูลไม่ครบ อนุมัติไม่ได้</b> — ระบบยังไม่รู้ว่าจะลงบัญชีอย่างไร
+          จึงปิดปุ่ม &ldquo;อนุมัติทั้งหมด&rdquo; ไว้ ต้องให้ผู้สร้างเติมข้อมูลก่อน
+          (กดชื่อรายการเพื่อดูเหตุผล)
+        </div>
+      ) : null}
 
       <TableShell>
         <Table minWidth={1180}>
@@ -99,6 +126,9 @@ export function ApprovalQueue() {
                     >
                       <span className="font-semibold underline decoration-line underline-offset-4">{a.detail}</span>
                       <span className="text-sm text-ink-400">{a.source}</span>
+                      {blocked.has(a.id) ? (
+                        <Pill className="mt-1 border-neg bg-neg-bg text-neg-fg">ข้อมูลไม่ครบ อนุมัติไม่ได้</Pill>
+                      ) : null}
                     </button>
                   </Td>
                   <Td className="whitespace-nowrap">
@@ -132,6 +162,7 @@ export function ApprovalQueue() {
                       </Button>
                       <Button
                         size="sm"
+                        disabled={blocked.has(a.id)}
                         onClick={() =>
                           ask({
                             title: "ยืนยันอนุมัติรายการนี้",
@@ -187,6 +218,7 @@ export function ApprovalQueue() {
         <div className="fixed bottom-6 left-[280px] right-6 z-40 flex flex-wrap items-center gap-4 rounded-card bg-ink-900 p-[14px_20px] text-white shadow-bar">
           <div className="text-base font-semibold">
             เลือก {selected.length} รายการ ฿ {selSum.toLocaleString("en-US")}
+            {selectedBlocked.length ? ` · ข้อมูลไม่ครบ ${selectedBlocked.length} รายการ อนุมัติไม่ได้` : ""}
           </div>
           <div className="ml-auto flex gap-2.5">
             <Button
@@ -210,7 +242,8 @@ export function ApprovalQueue() {
             </Button>
             <Button
               variant="secondary"
-              className="border-white bg-white text-brand-600"
+              className="border-white bg-white text-brand-600 disabled:border-line disabled:bg-canvas disabled:text-ink-400"
+              disabled={selectedBlocked.length > 0}
               onClick={() =>
                 ask({
                   title: "ยืนยันอนุมัติรายการที่เลือก",

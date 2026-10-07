@@ -4,7 +4,7 @@ import * as React from "react";
 import { TX_TYPES, impactLines, REQUIREMENT_LABEL, type TxTypeKey } from "@/lib/rules/tx-rules";
 import { HOLDERS, entityById } from "@/lib/mock/entities";
 import { ASSETS } from "@/lib/mock/assets";
-import { useOrderedBanks } from "@/lib/store";
+import { useOrderedBanks, useApp } from "@/lib/store";
 import { Field } from "@/components/ui/field";
 import { Input, AmountInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { TYPE_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import { ContactPicker } from "./contact-picker";
+import { bankChoices, bankDirectionLabel } from "./bank-field";
 import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
 import { JournalPreview } from "./journal-preview";
@@ -50,17 +51,9 @@ export function StepType({ api, onPicked, narrow }: { api: TxFormApi; onPicked?:
   );
 }
 
-/** ขั้น 2 — ผู้ถือกรรมสิทธิ์ & บัญชี */
+/** ขั้น 2 — ผู้ถือกรรมสิทธิ์ (บัญชีธนาคารอยู่ขั้นรายละเอียด เพราะขึ้นกับว่าเงินเคลื่อนจริงหรือยัง) */
 export function StepHolder({ api }: { api: TxFormApi }) {
-  const allBanks = useOrderedBanks(true);
   const isCorp = api.draft.holderId === "corp";
-
-  // เห็นเฉพาะบัญชีของผู้ถือที่เลือก — บัญชีของคนอื่นเลือกไม่ได้ตั้งแต่ต้น
-  const banks = allBanks.filter((b) => b.ownerId === api.draft.holderId);
-
-  React.useEffect(() => {
-    if (!api.draft.bankId && banks.length) api.patch({ bankId: banks[0].id });
-  }, [api, banks]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -92,21 +85,6 @@ export function StepHolder({ api }: { api: TxFormApi }) {
           ? "ถือในชื่อนิติบุคคล: ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้) และระบุคู่ค้าก่อนส่งอนุมัติ"
           : "ถือในชื่อบุคคล: เงินยังเป็นกองกลางของครอบครัว แนบหลักฐานภายหลังได้ แต่ต้องระบุคู่ค้าเพื่อการติดตาม"}
       </div>
-
-      <Field
-        label="บัญชีธนาคาร"
-        required
-        hint="เห็นเฉพาะบัญชีของผู้ถือที่เลือก · เรียงตามลำดับที่ตั้งไว้ใน ตั้งค่า › บัญชีธนาคาร"
-        error={banks.length === 0 ? "ผู้ถือรายนี้ยังไม่มีบัญชีที่เปิดใช้งาน" : undefined}
-      >
-        <Select value={api.draft.bankId} onChange={(e) => api.pickBank(e.target.value)} disabled={banks.length === 0}>
-          {banks.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </Select>
-      </Field>
     </div>
   );
 }
@@ -114,6 +92,11 @@ export function StepHolder({ api }: { api: TxFormApi }) {
 /** ขั้น 3 — รายละเอียด (หมวดย่อยผูกกับประเภทตามตารางกฎ) */
 export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; contactLayer?: number; narrow?: boolean }) {
   const { draft, sub, subs, requires, patch } = api;
+  const orderedBanks = useOrderedBanks(false);
+  const bankOff = useApp((st) => st.bankOff);
+  // เงินเคลื่อนจริงเมื่อติ๊กยืนยันแล้ว หรือหมวดนี้ตั้งค้างไม่ได้ (ต้องเป็นเงินสดเสมอ)
+  const moneyMoved = !(draft.notYetPaid && api.canAccrue);
+  const banks = bankChoices(orderedBanks, (id) => !!bankOff[id], draft.holderId, draft.bankId);
   const needsContact = requires("contact");
   const needsAsset = requires("asset");
   // ขายทรัพย์: ยอดเงินมาจาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงด้านล่าง ไม่ให้พิมพ์ทับ
@@ -175,6 +158,32 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           )}
         </span>
       </label>
+
+      {/*
+        บัญชีธนาคาร — จำเป็นเมื่อเงินเคลื่อนจริง (ติ๊กแล้ว) · ไม่จำเป็นเมื่อยังค้างรับ-ค้างจ่าย
+        ไม่เลือกให้เอง: บัญชีที่ระบบเดาให้ = ยอดธนาคารที่กระทบยอดไม่ได้ทันทีที่เดาผิด
+        ว่าพอไหม engine เป็นคนตัดสินตอนกดบันทึก (ปุ่มไม่ได้ถามช่องนี้)
+      */}
+      <Field
+        label={bankDirectionLabel(sub)}
+        required={moneyMoved}
+        hint={
+          moneyMoved
+            ? "เห็นเฉพาะบัญชีของผู้ถือที่เลือก ที่ยังเปิดใช้งาน · ต้องระบุ เพราะเงินเคลื่อนจริงแล้ว"
+            : "ยังไม่ต้องเลือก — ค้างรับ-ค้างจ่ายยังไม่มีขาเงินสด · จะต้องระบุบัญชีตอนยืนยันว่าเงินเข้า/ออกจริง"
+        }
+        error={banks.length === 0 ? "ผู้ถือรายนี้ยังไม่มีบัญชีที่เปิดใช้งาน" : undefined}
+      >
+        <Select value={draft.bankId} onChange={(e) => api.pickBank(e.target.value)} disabled={banks.length === 0}>
+          <option value="">{moneyMoved ? "— เลือกบัญชี —" : "— ยังไม่ระบุ —"}</option>
+          {banks.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+              {bankOff[b.id] ? " (ปิดใช้งานแล้ว)" : ""}
+            </option>
+          ))}
+        </Select>
+      </Field>
 
       {/* Backlog ข้อ 1 — หมวดย่อยมาจากตารางกฎของประเภทที่เลือก ไม่ใช่ dropdown อิสระ */}
       <Field
@@ -436,7 +445,7 @@ export function ImpactPreview({ subCode, accrued }: { subCode: string; accrued?:
 /** ขั้น 4 — แนบไฟล์ & ยืนยัน */
 export function StepConfirm({ api }: { api: TxFormApi }) {
   const { draft, sub, missing, patch } = api;
-  const banks = useOrderedBanks(true);
+  const banks = useOrderedBanks(false);
   const holder = HOLDERS.find((h) => h.id === draft.holderId);
   const bank = banks.find((b) => b.id === draft.bankId);
   const asset = ASSETS.find((a) => a.id === draft.assetId);
@@ -446,7 +455,10 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
   const summary = [
     { k: "ประเภท", v: typeLabel ? `${typeLabel.label} · ${sub?.label ?? "—"}` : "—" },
     { k: "ถือในชื่อ", v: holder?.name ?? "—" },
-    { k: "บัญชี", v: bank?.name ?? "—" },
+    {
+      k: bankDirectionLabel(sub),
+      v: bank?.name ?? (draft.notYetPaid && api.canAccrue ? "ยังไม่ระบุ (ค้างรับ-ค้างจ่าย)" : "ยังไม่ได้เลือก"),
+    },
     { k: "จำนวนเงิน", v: draft.amount ? `฿ ${draft.amount}` : "—" },
     { k: "วันที่เอกสาร / เงินจริง", v: `${draft.docDate} · ${draft.notYetPaid ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}` },
     { k: "โปรเจค (ทรัพย์)", v: asset?.name ?? "—" },

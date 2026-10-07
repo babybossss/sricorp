@@ -121,14 +121,49 @@ export type Approval = {
    * ไม่งั้นสิ่งที่คนอนุมัติเห็น กับสิ่งที่คนคีย์ตั้งใจ จะเป็นคนละอย่างได้
    */
   notYetPaid?: boolean;
+  /**
+   * บัญชีธนาคารที่คนคีย์เลือก — รับเข้าหรือจ่ายออกตามประเภทรายการ
+   *
+   * ต้องเก็บมากับตัวรายการ ไม่ใช่ให้แผงตรวจหยิบ "บัญชีแรกที่เปิดอยู่ของผู้ถือ" มาแสดง —
+   * ไม่งั้นสิ่งที่คนอนุมัติเห็น กับสิ่งที่คนคีย์เลือกจริง จะเป็นคนละบัญชีได้
+   *
+   * เว้นว่างได้เฉพาะรายการค้างรับ-ค้างจ่าย (`notYetPaid`) ที่ยังไม่มีขาเงินสด
+   * รายการที่มีขาเงินสดแต่ไม่มีบัญชี = ข้อมูลไม่ครบ ต้องปฏิเสธ ห้ามเดา
+   * (ใครตัดสินว่าพอไหม: `buildPostingDraft()` ไม่ใช่หน้าจอ)
+   */
+  bankAccountId?: string;
 };
 
 export const APPROVALS: Approval[] = [
-  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026", assetId: "rent2", contactId: "c2" },
+  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026", assetId: "rent2", contactId: "c2", bankAccountId: "b1" },
   { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026", assetId: "rent2", contactId: "c2", notYetPaid: true },
-  { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026", assetId: "rent1", contactId: "c2", notYetPaid: true },
-  { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026", contactId: "c2" },
-  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026", contactId: "c2" },
-  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026", assetId: "land_d", contactId: "c2" },
-  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2", notYetPaid: true },
+  { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026", assetId: "rent1", contactId: "c2", notYetPaid: true, bankAccountId: "b4" },
+  { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026", contactId: "c2", bankAccountId: "b1" },
+  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026", contactId: "c2", bankAccountId: "b1" },
+  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026", assetId: "land_d", contactId: "c2", bankAccountId: "b1" },
+  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2", notYetPaid: true, bankAccountId: "b1" },
+];
+
+/**
+ * รายการค้างรับ-ค้างจ่ายที่ยังไม่เคยระบุบัญชี รอยืนยันว่าเงินเคลื่อนจริง
+ *
+ * ขั้นยืนยันเป็นขั้นที่ทำให้งบกระแสเงินสดวิ่ง จึงต้องรู้บัญชีเสมอ — รายการเหล่านี้
+ * คีย์ตอนยังไม่มีขาเงินสด จึงไม่มีบัญชีมาด้วย ต้องให้เลือกตอนยืนยัน
+ * `ownerId` ใช้กรองตัวเลือก: เงินของคนหนึ่งจะไปโผล่ในบัญชีของอีกคนไม่ได้
+ */
+export type PendingCashRow = {
+  id: string;
+  name: string;
+  sub: string;
+  ownerId: string;
+  due: string;
+  /** บวก = รับเข้า · ลบ = จ่ายออก */
+  expect: number;
+  actual: string;
+  date: string;
+};
+
+export const UNASSIGNED_CASH_ROWS: PendingCashRow[] = [
+  { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", due: "30/09/2026", expect: -8600, actual: "8,600.00", date: "30/09/2026" },
+  { id: "cu2", name: "ค่าเช่าคอนโดตัวอย่าง C เดือน ก.ย.", sub: "คุณสมชาย (ผู้เช่า) · ตั้งค้างรับไว้", ownerId: "thanakorn", due: "01/09/2026", expect: 12000, actual: "12,000.00", date: "03/09/2026" },
 ];

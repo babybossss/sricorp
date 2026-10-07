@@ -10,7 +10,7 @@ import { useTxForm } from "@/components/form/use-tx-form";
 import { StepType, StepHolder, StepDetail, StepConfirm } from "@/components/form/tx-steps";
 import { Toast } from "@/components/layout/toast";
 
-const TITLES = ["เลือกประเภทรายการ", "ผู้ถือ & บัญชี", "รายละเอียด", "แนบไฟล์ & ยืนยัน"];
+const TITLES = ["เลือกประเภทรายการ", "ผู้ถือกรรมสิทธิ์", "รายละเอียด", "แนบไฟล์ & ยืนยัน"];
 
 /**
  * ฟอร์มมือถือใช้ state hook และ step component ชุดเดียวกับ desktop

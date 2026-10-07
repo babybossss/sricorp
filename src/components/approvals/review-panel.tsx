@@ -5,12 +5,14 @@ import type { Approval } from "@/lib/mock/ledger";
 import { getTxType, findSub, canAccrueFromForm } from "@/lib/rules/tx-rules";
 import { entityById } from "@/lib/mock/entities";
 import { BANKS } from "@/lib/mock/banks";
+import { MOCK_RESOLVER } from "@/lib/mock/resolver";
+import { previewApproval } from "./approval-preview";
+import { bankDirectionLabel } from "@/components/form/bank-field";
 import { money } from "@/lib/format";
 import { Dialog, SheetContent, DialogHeader, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { JournalPreview } from "@/components/form/journal-preview";
-import type { PostingInput } from "@/lib/ledger/types";
 import { TYPE_PILL } from "@/lib/tone";
 
 /**
@@ -40,27 +42,17 @@ export function ReviewPanel({
   const type = getTxType(item.typeKey);
   const sub = findSub(item.subCode)?.sub;
   const holder = entityById(item.ownerId);
-  const bank = BANKS.find((b) => b.ownerId === item.ownerId && !b.off);
+  // บัญชีที่คนคีย์เลือกไว้กับตัวรายการ — ไม่หยิบ "บัญชีแรกของผู้ถือ" มาแทน
+  const bank = item.bankAccountId ? BANKS.find((b) => b.id === item.bankAccountId) : undefined;
 
   /*
-    รออนุมัติ = ยังไม่มีใครยืนยันว่าเงินเคลื่อน จึงพรีวิวเป็นค้างรับ-ค้างจ่าย
+    รออนุมัติ = ยังไม่มีใครยืนยันว่าเงินเคลื่อน จึงพรีวิวเป็นค้างรับ-ค้างจ่ายตามธงที่มากับรายการ
     ตรงกับกฎที่ตกลงกันว่า การอนุมัติไม่ย้ายเงินสด ต้องรอ Management ยืนยันอีกขั้น
+
+    ข้อมูลพอไหม **ให้ engine ตัดสิน** (PostingError จาก buildPostingDraft) ไม่ใช่แผงนี้
+    พรีวิวไม่ได้ = ปุ่มอนุมัติกดไม่ได้
   */
-  const input: PostingInput | null =
-    bank && sub
-      ? {
-          typeKey: item.typeKey,
-          subCode: item.subCode,
-          amount: Math.abs(item.amount),
-          ownerId: item.ownerId,
-          bankAccountId: bank.id,
-          assetId: item.assetId,
-          contactId: item.contactId,
-          // ร่างที่ยังไม่ยืนยันเงินเข้า-ออก — ถามฟังก์ชันเดียวกับ engine
-          // ไม่ใช่ `!!sub.accrualCoa` ซึ่งจะเปิดธงนี้ให้หมวดที่ engine ปฏิเสธด้วย
-          notYetPaid: !!item.notYetPaid,
-        }
-      : null;
+  const { input, canApprove, blockedReason } = previewApproval(item, MOCK_RESOLVER);
 
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
@@ -90,12 +82,30 @@ export function ReviewPanel({
             <Row label="ที่มา">{item.source}</Row>
             <Row label="ผู้สร้าง">{item.by}</Row>
             <Row label="วันที่เอกสาร">{item.date}</Row>
-            <Row label="บัญชีที่คาดว่าจะใช้">{bank ? `${bank.name} ···${bank.last4}` : "— ยังไม่ระบุ —"}</Row>
+            <Row label={bankDirectionLabel(sub)}>
+              {bank
+                ? `${bank.name} ···${bank.last4}`
+                : item.bankAccountId
+                  ? `ไม่พบบัญชี (${item.bankAccountId})`
+                  : item.notYetPaid
+                    ? "ยังไม่ระบุ — ค้างรับ-ค้างจ่าย ยังไม่มีขาเงินสด"
+                    : "ไม่ได้ระบุ"}
+            </Row>
           </dl>
 
           <div className="flex flex-col gap-2 rounded-card border border-line bg-canvas p-4">
-            <JournalPreview input={input} showSummary />
-            {sub && canAccrueFromForm(sub) ? (
+            {canApprove ? (
+              <JournalPreview input={input} showSummary />
+            ) : (
+              <div role="alert" className="rounded border border-neg bg-neg-bg p-[12px_14px] text-base leading-7 text-neg-fg">
+                <b>ข้อมูลไม่ครบ อนุมัติไม่ได้</b> — ระบบยังไม่รู้ว่าจะลงบัญชีอย่างไร
+                <br />
+                เหตุผล: {blockedReason}
+                <br />
+                ต้องให้ {item.by} เติมข้อมูลให้ครบก่อน แล้วจึงส่งกลับมาอนุมัติ
+              </div>
+            )}
+            {canApprove && sub && canAccrueFromForm(sub) ? (
               <div className="text-sm leading-6 text-ink-600">
                 อนุมัติแล้ว<b>ยังไม่ย้ายเงินสด</b> — ต้องให้ Management ยืนยันว่าเงินเข้า/ออกจริงอีกขั้น
                 กระแสเงินสดจึงจะวิ่ง
@@ -122,7 +132,7 @@ export function ReviewPanel({
             <Button variant="danger" size="sm" onClick={() => onReject(item)}>
               ไม่อนุมัติ
             </Button>
-            <Button size="sm" onClick={() => onApprove(item)}>
+            <Button size="sm" onClick={() => onApprove(item)} disabled={!canApprove}>
               อนุมัติ
             </Button>
           </div>

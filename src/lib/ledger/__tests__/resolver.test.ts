@@ -71,7 +71,9 @@ describe("ผู้ถือปลายทางอ่านจากบัญ�
   const resolve: LedgerResolver = {
     owner: TEST_RESOLVER.owner,
     bankAccount: (id) =>
-      id === "bX" ? { id: "bX", name: "บัญชีที่ฟอร์มไม่รู้ว่าเป็นของใคร", ownerId: "thanawin" } : TEST_RESOLVER.bankAccount(id),
+      id === "bX"
+        ? { id: "bX", name: "บัญชีที่ฟอร์มไม่รู้ว่าเป็นของใคร", ownerId: "thanawin", isActive: true }
+        : TEST_RESOLVER.bankAccount(id),
   };
 
   const transfer: PostingInput = {
@@ -110,7 +112,10 @@ describe("ผู้ถือปลายทางอ่านจากบัญ�
     // ยืนยันว่าคนตัดสินว่า "ข้ามผู้ถือหรือไม่" คือ resolver ไม่ใช่ฟอร์ม
     const sameOwner: LedgerResolver = {
       owner: TEST_RESOLVER.owner,
-      bankAccount: (id) => (id === "bX" ? { id: "bX", name: "บัญชีที่สองของธนากร", ownerId: "thanakorn" } : TEST_RESOLVER.bankAccount(id)),
+      bankAccount: (id) =>
+      id === "bX"
+        ? { id: "bX", name: "บัญชีที่สองของธนากร", ownerId: "thanakorn", isActive: true }
+        : TEST_RESOLVER.bankAccount(id),
     };
     const r = buildPostingDraft({ ...transfer, intercompanyNature: undefined }, sameOwner);
     expect(r.transactions).toHaveLength(1);

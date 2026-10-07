@@ -8,7 +8,7 @@ import { useApp } from "@/lib/store";
 import { useTxForm } from "./use-tx-form";
 import { StepType, StepHolder, StepDetail, StepConfirm } from "./tx-steps";
 
-const STEP_LABELS = ["เลือกประเภท", "ผู้ถือ & บัญชี", "รายละเอียด", "แนบไฟล์ & ยืนยัน"];
+const STEP_LABELS = ["เลือกประเภท", "ผู้ถือกรรมสิทธิ์", "รายละเอียด", "แนบไฟล์ & ยืนยัน"];
 
 /** ฟอร์มบันทึกรายการ 4 ขั้น (Desktop) — dialog สร้างผู้ติดต่อซ้อนอยู่ชั้นบน */
 export function TxFormDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {

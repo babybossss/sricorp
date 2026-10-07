@@ -26,6 +26,9 @@ const toBankInfo = (b: (typeof BANKS)[number]): BankInfo => ({
   id: b.id,
   name: b.name,
   ownerId: b.ownerId,
+  // `off` คือ "ปิดใช้งาน" จึงกลับด้านเป็น `isActive` — engine ใช้ฟิลด์นี้กันการลงรายการใหม่
+  // เข้าบัญชีที่ปิด (D-092) ต้องส่งค่าจริงเสมอ ห้ามปล่อยว่างหรือ hard-code true
+  isActive: !b.off,
 });
 
 /**
@@ -33,6 +36,10 @@ const toBankInfo = (b: (typeof BANKS)[number]): BankInfo => ({
  *
  * บัญชีที่ปิดใช้งาน (`off`) **ยังต้องหาเจอ** เพราะรายการย้อนหลังที่อ้างถึงมัน
  * ต้องแสดงและ reverse ได้ — การซ่อนจากตัวเลือกเป็นเรื่องของฟอร์ม ไม่ใช่ของ engine
+ *
+ * การกันไม่ให้ลงรายการ **ใหม่** เข้าบัญชีที่ปิดเป็นหน้าที่ของ engine ซึ่งอ่านจาก
+ * `isActive` ที่นี่ส่งไปให้ (D-092) — คืน null แทนจะทำให้กลับรายการเก่าไม่ได้เลย
+ * ซึ่งขัดกฎเหล็กข้อ 1 ที่ให้แก้รายการที่ post แล้วด้วย reverse + ลงใหม่เท่านั้น
  */
 export const MOCK_RESOLVER: LedgerResolver = {
   owner(id) {

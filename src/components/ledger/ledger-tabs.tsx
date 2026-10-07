@@ -9,10 +9,15 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { STATUS_PILL, TYPE_PILL } from "@/lib/tone";
 import { money, signedMoney, plMoney, baht } from "@/lib/format";
-import { LEDGER, STATUS_LABEL, PL_SERIES, CF_GROUPS, CF_ACCOUNTS, CASH_GROUPS } from "@/lib/mock/ledger";
+import { LEDGER, STATUS_LABEL, PL_SERIES, CF_GROUPS, CF_ACCOUNTS, CASH_GROUPS, UNASSIGNED_CASH_ROWS } from "@/lib/mock/ledger";
 import { entityById, MONTHS } from "@/lib/mock/entities";
 import { findSub, getTxType } from "@/lib/rules/tx-rules";
-import { useApp } from "@/lib/store";
+import { useApp, useOrderedBanks } from "@/lib/store";
+import { Select } from "@/components/ui/select";
+import { Field } from "@/components/ui/field";
+import { MOCK_RESOLVER } from "@/lib/mock/resolver";
+import { bankChoices } from "@/components/form/bank-field";
+import { confirmBankError } from "./confirm-gate";
 import { LedgerDrawer } from "./ledger-drawer";
 
 const TABS = [
@@ -170,16 +175,115 @@ function ListTab() {
 
 function ConfirmTab() {
   const showToast = useApp((s) => s.showToast);
+  const bankOff = useApp((s) => s.bankOff);
+  const orderedBanks = useOrderedBanks(false);
+
+  const [checked, setChecked] = React.useState<Record<string, boolean>>(() =>
+    Object.fromEntries(CASH_GROUPS.flatMap((g) => g.rows.map((r) => [r.id, r.checked] as const)))
+  );
+  /** บัญชีที่เลือกตอนยืนยัน — เฉพาะรายการที่คีย์ค้างไว้โดยยังไม่มีบัญชี */
+  const [bankOf, setBankOf] = React.useState<Record<string, string>>({});
+
+  const totalRows = CASH_GROUPS.reduce((n, g) => n + g.rows.length, 0) + UNASSIGNED_CASH_ROWS.length;
+  const errorOf = (r: (typeof UNASSIGNED_CASH_ROWS)[number]) => confirmBankError(r, bankOf[r.id], MOCK_RESOLVER);
+  // รายการที่ยังไม่มีบัญชีติ๊กไม่ได้จนกว่าจะเลือกบัญชีที่ถูกต้อง — บัญชีหลุดไปเมื่อไร ติ๊กก็หลุดตาม
+  const isOn = (r: (typeof UNASSIGNED_CASH_ROWS)[number]) => !!checked[r.id] && !errorOf(r);
+
+  const nBank = CASH_GROUPS.reduce((n, g) => n + g.rows.filter((r) => checked[r.id]).length, 0);
+  const nPicked = UNASSIGNED_CASH_ROWS.filter(isOn).length;
+  const nSelected = nBank + nPicked;
+  const missingBank = UNASSIGNED_CASH_ROWS.filter((r) => checked[r.id] && errorOf(r));
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-base text-ink-600">
-          รายการที่ครบกำหนดรับ-จ่ายในเดือนนี้ <b className="text-ink-900">5 รายการ</b>
+          รายการที่ครบกำหนดรับ-จ่ายในเดือนนี้ <b className="text-ink-900">{totalRows} รายการ</b>
         </div>
-        <Button variant="success" className="ml-auto" onClick={() => showToast("ยืนยันรับ-จ่าย 3 รายการแล้ว")}>
-          ยืนยัน 3 รายการที่เลือก
+        <Button
+          variant="success"
+          className="ml-auto"
+          disabled={nSelected === 0 || missingBank.length > 0}
+          onClick={() => showToast(`ยืนยันรับ-จ่าย ${nSelected} รายการแล้ว`)}
+        >
+          ยืนยัน {nSelected} รายการที่เลือก
         </Button>
+      </div>
+
+      {missingBank.length > 0 ? (
+        <div role="alert" className="rounded-card border border-neg bg-neg-bg p-[14px_18px] text-base leading-7 text-neg-fg">
+          <b>ยืนยันไม่ได้ — {missingBank.length} รายการที่ติ๊กไว้ยังไม่ได้เลือกบัญชี</b>
+          <br />
+          ต้องระบุว่าเงินเข้า/ออกที่บัญชีไหน ไม่งั้นยอดธนาคารจะกระทบยอดกับ statement ไม่ได้
+        </div>
+      ) : null}
+
+      <div className="overflow-hidden rounded-card border border-line bg-surface shadow-card">
+        <div className="border-b border-line bg-canvas p-[16px_20px]">
+          <div className="text-lg font-semibold">ยังไม่ระบุบัญชี ({UNASSIGNED_CASH_ROWS.length} รายการ)</div>
+          <div className="text-sm text-ink-600">
+            รายการเหล่านี้ตั้งค้างรับ-ค้างจ่ายไว้ตอนคีย์ จึงยังไม่มีบัญชี — เลือกบัญชีที่เงินเข้า/ออกจริงก่อนยืนยัน
+          </div>
+        </div>
+        <div className="overflow-auto">
+          <Table minWidth={900}>
+            <thead>
+              <tr>
+                <Th>รายการ</Th>
+                <Th>ครบกำหนด</Th>
+                <Th align="right">ยอดคาด</Th>
+                <Th>บัญชีที่เงินเข้า/ออกจริง</Th>
+                <Th align="center">ยืนยัน</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {UNASSIGNED_CASH_ROWS.map((r) => {
+                const err = errorOf(r);
+                const picked = !!bankOf[r.id];
+                const choices = bankChoices(orderedBanks, (id) => !!bankOff[id], r.ownerId);
+                return (
+                  <tr key={r.id}>
+                    <Td className="p-[12px_14px]">
+                      <div className="font-semibold">{r.name}</div>
+                      <div className="text-sm text-ink-400">{r.sub}</div>
+                    </Td>
+                    <Td className="whitespace-nowrap p-[12px_14px] text-ink-600">{r.due}</Td>
+                    <Td align="right" className="whitespace-nowrap p-[12px_14px]">{signedMoney(r.expect)}</Td>
+                    <Td className="p-[12px_14px]">
+                      <Field
+                        label={r.expect > 0 ? "รับเงินเข้าบัญชี" : "จ่ายเงินออกจากบัญชี"}
+                        required
+                        error={picked && err ? err : undefined}
+                      >
+                        <Select
+                          value={bankOf[r.id] ?? ""}
+                          onChange={(e) => setBankOf((m) => ({ ...m, [r.id]: e.target.value }))}
+                        >
+                          <option value="">— เลือกบัญชี —</option>
+                          {choices.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    </Td>
+                    <Td align="center" className="p-[12px_14px]">
+                      <label className="flex flex-col items-center gap-1 text-sm text-ink-600">
+                        <Checkbox
+                          checked={isOn(r)}
+                          disabled={!!err}
+                          onChange={(e) => setChecked((m) => ({ ...m, [r.id]: e.target.checked }))}
+                        />
+                        {err ? "เลือกบัญชีก่อน" : "ยืนยันแล้ว"}
+                      </label>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </div>
       </div>
 
       {CASH_GROUPS.map((g) => (
@@ -231,7 +335,10 @@ function ConfirmTab() {
                       <Button variant="secondary" size="sm">แนบสลิป</Button>
                     </Td>
                     <Td align="center" className="p-[12px_14px]">
-                      <Checkbox defaultChecked={r.checked} />
+                      <Checkbox
+                        checked={!!checked[r.id]}
+                        onChange={(e) => setChecked((m) => ({ ...m, [r.id]: e.target.checked }))}
+                      />
                     </Td>
                   </tr>
                 ))}
