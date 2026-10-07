@@ -4,9 +4,14 @@ import { PhoneFrame } from "@/components/mobile/phone-frame";
 import { TODOS } from "@/lib/mock/dashboard";
 import { PRIORITY_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
+import { gateRoute } from "@/lib/auth/gate";
 
 /** หน้าแรก มือถือ 390 — ปุ่มสูง 56px ตัวอักษรไม่ต่ำกว่า 16px */
-export default function MobileHomePage() {
+export default async function MobileHomePage() {
+  // กั้นตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย — RLS คือของจริง · ดู src/lib/auth/gate.tsx)
+  const denied = await gateRoute("/m", "SRI OS");
+  if (denied) return denied;
+
   return (
     <div className="min-h-screen bg-canvas py-6">
       <PhoneFrame className="bg-canvas">

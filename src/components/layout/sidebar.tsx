@@ -6,7 +6,9 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/lib/store";
 import { COMING_SOON } from "@/lib/mock/dashboard";
-import { Button } from "@/components/ui/button";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { SignOutButton } from "@/components/auth/sign-out-button";
+import { canOpen } from "@/lib/auth/routes";
 
 type NavItem = { href: string; label: string; badge?: string; icon: React.ReactNode; match?: (p: string) => boolean };
 
@@ -32,6 +34,11 @@ export function Sidebar() {
   const pathname = usePathname();
   const largeText = useApp((s) => s.largeText);
   const toggleLargeText = useApp((s) => s.toggleLargeText);
+  const permissions = usePermissions();
+  // ซ่อนเมนูที่ผู้ใช้ไม่มีสิทธิ์ — กติกาอ่านจากตาราง ROUTE_ACCESS ตัวเดียวกับตัวกั้นหน้า
+  const items = NAV.filter((n) => canOpen(permissions, n.href));
+  const showMobileHome = canOpen(permissions, "/m");
+  const showMobileNew = canOpen(permissions, "/m/new");
 
   return (
     <nav className="sticky top-0 flex min-h-screen w-64 flex-none flex-col gap-1 border-r border-line bg-surface p-[16px_12px_24px]">
@@ -43,7 +50,7 @@ export function Sidebar() {
         </span>
       </Link>
 
-      {NAV.map((n) => {
+      {items.map((n) => {
         const active = n.match ? n.match(pathname) : pathname.startsWith(n.href);
         return (
           <Link
@@ -65,13 +72,21 @@ export function Sidebar() {
         );
       })}
 
-      <div className="mt-[18px] p-[0_12px_6px] text-sm text-ink-400">มุมมองมือถือ</div>
-      <Link href="/m" className="flex min-h-control items-center rounded px-3 text-base text-ink-600 no-underline hover:bg-canvas hover:no-underline">
-        หน้าแรก (390)
-      </Link>
-      <Link href="/m/new" className="flex min-h-control items-center rounded px-3 text-base text-ink-600 no-underline hover:bg-canvas hover:no-underline">
-        บันทึกรายการ (390)
-      </Link>
+      {showMobileHome || showMobileNew ? (
+        <>
+          <div className="mt-[18px] p-[0_12px_6px] text-sm text-ink-400">มุมมองมือถือ</div>
+          {showMobileHome ? (
+            <Link href="/m" className="flex min-h-control items-center rounded px-3 text-base text-ink-600 no-underline hover:bg-canvas hover:no-underline">
+              หน้าแรก (390)
+            </Link>
+          ) : null}
+          {showMobileNew ? (
+            <Link href="/m/new" className="flex min-h-control items-center rounded px-3 text-base text-ink-600 no-underline hover:bg-canvas hover:no-underline">
+              บันทึกรายการ (390)
+            </Link>
+          ) : null}
+        </>
+      ) : null}
 
       <div className="mt-[18px] p-[0_12px_6px] text-sm text-ink-400">เร็วๆ นี้</div>
       {COMING_SOON.map((s) => (
@@ -92,9 +107,7 @@ export function Sidebar() {
         </span>
       </button>
 
-      <Button asChild variant="secondary" size="sm" className="mt-2 font-normal text-ink-600">
-        <Link href="/login" className="no-underline hover:no-underline">ดูหน้าเข้าสู่ระบบ</Link>
-      </Button>
+      <SignOutButton size="sm" className="mt-2 font-normal text-ink-600" />
     </nav>
   );
 }

@@ -4,6 +4,7 @@ import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { USERS } from "@/lib/mock/dashboard";
+import { gateRoute } from "@/lib/auth/gate";
 
 const ROLE_PILL: Record<string, string> = {
   Management: "border-brand-100 bg-brand-50 text-brand-600",
@@ -11,7 +12,11 @@ const ROLE_PILL: Record<string, string> = {
   User: "border-line bg-canvas text-ink-600",
 };
 
-export default function UsersPage() {
+export default async function UsersPage() {
+  // กั้นตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย — RLS คือของจริง · ดู src/lib/auth/gate.tsx)
+  const denied = await gateRoute("/settings/users", "ตั้งค่า · ผู้ใช้ & สิทธิ์");
+  if (denied) return denied;
+
   return (
     <PageShell title="ตั้งค่า · ผู้ใช้ & สิทธิ์">
       <SettingsLayout>

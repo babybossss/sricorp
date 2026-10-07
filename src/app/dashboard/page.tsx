@@ -7,8 +7,13 @@ import { KPIS, YIELDS, TODOS, TEAM_TASKS, EXPIRING_CONTRACTS } from "@/lib/mock/
 import { allocationByClass, allocationGradient } from "@/lib/mock/balance";
 import { PRIORITY_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
+import { gateRoute } from "@/lib/auth/gate";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  // กั้นตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย — RLS คือของจริง · ดู src/lib/auth/gate.tsx)
+  const denied = await gateRoute("/dashboard", "หน้าแรก");
+  if (denied) return denied;
+
   return (
     <PageShell title="หน้าแรก">
       <div className="flex flex-col gap-4">

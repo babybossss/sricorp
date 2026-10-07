@@ -7,10 +7,16 @@ import { MonthPicker } from "./month-picker";
 import { Button } from "@/components/ui/button";
 import { TxFormDialog } from "@/components/form/tx-form-dialog";
 import { useApp } from "@/lib/store";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { canOpen } from "@/lib/auth/routes";
 
-export function Topbar({ title }: { title: string }) {
+export function Topbar({ title, user }: { title: string; user: { name: string; role: string } }) {
   const [formOpen, setFormOpen] = React.useState(false);
   const largeText = useApp((s) => s.largeText);
+  const permissions = usePermissions();
+  // ปุ่มบันทึกรายการ: ไม่มีสิทธิ์สร้างรายการ = ไม่โชว์ (DB ก็ไม่ยอมให้ insert อยู่แล้ว)
+  const canCreate = permissions.has("txn.create");
+  const canSeeApprovals = canOpen(permissions, "/approvals");
 
   // โหมดตัวใหญ่ตั้งที่ <html> เพื่อให้มีผลทุกหน้าและทุก portal
   React.useEffect(() => {
@@ -25,6 +31,7 @@ export function Topbar({ title }: { title: string }) {
         <EntitySwitcher />
         <MonthPicker />
 
+        {canCreate ? (
         <Button onClick={() => setFormOpen(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5">
             <path d="M5 12h14" />
@@ -32,7 +39,9 @@ export function Topbar({ title }: { title: string }) {
           </svg>
           บันทึกรายการ
         </Button>
+        ) : null}
 
+        {canSeeApprovals ? (
         <Button asChild variant="secondary">
           <Link href="/approvals" className="no-underline hover:no-underline">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -43,17 +52,18 @@ export function Topbar({ title }: { title: string }) {
             <span className="inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-pill bg-neg px-[7px] text-sm font-bold text-white">7</span>
           </Link>
         </Button>
+        ) : null}
 
         <div className="flex flex-none items-center gap-2.5 pl-1">
-          <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-brand-50 text-base font-bold text-brand-600">ธ</div>
+          <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-brand-50 text-base font-bold text-brand-600">{user.name.slice(0, 1)}</div>
           <div className="text-sm leading-5">
-            <div className="font-semibold">ธนากร</div>
-            <div className="text-ink-400">Management</div>
+            <div className="font-semibold">{user.name}</div>
+            <div className="text-ink-400">{user.role}</div>
           </div>
         </div>
       </header>
 
-      <TxFormDialog open={formOpen} onOpenChange={setFormOpen} />
+      {canCreate ? <TxFormDialog open={formOpen} onOpenChange={setFormOpen} /> : null}
     </>
   );
 }

@@ -2,9 +2,14 @@ import { PageShell } from "@/components/layout/page-shell";
 import { AssetKindIcon, ICON_KINDS } from "@/components/assets/asset-kind-icon";
 import { KIND_LABEL } from "@/lib/mock/assets";
 import { SIDEBAR_ICON_OPTIONS, OptionIcon } from "@/components/dev/sidebar-icon-options";
+import { gateRoute } from "@/lib/auth/gate";
 
 /** หน้าดูไอคอน — ไว้ให้ลูกพี่เลือก ไม่ได้อยู่ในเมนู */
-export default function IconsPage() {
+export default async function IconsPage() {
+  // กั้นตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย — RLS คือของจริง · ดู src/lib/auth/gate.tsx)
+  const denied = await gateRoute("/dev", "ไอคอนให้เลือก");
+  if (denied) return denied;
+
   const label: Record<string, string> = { ...KIND_LABEL, other: "ทรัพย์อื่น" };
 
   return (

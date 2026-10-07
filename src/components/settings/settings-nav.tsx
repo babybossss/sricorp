@@ -4,13 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SETTINGS_MENU } from "@/lib/mock/dashboard";
 import { cn } from "@/lib/utils";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { canOpen } from "@/lib/auth/routes";
 
 export function SettingsNav() {
   const pathname = usePathname();
+  const permissions = usePermissions();
+  // ซ่อนหัวข้อที่กดแล้วเจอหน้าไม่มีสิทธิ์ (เช่น ผู้ใช้ & สิทธิ์ ต้องมี users.manage)
+  const menu = SETTINGS_MENU.filter((m) => !m.href || canOpen(permissions, m.href));
 
   return (
     <div className="rounded-card border border-line bg-surface p-2.5 shadow-card">
-      {SETTINGS_MENU.map((m) =>
+      {menu.map((m) =>
         m.href ? (
           <Link
             key={m.label}

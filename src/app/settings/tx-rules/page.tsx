@@ -11,13 +11,18 @@ import {
   effectsOf,
 } from "@/lib/rules/tx-rules";
 import { coa } from "@/lib/rules/coa";
+import { gateRoute } from "@/lib/auth/gate";
 
 /**
  * ตารางกฎเดียวที่ระบบอ้างอิง (Backlog ข้อ 1)
  * หน้านี้เป็นมุมมองอ่านอย่างเดียวของ `src/lib/rules/tx-rules.ts`
  * ฟอร์มบันทึกรายการดึงหมวดย่อยจากตารางเดียวกันนี้ จึงไม่มีทางลงผิดหมวด
  */
-export default function TxRulesPage() {
+export default async function TxRulesPage() {
+  // กั้นตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย — RLS คือของจริง · ดู src/lib/auth/gate.tsx)
+  const denied = await gateRoute("/settings", "ตั้งค่า · ผังบัญชี & ประเภทรายการ");
+  if (denied) return denied;
+
   return (
     <PageShell title="ตั้งค่า · ผังบัญชี & ประเภทรายการ">
       <SettingsLayout>
