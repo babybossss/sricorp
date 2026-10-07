@@ -573,34 +573,109 @@ begin
   raise notice 'ok L22 · กลับรายการเดิมรอบที่สองลงไม่ได้';
 end $$;
 
--- ---------- P1 · authenticated ต้องไม่มี TRUNCATE บนตารางการเงิน ----------
--- ผู้ตรวจรายงานว่ามี — เป็น false positive ที่เกิดจาก harness เอง
--- (scripts/test-rls-local.sh ให้ `grant all` ซึ่งรวม TRUNCATE กว้างกว่า project จริง)
--- เทสต์นี้ทำให้ harness ที่หลวมกว่า production แดงทันที ไม่ปล่อยให้ไปเดาอีกรอบ
+-- ---------- L23 · ลงรายการ + กลับรายการ ในฐานะ authenticated จริง ----------
+-- เทสต์อื่นในไฟล์นี้รันเป็น superuser ของ cluster = ไม่เคยแตะชั้น GRANT เลย
+-- ถ้ากฎใหม่ต้องการ execute บนฟังก์ชันที่ authenticated ไม่มี (เช่น fn_reverse_link_ok
+-- ที่ trigger ซึ่งไม่ใช่ security definer เรียก) แอปจะล้มแต่เทสต์จะเขียว
+-- เคสนี้จึงต้องเดินเส้นทางจริงด้วย role จริง
+do $$
+declare n int;
+begin
+  perform set_config('test.uid', '00000000-0000-0000-0000-0000000f1a02', true);  -- management
+  execute 'set local role authenticated';
+
+  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
+  values ('00000000-0000-0000-0000-0000000f0023',
+          (select id from sri_os.owners where code = 'SRI_HOLDING'),
+          'inc.other', current_date, array['invoice.pdf']);
+  insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+  select '00000000-0000-0000-0000-0000000f0023', c.id,
+         case when c.rn = 1 then 230 else 0 end,
+         case when c.rn = 2 then 230 else 0 end
+    from (select id, row_number() over (order by code) rn
+            from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+
+  -- ขากลับรายการ: ไม่มีไฟล์แนบ · ผ่านได้เพราะชี้ต้นฉบับจริง (ต้องเรียก fn_reverse_link_ok ได้)
+  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
+  values ('00000000-0000-0000-0000-0000000f0024',
+          (select id from sri_os.owners where code = 'SRI_HOLDING'),
+          'inc.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0023', '{}');
+  insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
+  select '00000000-0000-0000-0000-0000000f0024', l.coa_id, l.credit, l.debit
+    from sri_os.transaction_lines l
+   where l.transaction_id = '00000000-0000-0000-0000-0000000f0023';
+
+  select count(*) into n from sri_os.transaction_lines
+   where transaction_id = '00000000-0000-0000-0000-0000000f0024';
+  execute 'reset role';
+  if n <> 2 then raise exception 'FAIL: ขากลับรายการลงได้ % บรรทัด', n; end if;
+  raise notice 'ok L23 · post + reverse ในฐานะ authenticated (ผ่านชั้น GRANT และ RLS) ทำได้';
+exception when others then
+  execute 'reset role';
+  raise exception 'FAIL: เส้นทางจริงของ authenticated ล้ม (% ) — สิทธิ์ GRANT/execute ไม่พอ หรือกฎใหม่กันแน่นเกิน', sqlerrm;
+end $$;
+
+-- ---------- P1 · สิทธิ์ของ authenticated ต้องตรงกับที่ migration ให้ ----------
+-- ที่มา: ผู้ตรวจรายงานว่า authenticated TRUNCATE ได้ — false positive จาก harness
+-- (เดิม harness `grant all`) · แล้วตรวจของจริงพบว่า **ไม่มี ACL เลย** (แอปใช้งานไม่ได้)
+-- → สิทธิ์ย้ายไปอยู่ใน supabase/migrations/20261007000001_grants.sql ทั้งสองฝั่งใช้ไฟล์เดียวกัน
+-- เทสต์นี้ assert จากสิ่งที่ migration ให้ ไม่ใช่จากค่าที่ harness ตั้งเอง
 do $$
 declare v text; n int;
 begin
+  -- 1) ต้องไม่มีสิทธิ์อันตราย
   select string_agg(table_name || '.' || privilege_type, ', '), count(*) into v, n
     from information_schema.role_table_grants
    where table_schema = 'sri_os'
      and grantee = 'authenticated'
-     and table_name in ('transactions', 'transaction_lines', 'audit_log',
-                        'draft_entries', 'cash_confirmations', 'period_closes')
      and privilege_type in ('TRUNCATE', 'REFERENCES', 'TRIGGER');
   if n > 0 then
-    raise exception 'FAIL: authenticated มีสิทธิ์ที่ของจริงไม่ได้ให้ (% รายการ): % · TRUNCATE ล้างสมุดได้โดยไม่ยิง trigger และไม่เหลือ audit', n, v;
+    raise exception 'FAIL: authenticated มีสิทธิ์ที่ migration ไม่ได้ให้ (% รายการ): % · TRUNCATE ล้างสมุดได้โดยไม่ยิง trigger และไม่เหลือ audit', n, v;
   end if;
 
-  -- ขาบวก: ถ้าไม่มีสิทธิ์อะไรเลย เทสต์ข้างบนจะผ่านฟรีๆ ทั้งที่ harness พัง
-  select count(*) into n
-    from information_schema.role_table_grants
-   where table_schema = 'sri_os' and grantee = 'authenticated'
-     and table_name = 'transactions'
-     and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE');
-  if n <> 4 then
-    raise exception 'FAIL: authenticated มีสิทธิ์ DML บน transactions แค่ % ตัว (ต้อง 4) = harness ไม่ตรงกับของจริง เทสต์เชื่อไม่ได้', n;
+  -- 2) ต้องมี DML ครบทุกตารางการเงิน ไม่งั้นข้อ 1 ผ่านฟรีๆ และแอปใช้งานไม่ได้ (สถานะของจริง)
+  select string_agg(t.c, ', '), count(*) into v, n from (
+    select c.relname as c
+      from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+     where ns.nspname = 'sri_os' and c.relkind = 'r'
+       and (select count(*) from information_schema.role_table_grants g
+             where g.table_schema = 'sri_os' and g.grantee = 'authenticated'
+               and g.table_name = c.relname
+               and g.privilege_type in ('SELECT','INSERT','UPDATE','DELETE')) <> 4
+  ) t;
+  if n > 0 then
+    raise exception 'FAIL: % ตารางที่ authenticated ไม่มี DML ครบสี่ตัว: % → แอปถูกปฏิเสธที่ชั้น GRANT ก่อนถึง RLS', n, v;
   end if;
-  raise notice 'ok P1 · authenticated มี DML สี่ตัว ไม่มี TRUNCATE/REFERENCES/TRIGGER';
+
+  -- 3) anon ต้องไม่มีอะไรเลย (ระบบนี้ต้องล็อกอินทุกหน้า ไม่มีหน้า public)
+  if has_schema_privilege('anon', 'sri_os', 'usage') then
+    raise exception 'FAIL: anon มี usage บนสคีมา sri_os = อ่านได้ด้วย anon key ที่ฝังในหน้าเว็บ';
+  end if;
+  select count(*) into n from information_schema.role_table_grants
+   where table_schema = 'sri_os' and grantee = 'anon';
+  if n > 0 then raise exception 'FAIL: anon มีสิทธิ์บนตารางใน sri_os % รายการ', n; end if;
+
+  -- 4) ฟังก์ชันภายใน (trigger function + fn_assert_*) ต้องเรียกจากข้างนอกไม่ได้
+  select string_agg(p.proname, ', '), count(*) into v, n
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'sri_os'
+     and (p.prorettype in ('trigger'::regtype, 'event_trigger'::regtype)
+          or p.proname in ('fn_assert_line_writable', 'fn_assert_txn_balanced'))
+     and has_function_privilege('authenticated', p.oid, 'execute');
+  if n > 0 then
+    raise exception 'FAIL: authenticated เรียกฟังก์ชันภายในได้ % ตัว: %', n, v;
+  end if;
+
+  -- 5) ฟังก์ชันที่ RLS/หน้าจอต้องใช้ ต้องเรียกได้ (ไม่งั้น select ล้มด้วย permission denied)
+  foreach v in array array['fn_can(text)', 'fn_can_see_owner(uuid)', 'fn_can_see_asset(uuid)',
+                           'fn_can_read_txn(uuid,uuid,uuid)', 'fn_can_read_contract(uuid,uuid)',
+                           'fn_reverse_link_ok(uuid,uuid,uuid)'] loop
+    if not has_function_privilege('authenticated', 'sri_os.' || v, 'execute') then
+      raise exception 'FAIL: authenticated เรียก % ไม่ได้ = RLS/หน้าจอล้มทั้งระบบ', v;
+    end if;
+  end loop;
+
+  raise notice 'ok P1 · สิทธิ์ตรงกับ migration: DML สี่ตัวครบทุกตาราง · ไม่มี TRUNCATE/REFERENCES/TRIGGER · anon ว่างเปล่า · ฟังก์ชันภายในปิด';
 end $$;
 
 -- ---------- P2 · TRUNCATE ถูกบล็อกที่ DB แม้สิทธิ์จะเปิด ----------
@@ -620,6 +695,26 @@ begin
   select count(*) into n from sri_os.transactions;
   if n = 0 then raise exception 'FAIL: ไม่มีรายการเหลือเลย = TRUNCATE ลงไปแล้ว'; end if;
   raise notice 'ok P2 · TRUNCATE ตารางการเงินล้มทุกตาราง (% รายการยังอยู่)', n;
+end $$;
+
+-- ---------- P3 · constraint ของตารางกฎที่หายไปจาก drift ต้องกลับมา ----------
+-- 20260918000003 ล้มตอน add constraint เมื่อ replay จาก DB เปล่า (seed ยังไม่ได้รัน)
+-- harness เคย SKIP เงียบๆ → เทสต์รันบน schema ที่ไม่เหมือนของจริง
+-- 20261007000002 กู้ให้ · เทสต์นี้กันไม่ให้หายเงียบอีก
+do $$
+declare v text;
+begin
+  select string_agg(x.c, ', ') into v from (values
+      ('txn_types_gain_loss_pair'), ('txn_types_interest_required')
+    ) as x(c)
+   where not exists (
+     select 1 from pg_constraint
+      where conrelid = 'sri_os.txn_types'::regclass and contype = 'c' and conname = x.c
+   );
+  if v is not null then
+    raise exception 'FAIL: constraint ของตารางกฎหายไป (%) = DB ถือกฎไม่ครบเงียบๆ ทั้งที่ engine บังคับอยู่', v;
+  end if;
+  raise notice 'ok P3 · constraint ตารางกฎครบ (gain/loss pair · interest required)';
 end $$;
 
 -- ---------- L7 · การแก้บรรทัดต้องเหลือร่องรอยใน audit_log ----------
