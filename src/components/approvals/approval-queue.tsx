@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { ReviewPanel } from "./review-panel";
-import { previewApproval } from "./approval-preview";
+import { previewApproval, planBulkApproval } from "./approval-preview";
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { DialogPrimitive } from "@/components/ui/dialog";
 import { TYPE_PILL } from "@/lib/tone";
@@ -31,7 +31,9 @@ export function ApprovalQueue() {
 
   /*
     ปุ่มอนุมัติทุกจุด (แถว · ที่เลือก · ทั้งหมด · แผงตรวจ) ถาม engine ตัวเดียวกัน
-    รายการที่พรีวิวไม่ได้ = ยังไม่รู้ว่าจะลงบัญชีอย่างไร → อนุมัติไม่ได้ ไม่ว่าจะกดจากทางไหน
+    และเป็น `buildPosting()` ตัวจริง ไม่ใช่ draft — การอนุมัติคือการบันทึกจริง
+    จึงต้องบังคับกติกาเอกสารของนิติบุคคล (หลักฐาน + คู่ค้า) ด้วย
+    (draft ใช้แค่โชว์บรรทัดบัญชีให้คนอ่านในแผงตรวจ)
   */
   const blocked = React.useMemo(
     () =>
@@ -45,11 +47,36 @@ export function ApprovalQueue() {
   );
 
   const selected = APPROVALS.filter((a) => sel[a.id]);
-  const selectedBlocked = selected.filter((a) => blocked.has(a.id));
+  const selectedPlan = planBulkApproval(selected, MOCK_RESOLVER);
+  const allPlan = planBulkApproval(APPROVALS, MOCK_RESOLVER);
   const selSum = selected.reduce((t, a) => t + Math.abs(a.amount), 0);
   const allSum = APPROVALS.reduce((t, a) => t + Math.abs(a.amount), 0);
 
   const ask = (c: Confirm) => setDialog(c);
+
+  /**
+   * อนุมัติหมู่: อนุมัติเฉพาะที่ engine ปล่อย ข้ามที่ติด และบอกว่าข้ามกี่รายการเพราะอะไร
+   * (เหตุผลคือ `PostingError` ของ engine ตรงๆ)
+   */
+  const askBulk = (title: string, scope: string, plan: ReturnType<typeof planBulkApproval>, after?: () => void) => {
+    const sum = plan.approvable.reduce((t, a) => t + Math.abs(a.amount), 0);
+    const skipNote = plan.skipped.length
+      ? `\n\nข้าม ${plan.skipped.length} รายการ (อนุมัติไม่ได้):\n` +
+        plan.skipped.map((x) => `• ${x.item.detail} — ${x.reason}`).join("\n")
+      : "";
+    ask({
+      title,
+      body: `ระบบจะอนุมัติ${scope} ${plan.approvable.length} รายการ รวม ฿ ${sum.toLocaleString("en-US")} เข้าสมุดบัญชี${skipNote}`,
+      cta: `ยืนยันอนุมัติ ${plan.approvable.length} รายการ`,
+      onConfirm: () => {
+        after?.();
+        showToast(
+          `อนุมัติแล้ว ${plan.approvable.length} รายการ` +
+            (plan.skipped.length ? ` · ข้าม ${plan.skipped.length} รายการ (ดูเหตุผลที่รายการ)` : "")
+        );
+      },
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4 pb-24">
@@ -63,28 +90,18 @@ export function ApprovalQueue() {
             เลือกทั้งหมด
           </Button>
           <Button
-            disabled={blocked.size > 0}
-            onClick={() =>
-              ask({
-                title: "ยืนยันอนุมัติทั้งหมด",
-                body: `ยืนยันอนุมัติ ${APPROVALS.length} รายการ รวม ฿ ${allSum.toLocaleString("en-US")} เข้าสมุดบัญชีใช่หรือไม่`,
-                cta: "ยืนยันอนุมัติ",
-                onConfirm: () => {
-                  setSel({});
-                  showToast(`อนุมัติแล้ว ${APPROVALS.length} รายการ`);
-                },
-              })
-            }
+            disabled={allPlan.approvable.length === 0}
+            onClick={() => askBulk("ยืนยันอนุมัติทั้งหมด", "ทั้งหมดที่ผ่านเงื่อนไข", allPlan, () => setSel({}))}
           >
-            อนุมัติทั้งหมด
+            {allPlan.skipped.length ? `อนุมัติที่ผ่าน ${allPlan.approvable.length} รายการ` : "อนุมัติทั้งหมด"}
           </Button>
         </div>
       </div>
 
       {blocked.size > 0 ? (
         <div role="alert" className="rounded-card border border-neg bg-neg-bg p-[14px_18px] text-base leading-7 text-neg-fg">
-          <b>มี {blocked.size} รายการข้อมูลไม่ครบ อนุมัติไม่ได้</b> — ระบบยังไม่รู้ว่าจะลงบัญชีอย่างไร
-          จึงปิดปุ่ม &ldquo;อนุมัติทั้งหมด&rdquo; ไว้ ต้องให้ผู้สร้างเติมข้อมูลก่อน
+          <b>มี {blocked.size} รายการอนุมัติไม่ได้</b> — ระบบจะข้ามรายการเหล่านี้ตอนอนุมัติหมู่
+          และอนุมัติเฉพาะรายการที่ผ่าน ต้องให้ผู้สร้างเติมข้อมูลหรือแนบหลักฐานก่อน
           (กดชื่อรายการเพื่อดูเหตุผล)
         </div>
       ) : null}
@@ -127,7 +144,7 @@ export function ApprovalQueue() {
                       <span className="font-semibold underline decoration-line underline-offset-4">{a.detail}</span>
                       <span className="text-sm text-ink-400">{a.source}</span>
                       {blocked.has(a.id) ? (
-                        <Pill className="mt-1 border-neg bg-neg-bg text-neg-fg">ข้อมูลไม่ครบ อนุมัติไม่ได้</Pill>
+                        <Pill className="mt-1 border-neg bg-neg-bg text-neg-fg">อนุมัติไม่ได้ — กดดูเหตุผล</Pill>
                       ) : null}
                     </button>
                   </Td>
@@ -218,7 +235,7 @@ export function ApprovalQueue() {
         <div className="fixed bottom-6 left-[280px] right-6 z-40 flex flex-wrap items-center gap-4 rounded-card bg-ink-900 p-[14px_20px] text-white shadow-bar">
           <div className="text-base font-semibold">
             เลือก {selected.length} รายการ ฿ {selSum.toLocaleString("en-US")}
-            {selectedBlocked.length ? ` · ข้อมูลไม่ครบ ${selectedBlocked.length} รายการ อนุมัติไม่ได้` : ""}
+            {selectedPlan.skipped.length ? ` · อนุมัติไม่ได้ ${selectedPlan.skipped.length} รายการ (จะถูกข้าม)` : ""}
           </div>
           <div className="ml-auto flex gap-2.5">
             <Button
@@ -243,19 +260,8 @@ export function ApprovalQueue() {
             <Button
               variant="secondary"
               className="border-white bg-white text-brand-600 disabled:border-line disabled:bg-canvas disabled:text-ink-400"
-              disabled={selectedBlocked.length > 0}
-              onClick={() =>
-                ask({
-                  title: "ยืนยันอนุมัติรายการที่เลือก",
-                  body: `ยืนยันอนุมัติ ${selected.length} รายการ รวม ฿ ${selSum.toLocaleString("en-US")} เข้าสมุดบัญชีใช่หรือไม่`,
-                  cta: "ยืนยันอนุมัติ",
-                  onConfirm: () => {
-                    const n = selected.length;
-                    setSel({});
-                    showToast(`อนุมัติแล้ว ${n} รายการ`);
-                  },
-                })
-              }
+              disabled={selectedPlan.approvable.length === 0}
+              onClick={() => askBulk("ยืนยันอนุมัติรายการที่เลือก", "ที่เลือกและผ่านเงื่อนไข", selectedPlan, () => setSel({}))}
             >
               อนุมัติที่เลือก
             </Button>
@@ -268,7 +274,7 @@ export function ApprovalQueue() {
           <DialogContent width="max-w-[520px]">
             <div className="flex flex-col gap-4 p-6">
               <DialogPrimitive.Title className="text-h2 font-semibold">{dialog.title}</DialogPrimitive.Title>
-              <DialogPrimitive.Description className="text-base leading-7 text-ink-600">{dialog.body}</DialogPrimitive.Description>
+              <DialogPrimitive.Description className="whitespace-pre-line text-base leading-7 text-ink-600">{dialog.body}</DialogPrimitive.Description>
               {dialog.needReason ? (
                 <Field label="เหตุผลที่ไม่อนุมัติ (จำเป็น)">
                   <Input placeholder="เช่น ยอดไม่ตรงกับใบแจ้งหนี้" />

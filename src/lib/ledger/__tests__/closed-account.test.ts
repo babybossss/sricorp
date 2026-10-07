@@ -41,6 +41,12 @@ const rent: PostingInput = {
 };
 
 /** ข้อความต้องบอกทั้ง "บัญชีไหน" และ "ต้องทำอย่างไรต่อ" ไม่ใช่แค่ว่าไม่ผ่าน */
+const withoutBank = (i: PostingInput): PostingInput => {
+  const copy = { ...i };
+  delete copy.bankAccountId;
+  return copy;
+};
+
 const expectClosedError = (fn: () => unknown, bankName: string) => {
   expect(fn).toThrow(PostingError);
   let message = "";
@@ -228,6 +234,40 @@ describe("ค้างรับ-ค้างจ่าย — ไม่มีข�
       TEST_RESOLVER
     );
     expect(allLines(r).some((l) => isCashAccount(l.coaCode))).toBe(false);
+  });
+
+  /**
+   * เคสที่ชุดนี้ขาดไปตอนแรก และเป็นช่องที่ปล่อยบั๊กผ่าน: **ทุกเคสส่ง `b4c` มาด้วย**
+   *
+   * ทั้งชุดจึงไม่มีเคสไหนเลยที่ไม่ส่งบัญชี แล้วด่านที่เช็ค `!input.bankAccountId`
+   * ไว้ก่อนแยกสาขา (ซึ่งทำให้ตั้งค้างโดยไม่มีบัญชีไม่ได้เลย) ก็ไม่ถูกแตะ —
+   * เทสต์ผ่านทั้งชุดด้วยเหตุผลผิดๆ (บทเรียน mace-windu ข้อ 3)
+   *
+   * ของจริงยิ่งกว่านั้น: รายการค้างรับ-ค้างจ่าย **ตามปกติจะไม่มีบัญชีมาด้วย**
+   * เพราะตอนตั้งค้างยังไม่รู้ว่าเงินจะเข้า-ออกบัญชีไหน (ดู `UNASSIGNED_CASH_ROWS`)
+   * เคสที่อ้างบัญชีที่ปิดจึงเป็นเคสรอง ไม่ใช่เคสหลัก
+   */
+  it("ค้างรับที่ไม่ส่งบัญชีเลย (undefined) ต้องผ่าน", () => {
+    const r = buildPosting({ ...withoutBank(rent), notYetPaid: true }, TEST_RESOLVER);
+    const lines = allLines(r);
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "1200")?.debit).toBe(rent.amount);
+  });
+
+  it('ค้างจ่ายที่ส่งบัญชีเป็นสตริงเปล่า "" ต้องผ่าน', () => {
+    const r = buildPosting(
+      { ...rent, typeKey: "expense", subCode: "exp.repair", bankAccountId: "", notYetPaid: true },
+      TEST_RESOLVER
+    );
+    const lines = allLines(r);
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "2100")?.credit).toBe(rent.amount);
+  });
+
+  it("แต่รายการเงินสดที่ไม่ส่งบัญชีเลย ต้องล้ม — ไม่ใช่ลงเงินลอย", () => {
+    const noBank = withoutBank(rent);
+    expect(() => buildPosting(noBank, TEST_RESOLVER)).toThrow(PostingError);
+    expect(() => buildPosting(noBank, TEST_RESOLVER)).toThrow(/บัญชี/);
   });
 
   it("แต่ตอนล้างด้วยเงินสดจริงเข้าบัญชีที่ปิด ต้องถูกกัน — จุดที่ควรกันคือตรงนี้", () => {

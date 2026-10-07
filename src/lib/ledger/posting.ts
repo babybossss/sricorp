@@ -18,76 +18,34 @@ import { computeDisposal } from "@/lib/disposal/capital-gain";
 import {
   PostingError,
   type LedgerResolver,
-  type OwnerInfo,
   type PostingInput,
   type PostingLine,
   type PostingResult,
   type PostingTransaction,
 } from "./types";
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
-/** ตัวเลขเงินที่รับได้: จำกัด ไม่ใช่ NaN/Infinity และไม่ติดลบ */
-function money(n: number, label: string): number {
-  if (typeof n !== "number" || !Number.isFinite(n)) {
-    throw new PostingError(`${label} ต้องเป็นตัวเลขที่ระบุได้`);
-  }
-  if (n < 0) throw new PostingError(`${label} ติดลบไม่ได้`);
-  return round2(n);
-}
-
-export function totalDebit(lines: PostingLine[]): number {
-  return round2(lines.reduce((t, l) => t + l.debit, 0));
-}
-
-export function totalCredit(lines: PostingLine[]): number {
-  return round2(lines.reduce((t, l) => t + l.credit, 0));
-}
-
-/** Money Invariant 1 — โยน error ถ้าไม่สมดุล */
-export function assertBalanced(lines: PostingLine[]): void {
-  const dr = totalDebit(lines);
-  const cr = totalCredit(lines);
-  if (dr !== cr) throw new PostingError(`รายการไม่สมดุล: เดบิต ${dr} · เครดิต ${cr}`);
-}
-
-/** Money Invariant 2 — บรรทัดเงินสดต้องผูกบัญชี · และไม่มีบรรทัดศูนย์ */
-function assertLinesValid(lines: PostingLine[]): void {
-  for (const l of lines) {
-    if (isCashAccount(l.coaCode) && !l.bankAccountId) {
-      throw new PostingError(`บรรทัดเงินสด ${l.coaCode} ต้องระบุบัญชีธนาคาร`);
-    }
-    if (l.debit === 0 && l.credit === 0) {
-      throw new PostingError(`บรรทัด ${l.coaCode} มีทั้งเดบิตและเครดิตเป็นศูนย์`);
-    }
-    if (l.debit > 0 && l.credit > 0) {
-      throw new PostingError(`บรรทัด ${l.coaCode} เป็นได้อย่างเดียว เดบิตหรือเครดิต`);
-    }
-  }
-}
-
-function line(p: Omit<PostingLine, "debit" | "credit"> & { debit?: number; credit?: number }): PostingLine {
-  return { debit: 0, credit: 0, ...p };
-}
+import {
+  assertBalanced,
+  assertBankBelongsTo,
+  bankOwner,
+  assertCashAccountsActive,
+  assertCashLinesHaveAccount,
+  assertEvidencePolicy,
+  assertLinesValid,
+  assertOwnerSelectable,
+  blankToUndefined,
+  line,
+  money,
+  ownerOf,
+  round2,
+  totalCredit,
+  totalDebit,
+} from "./guards";
 
 /**
- * ผู้ถือและบัญชีมาจาก resolver ที่ผู้เรียกส่งเข้ามาเท่านั้น
- *
- * หาไม่เจอ = ข้อมูลไม่ครบ ต้องปฏิเสธด้วย `PostingError` ที่ผู้ใช้อ่านได้
- * ไม่ใช่ปล่อย error ดิบขึ้นจอ และไม่ใช่เดาเป็นผู้ถือ/บัญชีอื่น
- * เพราะผู้ถือผิดแปลว่าเงินไปอยู่ในงบของคนผิดแบบเงียบๆ
+ * ด่านตรวจร่วมอยู่ที่ `guards.ts` — re-export ไว้เพราะหน้าจอและเทสต์เรียกจากที่นี่มาก่อน
+ * และเพื่อให้ "ที่เดียวที่สร้างรายการเงิน" ยังเป็นปากทางเดียวที่ผู้เรียกต้องรู้จัก
  */
-function ownerOf(resolve: LedgerResolver, ownerId: string): OwnerInfo {
-  const o = resolve.owner(ownerId);
-  if (!o) throw new PostingError(`ไม่พบผู้ถือ: ${ownerId}`);
-  return o;
-}
-
-function bankOwner(resolve: LedgerResolver, bankAccountId: string): string {
-  const b = resolve.bankAccount(bankAccountId);
-  if (!b) throw new PostingError(`ไม่พบบัญชีธนาคาร: ${bankAccountId}`);
-  return b.ownerId;
-}
+export { assertBalanced, totalDebit, totalCredit };
 
 /** ตรวจว่ากรอกครบตามที่หมวดย่อยบังคับ ก่อนจะลงบัญชี */
 function assertRequirements(sub: SubCategory, input: PostingInput): void {
@@ -129,82 +87,6 @@ function accrualAccount(sub: SubCategory): string {
   return check.account;
 }
 
-/**
- * ผู้ถือต้องเป็นตัวตนที่ถือทรัพย์ได้จริง — "SRI Family (รวม)" เป็นมุมมองรวม ไม่ใช่เจ้าของ
- * เป็นเงื่อนไขเชิงโครงสร้าง ไม่ใช่นโยบายเอกสาร จึงตรวจตั้งแต่ตอนสร้างบรรทัด
- */
-function assertOwnerSelectable(resolve: LedgerResolver, ownerId: string): void {
-  const owner = ownerOf(resolve, ownerId);
-  if (!owner.selectableAsHolder) {
-    throw new PostingError(`"${owner.name}" เป็นมุมมองรวม เลือกเป็นผู้ถือของรายการไม่ได้`);
-  }
-}
-
-/**
- * Corporate strict — ดักตั้งแต่ที่นี่เพื่อให้ผู้ใช้เห็นข้อความที่เข้าใจได้
- * (DB มี trigger กันอีกชั้นอยู่แล้ว ที่นี่ไม่ได้แทนที่ แต่ช่วยให้รู้ตัวก่อนกดส่ง)
- *
- * แยกออกจากการสร้างบรรทัดโดยตั้งใจ: เอกสารหลักฐานไม่ได้เปลี่ยนคู่บัญชี
- * พรีวิวจึงแสดงบรรทัดได้ทั้งที่ยังไม่แนบไฟล์ แต่ `buildPosting()` จะไม่ยอมปล่อยผ่าน
- */
-function assertEvidencePolicy(input: PostingInput, ownerId: string, resolve: LedgerResolver): void {
-  const owner = ownerOf(resolve, ownerId);
-  if (owner.policy !== "corporate_strict") return;
-  if ((input.attachments?.length ?? 0) === 0) {
-    throw new PostingError(
-      `${owner.name} เป็นนิติบุคคล ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้/สัญญา) ก่อนบันทึก`
-    );
-  }
-  if (!input.contactId) {
-    throw new PostingError(`${owner.name} เป็นนิติบุคคล ต้องระบุคู่ค้าทุกรายการ`);
-  }
-}
-
-/**
- * บัญชีที่ปิดใช้งานแล้วห้ามรับรายการ **ใหม่** (D-092)
- *
- * ตัดสินจาก **บรรทัดที่สร้างได้จริง** ไม่ใช่จาก `input.bankAccountId` —
- * ด้วยวิธีนี้ทุกสาขาถูกไล่ครบโดยไม่ต้องจำว่าสาขาไหนต้องเรียกเพิ่ม:
- * ขาเงินสดของการโอนทั้งต้นทางและปลายทาง · ทั้งสองขาของรายการข้ามผู้ถือ
- * (ผู้ถือและบัญชีปลายทางอ่านจาก resolver เอง ไม่ใช่จากฟอร์ม — บทเรียนข้อ 2)
- * และบรรทัดเงินสดที่สาขาแยกเงินต้น-ดอกเบี้ย/ขายทรัพย์ประกอบขึ้นเอง
- *
- * ผลพลอยได้ที่ตั้งใจ: เส้นทางค้างรับ-ค้างจ่ายไม่มีบรรทัดเงินสดเลย จึงอ้างบัญชีที่ปิดได้
- * การรับรู้ว่าลูกค้าค้างจ่ายเราไม่ควรถูกบล็อกเพราะบัญชีที่จะรับเงินปิดไป
- * ตอนล้างลูกหนี้ด้วยเงินสดจริงจะมีบรรทัดเงินสดและถูกกันที่นั้น ซึ่งเป็นจุดที่ถูกต้อง
- *
- * `isActive !== true` ไม่ใช่ `=== false` — resolver ที่คืนข้อมูลไม่ครบต้องถูกปฏิเสธ
- * ไม่ใช่ถูกตีความว่าเปิดใช้งาน ไม่งั้นวันที่ resolver ตัวใดลืมส่งฟิลด์นี้
- * การกันบัญชีปิดจะหายไปเงียบๆ ทั้งระบบ (บทเรียนข้อ 1 และ ข้อ 3)
- */
-function assertCashAccountsActive(
-  transactions: PostingTransaction[],
-  input: PostingInput,
-  resolve: LedgerResolver
-): void {
-  // ยกเว้นการกลับรายการ: กฎเหล็กข้อ 1 ห้าม DELETE รายการที่ post แล้ว ทางเดียวที่แก้ได้
-  // คือ reverse + ลงใหม่ ถ้ากันแบบไม่มียกเว้น รายการเก่าของบัญชีที่ปิดจะแก้ไม่ได้ตลอดกาล
-  //
-  // อ่านจากธงที่ผู้เรียกบอกเจตนามาตรงๆ เท่านั้น **ห้ามเดาจากเครื่องหมายยอดเงิน
-  // หรือจากหมวดย่อย** เพราะเดาผิดแปลว่าปิดบัญชีไปแล้วยังลงรายการใหม่เข้าไปได้
-  // คือช่องเดียวกับที่ D-092 ตั้งใจปิด
-  if (input.reversal) return;
-
-  for (const t of transactions) {
-    for (const l of t.lines) {
-      if (!l.bankAccountId) continue;
-      const b = resolve.bankAccount(l.bankAccountId);
-      if (!b) throw new PostingError(`ไม่พบบัญชีธนาคาร: ${l.bankAccountId}`);
-      if (b.isActive !== true) {
-        throw new PostingError(
-          `บัญชี "${b.name}" ปิดใช้งานแล้ว (หรือไม่ทราบสถานะ) ลงรายการใหม่เข้าบัญชีนี้ไม่ได้ — ` +
-            "เลือกบัญชีที่ยังเปิดใช้งาน หรือถ้าต้องการแก้รายการเดิมของบัญชีนี้ " +
-            "ให้ใช้การกลับรายการ (reverse) แล้วลงใหม่"
-        );
-      }
-    }
-  }
-}
 
 /**
  * สร้างรายการบัญชีจากสิ่งที่ผู้ใช้กรอก
@@ -225,18 +107,27 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
   const { sub } = found;
   const amount = money(input.amount, "จำนวนเงิน");
   if (amount === 0) throw new PostingError("จำนวนเงินต้องมากกว่า 0");
-  if (!input.bankAccountId) throw new PostingError("ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก");
+
+  /**
+   * บัญชีต้นทาง — **ยังไม่บังคับที่นี่**
+   *
+   * การบังคับบัญชีย้ายไปอยู่ท้ายฟังก์ชัน (`assertCashLinesHaveAccount()`) ซึ่งตัดสินจาก
+   * บรรทัดที่สร้างได้จริง เพราะด่านที่เช็คช่องใน input ก่อนแยกสาขาจะ **ไม่สนใจ
+   * `notYetPaid` เลย** แล้วเส้นทางค้างรับ-ค้างจ่าย (ที่ตั้งใจให้ไม่มีขาเงินสด
+   * และตอนตั้งค้างยังไม่รู้ว่าเงินจะเข้าบัญชีไหน) ใช้ไม่ได้ทั้งเส้น
+   *
+   * `""` จากฟอร์มกับ `undefined` แปลว่า "ยังไม่เลือก" เหมือนกัน — ถ้าไม่ทำให้เท่ากัน
+   * `""` จะถูกส่งต่อไปค้นหาบัญชีแล้วล้มด้วยข้อความ "ไม่พบบัญชีธนาคาร: " ซึ่งชี้ผิดจุด
+   */
+  const bankAccountId = blankToUndefined(input.bankAccountId);
 
   // ผู้ถือต้องถือทรัพย์ได้จริงก่อน ไม่งั้นข้อความจะไปโผล่เป็น "บัญชีไม่ตรงผู้ถือ" ซึ่งชี้ผิดจุด
   assertOwnerSelectable(resolve, input.ownerId);
 
-  // ตรวจว่าบัญชีมีอยู่จริง และเป็นของผู้ถือที่ระบุ
-  const sourceOwner = bankOwner(resolve, input.bankAccountId);
-  if (sourceOwner !== input.ownerId) {
-    throw new PostingError(
-      `บัญชีที่เลือกเป็นของ ${ownerOf(resolve, sourceOwner).name} แต่รายการระบุผู้ถือเป็น ${ownerOf(resolve, input.ownerId).name}`
-    );
-  }
+  // ถ้าส่งบัญชีมา ต้องมีอยู่จริงและเป็นของผู้ถือที่ระบุ **เสมอ** ไม่ว่าเส้นทางไหน —
+  // รวมเส้นทางค้างรับ-ค้างจ่ายที่ไม่ได้ใช้บัญชี เพราะบัญชีผิดคนที่ติดมากับรายการ
+  // จะถูกใช้ตอนยืนยันเงินเข้า-ออกภายหลัง แล้วเงินไปโผล่ในงบของคนอื่น (บทเรียนข้อ 2)
+  if (bankAccountId) assertBankBelongsTo(resolve, bankAccountId, input.ownerId);
 
   assertRequirements(sub, input);
 
@@ -256,9 +147,9 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     // ดูจากธงในตารางกฎ ไม่ใช่รหัสหมวด — หมวดโอนตัวที่สองในอนาคตจะได้ไม่ตกไปเส้นทางปกติ
     // ซึ่งจะเดบิตและเครดิตบัญชีเงินสดเดียวกัน กลายเป็นรายการว่างที่สมดุลผ่านทุกด่าน
     // แล้วบัญชีปลายทางถูกทิ้งเงียบๆ
-    const to = input.transferToBankAccountId;
+    const to = blankToUndefined(input.transferToBankAccountId);
     if (!to) throw new PostingError("โอนระหว่างบัญชีต้องระบุบัญชีปลายทาง");
-    if (to === input.bankAccountId) throw new PostingError("โอนเข้าบัญชีเดียวกันไม่ได้");
+    if (to === bankAccountId) throw new PostingError("โอนเข้าบัญชีเดียวกันไม่ได้");
 
     // อ่านผู้ถือจากบัญชีปลายทางเอง ไม่เชื่อฟิลด์ที่ผู้ใช้เว้นได้
     const targetOwner = bankOwner(resolve, to);
@@ -270,7 +161,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
         ownerId: input.ownerId,
         lines: [
           line({ coaCode: CASH_COA, bankAccountId: to, debit: amount, cfCategory: "none", memo: "รับโอนเข้า" }),
-          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, credit: amount, cfCategory: "none", memo: "โอนออก" }),
+          line({ coaCode: CASH_COA, bankAccountId, credit: amount, cfCategory: "none", memo: "โอนออก" }),
         ],
       });
       summary.push("ยอดรวมกองกลางไม่เปลี่ยน จึงไม่นับในงบกระแสเงินสดและไม่กระทบกำไรขาดทุน");
@@ -294,7 +185,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
         intercompanyNature: nature,
         lines: [
           line({ coaCode: rule.payer.coa, debit: amount, cfCategory: rule.payer.cashflow, memo: rule.label }),
-          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, credit: amount, cfCategory: rule.payer.cashflow }),
+          line({ coaCode: CASH_COA, bankAccountId, credit: amount, cfCategory: rule.payer.cashflow }),
         ],
       });
 
@@ -342,7 +233,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     }
 
     const lines: PostingLine[] = [
-      line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: netProceeds, cfCategory: sub.cashflow }),
+      line({ coaCode: CASH_COA, bankAccountId, debit: netProceeds, cfCategory: sub.cashflow }),
       // ตัดทรัพย์ออก "ตามต้นทุน" ไม่ใช่ราคาขาย
       line({ coaCode: sub.cr, assetId: input.assetId, credit: costBasis, cfCategory: sub.cashflow }),
     ];
@@ -386,12 +277,12 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       // แตกบรรทัดเงินสดตามหมวดกระแสเงินสด: เงินต้นเป็น Investing · ดอกเบี้ยเป็น Operating
       // ถ้ารวมเป็นบรรทัดเดียว CF ลงทุนจะบวมเท่าดอกเบี้ย และดำเนินงานจะขาดไปเท่ากัน
       lines.push(
-        line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: principal, cfCategory: sub.cashflow, memo: "รับคืนเงินต้น" })
+        line({ coaCode: CASH_COA, bankAccountId, debit: principal, cfCategory: sub.cashflow, memo: "รับคืนเงินต้น" })
       );
       lines.push(line({ coaCode: sub.cr, assetId: input.assetId, credit: principal, cfCategory: sub.cashflow, memo: "เงินต้น" }));
       if (interest > 0) {
         lines.push(
-          line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, debit: interest, cfCategory: "operating", memo: "รับดอกเบี้ย" })
+          line({ coaCode: CASH_COA, bankAccountId, debit: interest, cfCategory: "operating", memo: "รับดอกเบี้ย" })
         );
         lines.push(line({ coaCode: sub.interestCoa, credit: interest, cfCategory: "operating", memo: "ดอกเบี้ยรับ" }));
       }
@@ -406,7 +297,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       if (interest > 0) {
         lines.push(line({ coaCode: sub.interestCoa, debit: interest, cfCategory: sub.cashflow, memo: "ดอกเบี้ย" }));
       }
-      lines.push(line({ coaCode: CASH_COA, bankAccountId: input.bankAccountId, credit: amount, cfCategory: sub.cashflow }));
+      lines.push(line({ coaCode: CASH_COA, bankAccountId, credit: amount, cfCategory: sub.cashflow }));
       summary.push(
         `เงินต้น ${principal.toLocaleString("en-US")} ลดหนี้สิน · ดอกเบี้ย ${interest.toLocaleString("en-US")} เป็นค่าใช้จ่าย`
       );
@@ -431,14 +322,14 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       lines: [
         line({
           coaCode: drCode,
-          bankAccountId: drIsCash ? input.bankAccountId : undefined,
+          bankAccountId: drIsCash ? bankAccountId : undefined,
           assetId: coa(drCode).type === "asset" && !drIsCash ? input.assetId : undefined,
           debit: amount,
           cfCategory,
         }),
         line({
           coaCode: crCode,
-          bankAccountId: crIsCash ? input.bankAccountId : undefined,
+          bankAccountId: crIsCash ? bankAccountId : undefined,
           assetId: coa(crCode).type === "asset" && !crIsCash ? input.assetId : undefined,
           credit: amount,
           cfCategory,
@@ -460,6 +351,15 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     }
   }
 
+  /**
+   * บังคับบัญชี **ที่นี่** คือจุดที่รู้แล้วว่ามีบรรทัดเงินสดจริงหรือไม่
+   *
+   * เส้นทางค้างรับ-ค้างจ่ายไม่มีบรรทัดเงินสดเลย จึงผ่านด่านนี้โดยไม่ต้องมีบัญชี
+   * ส่วนทุกเส้นทางที่มีขาเงินสด (รายการสองบรรทัดปกติ · โอนทั้งสองขา · ขายทรัพย์ ·
+   * แยกเงินต้น-ดอกเบี้ยที่สร้างหลายบรรทัด) ถูกไล่ครบโดยไม่ต้องจำว่าสาขาไหนใช้บัญชี
+   */
+  assertCashLinesHaveAccount(transactions);
+
   // ตรวจทุกรายการก่อนส่งออก — ทีละ transaction เพราะ DB ตรวจสมดุลต่อ transaction
   for (const t of transactions) {
     assertBalanced(t.lines);
@@ -470,7 +370,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
   // ซึ่งไม่เปลี่ยนคู่บัญชี จึงปล่อยให้พรีวิวแสดงบรรทัดก่อนไปหาไฟล์ได้
   // แต่บัญชีที่ปิดคือบัญชีที่ลงรายการไม่ได้เลย ถ้าพรีวิวโชว์บรรทัดสวยๆ แล้วกดบันทึกเด้ง
   // ผู้ใช้จะไม่เข้าใจว่าทำไม — บอกตั้งแต่ตอนเลือกบัญชีถูกกว่า
-  assertCashAccountsActive(transactions, input, resolve);
+  assertCashAccountsActive(transactions, resolve, { reversal: input.reversal });
 
   return { transactions, summary };
 }

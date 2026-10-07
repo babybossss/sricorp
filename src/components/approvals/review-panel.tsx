@@ -49,10 +49,12 @@ export function ReviewPanel({
     รออนุมัติ = ยังไม่มีใครยืนยันว่าเงินเคลื่อน จึงพรีวิวเป็นค้างรับ-ค้างจ่ายตามธงที่มากับรายการ
     ตรงกับกฎที่ตกลงกันว่า การอนุมัติไม่ย้ายเงินสด ต้องรอ Management ยืนยันอีกขั้น
 
-    ข้อมูลพอไหม **ให้ engine ตัดสิน** (PostingError จาก buildPostingDraft) ไม่ใช่แผงนี้
-    พรีวิวไม่ได้ = ปุ่มอนุมัติกดไม่ได้
+    ข้อมูลพอไหม **ให้ engine ตัดสิน** ไม่ใช่แผงนี้ — แยกสองอย่าง:
+    - บรรทัดบัญชีที่โชว์ให้อ่าน (`preview`) มาจาก draft ไฟล์แนบไม่เปลี่ยนคู่บัญชี
+    - ปุ่มอนุมัติ (`canApprove`) มาจาก `buildPosting()` ตัวจริง บังคับหลักฐานของนิติบุคคลด้วย
+    เหตุผลที่แสดงคือ `PostingError` ของ engine ตรงๆ
   */
-  const { input, canApprove, blockedReason } = previewApproval(item, MOCK_RESOLVER);
+  const { input, preview, canApprove, blockedReason } = previewApproval(item, MOCK_RESOLVER);
 
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
@@ -94,17 +96,17 @@ export function ReviewPanel({
           </dl>
 
           <div className="flex flex-col gap-2 rounded-card border border-line bg-canvas p-4">
-            {canApprove ? (
-              <JournalPreview input={input} showSummary />
-            ) : (
+            {preview.ok ? <JournalPreview input={input} showSummary /> : null}
+            {!canApprove ? (
               <div role="alert" className="rounded border border-neg bg-neg-bg p-[12px_14px] text-base leading-7 text-neg-fg">
-                <b>ข้อมูลไม่ครบ อนุมัติไม่ได้</b> — ระบบยังไม่รู้ว่าจะลงบัญชีอย่างไร
+                <b>อนุมัติไม่ได้</b>
+                {preview.ok ? " — บรรทัดบัญชีด้านบนยังไม่ถูกบันทึก" : " — ระบบยังไม่รู้ว่าจะลงบัญชีอย่างไร"}
                 <br />
                 เหตุผล: {blockedReason}
                 <br />
                 ต้องให้ {item.by} เติมข้อมูลให้ครบก่อน แล้วจึงส่งกลับมาอนุมัติ
               </div>
-            )}
+            ) : null}
             {canApprove && sub && canAccrueFromForm(sub) ? (
               <div className="text-sm leading-6 text-ink-600">
                 อนุมัติแล้ว<b>ยังไม่ย้ายเงินสด</b> — ต้องให้ Management ยืนยันว่าเงินเข้า/ออกจริงอีกขั้น
