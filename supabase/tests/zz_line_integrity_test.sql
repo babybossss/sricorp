@@ -634,10 +634,14 @@ begin
   end if;
 
   -- 2) ต้องมี DML ครบทุกตารางการเงิน ไม่งั้นข้อ 1 ผ่านฟรีๆ และแอปใช้งานไม่ได้ (สถานะของจริง)
+  --    ข้อยกเว้นเดียว: `owners` ถูก revoke UPDATE ระดับตารางโดยเจตนา แล้ว grant
+  --    เป็นระดับคอลัมน์แทน (20261007000005) เพราะ RLS กันเป็นคอลัมน์ไม่ได้
+  --    → ตรวจแยกในข้อ 2b ว่า column grant ถูกต้องจริง ไม่ใช่ยกเว้นแล้วเลิกตรวจ
   select string_agg(t.c, ', '), count(*) into v, n from (
     select c.relname as c
       from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
      where ns.nspname = 'sri_os' and c.relkind = 'r'
+       and c.relname <> 'owners'
        and (select count(*) from information_schema.role_table_grants g
              where g.table_schema = 'sri_os' and g.grantee = 'authenticated'
                and g.table_name = c.relname
@@ -645,6 +649,24 @@ begin
   ) t;
   if n > 0 then
     raise exception 'FAIL: % ตารางที่ authenticated ไม่มี DML ครบสี่ตัว: % → แอปถูกปฏิเสธที่ชั้น GRANT ก่อนถึง RLS', n, v;
+  end if;
+
+  -- 2b) owners: SELECT/INSERT/DELETE ระดับตารางต้องยังมี · UPDATE ต้องไม่มีระดับตาราง
+  foreach v in array array['SELECT', 'INSERT', 'DELETE'] loop
+    if not exists (
+      select 1 from information_schema.role_table_grants
+       where table_schema = 'sri_os' and table_name = 'owners'
+         and grantee = 'authenticated' and privilege_type = v
+    ) then
+      raise exception 'FAIL: authenticated ไม่มี % บน owners → เพิ่ม/ดูผู้ถือไม่ได้', v;
+    end if;
+  end loop;
+  if exists (
+    select 1 from information_schema.role_table_grants
+     where table_schema = 'sri_os' and table_name = 'owners'
+       and grantee = 'authenticated' and privilege_type = 'UPDATE'
+  ) then
+    raise exception 'FAIL: owners มี UPDATE ระดับตาราง → column grant ของคอลัมน์กติกาไม่มีผล (ปลด corporate_strict ได้ด้วยคำสั่งเดียว)';
   end if;
 
   -- 3) anon ต้องไม่มีอะไรเลย (ระบบนี้ต้องล็อกอินทุกหน้า ไม่มีหน้า public)
@@ -675,7 +697,44 @@ begin
     end if;
   end loop;
 
-  raise notice 'ok P1 · สิทธิ์ตรงกับ migration: DML สี่ตัวครบทุกตาราง · ไม่มี TRUNCATE/REFERENCES/TRIGGER · anon ว่างเปล่า · ฟังก์ชันภายในปิด';
+  raise notice 'ok P1 · สิทธิ์ตรงกับ migration: DML สี่ตัวครบทุกตาราง (owners = column grant) · ไม่มี TRUNCATE/REFERENCES/TRIGGER · anon ว่างเปล่า · ฟังก์ชันภายในปิด';
+end $$;
+
+-- ---------- P1b · RLS ต้องเปิดทุกตาราง และทุกตารางต้องมี policy ----------
+-- ที่มา: P1 เดิมตรวจแต่ ACL จึง **มองไม่เห็น** ว่า asset_classes / asset_categories
+--   ไม่เคยเปิด RLS เลย (relrowsecurity = false · policy 0 ตัว) · ตอนที่ยังไม่มีใคร
+--   มีสิทธิ์ตารางก็ไม่มีผล แต่พอ 20261007000001_grants.sql ให้ DML ครบทุกตาราง
+--   ตารางที่ RLS ปิด = **ไม่มีด่านอะไรเลย** → authenticated ที่ไม่มีแถวใน app_users
+--   ลบ taxonomy ทิ้งได้ทั้งตาราง (ผู้ตรวจยิงผ่านจริง 07/10)
+--   สองเงื่อนไขนี้ต้องคู่กันเสมอ: RLS เปิดแต่ไม่มี policy = ปฏิเสธ**เงียบๆ**
+--   (0 แถว ไม่ใช่ error) ซึ่งเจอมาแล้วว่าทำให้หน้าจอว่างโดยไม่มีอะไรฟ้อง
+do $$
+declare v text; n int;
+begin
+  select string_agg(c.relname, ', ' order by c.relname), count(*) into v, n
+    from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+   where ns.nspname = 'sri_os' and c.relkind = 'r' and not c.relrowsecurity;
+  if n > 0 then
+    raise exception 'FAIL: % ตารางใน sri_os ที่ RLS ปิดอยู่: % · grants ให้ DML ทุกตาราง = RLS ปิดแปลว่าไม่มีด่านเลย', n, v;
+  end if;
+
+  select string_agg(c.relname, ', ' order by c.relname), count(*) into v, n
+    from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+   where ns.nspname = 'sri_os' and c.relkind = 'r'
+     and not exists (select 1 from pg_policies p
+                      where p.schemaname = 'sri_os' and p.tablename = c.relname);
+  if n > 0 then
+    raise exception 'FAIL: % ตารางที่เปิด RLS แต่ไม่มี policy เลย: % · จะปฏิเสธเงียบๆ (0 แถว ไม่ใช่ error) แล้วหน้าจอว่างโดยไม่มีอะไรบอกว่าทำไม', n, v;
+  end if;
+
+  -- กันเทสต์นี้กลายเป็นเทสต์เปล่า (ถ้าวันหนึ่งสคีมาว่าง ข้อบนจะผ่านฟรีๆ)
+  select count(*) into n
+    from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+   where ns.nspname = 'sri_os' and c.relkind = 'r';
+  if n < 24 then
+    raise exception 'FAIL: นับตารางใน sri_os ได้แค่ % ตาราง — เทสต์นี้อาจไม่ได้ตรวจอะไรเลย', n;
+  end if;
+  raise notice 'ok P1b · ทั้ง % ตารางใน sri_os เปิด RLS และมี policy ครบ', n;
 end $$;
 
 -- ---------- P2 · TRUNCATE ถูกบล็อกที่ DB แม้สิทธิ์จะเปิด ----------

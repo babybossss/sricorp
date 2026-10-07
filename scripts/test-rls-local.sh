@@ -6,12 +6,37 @@
 #   anon/authenticated/service_role) → รัน migration ทุกไฟล์เรียงลำดับ
 #   → รัน supabase/tests/*.sql → ลบ DB ทิ้ง
 #
+# ขอบเขตที่ harness นี้ทดสอบ (เขียนไว้เพราะเคยเข้าใจผิด):
+#   มันทดสอบ **สภาพที่ไฟล์ใน supabase/migrations สร้างขึ้น** เท่านั้น
+#   ไม่ใช่ "สภาพจริงของ project oyigmbmxxlfhkrevsmxo"
+#
+#   เคยมี supabase/tests/_legacy_db_state.sql ที่อ้างว่าเป็น "สำเนาสถานะจริง"
+#   (policy ที่ใส่มือไว้บน project และไม่อยู่ในรีโป) แล้วรันแทรกก่อน migration
+#   ที่กำลังทดสอบ · **ลบทิ้งแล้ว (07/10)** เพราะพิสูจน์ได้ว่ามันไม่ได้ทดสอบอะไรเลย:
+#     - สร้าง DB จากไฟล์ล้วน (ไม่ใส่ legacy) → 42 policy
+#     - สร้าง DB แบบใส่ legacy ก่อน          → 42 policy ตัวเดียวกัน
+#     - diff ของสองอัน = **ว่างเปล่า**
+#   เพราะบล็อก SWEEP ใน 20261006190000 ลบ policy ที่ไม่อยู่ใน allow-list ทิ้งหมด
+#   ซึ่งรวมของ legacy ทุกตัว · ไฟล์นั้นจึงให้แต่ **ความมั่นใจผิดๆ** ว่า harness
+#   กำลังตรวจสภาพจริง — แย่กว่าไม่มีไฟล์ เพราะทำให้คนเลิกตั้งคำถาม
+#
+#   ถ้าวันหนึ่งต้องทดสอบกับสภาพจริง: ใช้ snapshot ของ pg_policies / ACL ที่
+#   query ออกมาจาก project จริงในวันนั้น (ของจริง ไม่ใช่เขียนจากความจำ)
+#   แล้วเทียบเป็นขั้นตอนแยกที่บอกวันที่ snapshot ไว้ชัดเจน
+#
 # ใช้: bash scripts/test-rls-local.sh
 # ต้องมี: postgresql-16 ในเครื่อง (pg_ctlcluster 16 main start)
 # ============================================================
 set -euo pipefail
 
-DB=${DB:-srios_test}
+# ชื่อ DB **ไม่ซ้ำกันต่อรอบ** (ต่อ pid ของ shell) เพราะสองรอบที่ซ้อนกันเคยกวนกันจริง:
+# 07/10 มีคนรันสคริปต์นี้ทับระหว่างที่อีกรอบกำลังรัน · ทั้งคู่ dropdb/createdb
+# ชื่อเดียวกัน → connection ของรอบแรกหลุดกลางทาง แล้วขึ้น error ที่ไม่จริง เช่น
+#   migration SKIP 20260918000007_asset_classes_v2.sql (It seems to have just been dropped...)
+#   psql: error: connection to server on socket ... failed
+# ซึ่งเสียเวลาไล่หาสาเหตุในโค้ดที่ไม่ได้ผิด
+# ตั้ง DB=<ชื่อ> เองได้ถ้าต้องการ DB ค้างไว้ส่องหลังรัน (เช่น DB=srios_probe)
+DB=${DB:-srios_test_$$}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 # psql ต้องรันในฐานะ superuser ของ cluster · ไฟล์ส่งผ่าน stdin เพราะ
@@ -23,6 +48,9 @@ else
   psql_run() { psql -v ON_ERROR_STOP=1 -q -d "$DB" -f -; }
   admin()    { eval "$1"; }
 fi
+
+# รอบที่ถูกขัดจังหวะ (Ctrl-C / error) ต้องไม่ทิ้ง DB ค้างไว้ในคลัสเตอร์
+trap 'admin "dropdb --if-exists $DB" >/dev/null 2>&1 || true' EXIT
 
 admin "dropdb --if-exists $DB" >/dev/null
 admin "createdb $DB"
@@ -49,9 +77,10 @@ create schema if not exists sri_os;
 grant usage on schema auth to anon, authenticated, service_role;
 SQL
 
-# migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพื่อให้แทรกสถานะจริงของ project
-# (policy ที่ใส่มือไว้ ไม่อยู่ในรีโป) ก่อน แล้วค่อยปล่อยของใหม่ทับ
-UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql 20261007000003_permission_tables_read_only.sql"}
+# migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพราะหลายไฟล์ของชุดนี้ sweep/revoke
+# ของที่ไฟล์ก่อนหน้าสร้างไว้ · ถ้ารันเรียงชื่อปกติ ไฟล์ seed ที่มาทีหลังจะทับผลลัพธ์
+# (เดิมเหตุผลคือ "ให้แทรกสถานะจริงของ project ก่อน" — ไฟล์นั้นถูกลบแล้ว ดูหัวไฟล์)
+UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql 20261007000001_grants.sql 20261007000002_txn_type_rule_constraints.sql 20261007000003_permission_tables_read_only.sql 20261007000004_rule_tables_read_only.sql 20261007000005_owners_rule_columns_immutable.sql 20261007000006_asset_taxonomy_rls.sql 20261007000007_function_execute_acl.sql"}
 in_under_test() { case " $UNDER_TEST " in *" $1 "*) return 0;; *) return 1;; esac; }
 LOG=${TMPDIR:-/tmp}/srios-mig.log
 
@@ -72,14 +101,10 @@ for f in "$REPO"/supabase/migrations/*.sql; do
   fi
 done
 
-# สถานะจริงที่รีโปไม่มี — ถ้าไม่ใส่ เทสต์จะผ่านทั้งที่ของจริงยังมีช่องโหว่
-echo "  legacy state    _legacy_db_state.sql"
-psql_run < "$REPO/supabase/tests/_legacy_db_state.sql"
-
 for name in $UNDER_TEST; do
   [ -f "$REPO/supabase/migrations/$name" ] || continue
   psql_run < "$REPO/supabase/migrations/$name"
-  echo "  migration ok    $name  (รันหลังสถานะจริง)"
+  echo "  migration ok    $name  (รันท้ายสุดตามลำดับที่ตั้งใจ)"
 done
 
 for t in "$REPO"/supabase/tests/*_test.sql; do

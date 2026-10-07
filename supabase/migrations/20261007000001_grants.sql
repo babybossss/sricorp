@@ -19,8 +19,14 @@
 --     กฎเหล็กข้อ 1 / Money Invariant 4 · มี trg_forbid_truncate กันอีกชั้นที่ DB)
 --     **ไม่มี REFERENCES** (สร้าง FK ชี้ตารางการเงินจากตารางของตัวเองได้ = ล็อกแถวไม่ให้แก้)
 --     **ไม่มี TRIGGER** (สร้าง trigger บนตารางการเงินได้ = แทรกโค้ดในเส้นทางลงบัญชี)
---   · ฟังก์ชัน: ให้ execute เฉพาะตัวที่ RLS/หน้าจอต้องเรียก ไม่ให้ทั้งสคีมาเหมาเข่ง
---     และถอน execute ของ trigger function ออกจากทุกคน (trigger ไม่ต้องมีสิทธิ์ตอนยิง)
+--   · ฟังก์ชัน: ไฟล์นี้ **grant** ตัวที่ RLS/หน้าจอต้องเรียก และ **revoke** trigger function
+--     (trigger ไม่ต้องมีสิทธิ์ตอนยิง) — แต่สองอย่างนี้ **ไม่ได้ปิดฟังก์ชันที่เหลือ**
+--     ตัวที่ไม่เข้าสองกลุ่มยังถือ ACL เริ่มต้นของ Postgres = PUBLIC EXECUTE
+--     ผู้ตรวจ (07/10) พบ 5 ตัวที่เปิด PUBLIC อยู่ รวม `fn_health_check` ที่เป็น
+--     SECURITY DEFINER และคืน transaction_id ข้าม owner
+--     → การ "ปิดก่อนแล้วเปิดตาม allow-list" อยู่ใน
+--       **supabase/migrations/20261007000007_function_execute_acl.sql**
+--     อ่านไฟล์นี้ลำพังแล้วเข้าใจว่าฟังก์ชันปิดหมดแล้ว = เข้าใจผิด
 --
 -- ย้อนกลับ (rollback):
 --   -- revoke all on all tables in schema sri_os from authenticated;

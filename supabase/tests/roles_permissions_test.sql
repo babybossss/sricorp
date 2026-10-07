@@ -458,8 +458,10 @@ begin
   create temporary table t_expect(tbl text, pol text) on commit drop;
   insert into t_expect values
     ('owners','owners_read'),('owners','owners_write'),
-    ('chart_of_accounts','chart_of_accounts_read'),('chart_of_accounts','chart_of_accounts_write'),
-    ('txn_types','txn_types_read'),('txn_types','txn_types_write'),
+    -- ตารางกฎ + ผังบัญชี: **อ่านอย่างเดียว** ไม่มี *_write โดยตั้งใจ (20261007000004)
+    -- เป็นสำเนาของ src/lib/rules/{coa,tx-rules}.ts → แก้ได้จาก migration เท่านั้น
+    ('chart_of_accounts','chart_of_accounts_read'),
+    ('txn_types','txn_types_read'),
     ('contacts','contacts_read'),('contacts','contacts_insert'),('contacts','contacts_update'),
     ('contact_links','contact_links_read'),('contact_links','contact_links_write'),
     ('transactions','transactions_by_owner'),('transactions','txn_insert'),('transactions','txn_update'),
@@ -478,7 +480,10 @@ begin
     -- ถ้ามีใครเพิ่มกลับมา ข้อ "policy เกินที่ตั้งใจ" จะจับได้
     ('roles','roles_read'),
     ('permissions','permissions_read'),
-    ('role_permissions','role_permissions_read');
+    ('role_permissions','role_permissions_read'),
+    -- taxonomy ทรัพย์: เปิด RLS แล้ว (20261007000006) · อ่านอย่างเดียวเช่นกัน
+    ('asset_classes','asset_classes_read'),
+    ('asset_categories','asset_categories_read');
 
   select string_agg(p.tablename || '.' || p.policyname, ', ') into v_extra
     from pg_policies p
