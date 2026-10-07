@@ -519,6 +519,32 @@ select t.id, c.id,
      where code not like '11%' order by code limit 2
   ) c;
 
+-- ใบยืนยันรับ-จ่ายเงิน = ยอดเงินเข้า-ออกจริง · ผูกกับรายการของทรัพย์คนละตัว
+insert into sri_os.cash_confirmations(transaction_id, bank_account_id, expected_amount, actual_amount)
+values ('00000000-0000-0000-0000-00000000c001', '00000000-0000-0000-0000-0000000000b1', 123456, 123456),
+       ('00000000-0000-0000-0000-00000000c002', '00000000-0000-0000-0000-0000000000b1', 999999, 999999);
+
+-- สัญญา + ตารางงวด ผูกทรัพย์คนละตัว (ต้องกรอกครบ ไม่งั้น trg_schedule_complete ปฏิเสธ)
+insert into sri_os.contacts(id, first_name, last_name)
+values ('00000000-0000-0000-0000-00000000f001', 'คู่สัญญา', 'ทดสอบ');
+
+insert into sri_os.contracts(id, code, asset_id, owner_id, type, counterparty_contact_id,
+                             principal, rate, start_date, end_date, file_urls)
+values ('00000000-0000-0000-0000-00000000e001', 'TST-CT1',
+        '00000000-0000-0000-0000-00000000a001',
+        (select id from sri_os.owners where code = 'SRI_CORP'), 'loan_receivable',
+        '00000000-0000-0000-0000-00000000f001', 1000000, 5, current_date,
+        current_date + 365, array['ct1.pdf']),
+       ('00000000-0000-0000-0000-00000000e002', 'TST-CT2',
+        '00000000-0000-0000-0000-00000000a002',
+        (select id from sri_os.owners where code = 'SRI_CORP'), 'loan_receivable',
+        '00000000-0000-0000-0000-00000000f001', 9000000, 5, current_date,
+        current_date + 365, array['ct2.pdf']);
+
+insert into sri_os.schedules(contract_id, period, due_date, expected_amount, principal_amount)
+values ('00000000-0000-0000-0000-00000000e001', 1, current_date, 1000000, 1000000),
+       ('00000000-0000-0000-0000-00000000e002', 1, current_date, 9000000, 9000000);
+
 set local role authenticated;
 
 -- 9.1 assets: Manager เห็นเฉพาะของตัวเอง · ไม่เห็นของ Manager อีกคน · ไม่เห็นที่ยังไม่มอบหมาย
@@ -665,7 +691,132 @@ begin
   raise notice 'ok 9.6 · created_by default auth.uid() ทำให้ insert ... returning (หัวรายการ + บรรทัด) ใช้ได้';
 end $$;
 
+-- 9.7 view ต้องไม่เป็นทางลัดข้าม RLS — NAV ทั้งพอร์ตเคยรั่วทางนี้
+--     A1 = 1,000,000 (ของ mgr) · A2 = 9,000,000 (ของ mgr2)
+do $$
+declare v_direct numeric; v_view numeric;
+begin
+  perform pg_temp.login('mgr');
+  select coalesce(sum(value), 0) into v_direct from sri_os.asset_valuations;
+  select coalesce(sum(value), 0) into v_view   from sri_os.v_asset_latest_value;
+  if v_view <> v_direct or v_view <> 1000000 then
+    raise exception 'FAIL: Manager อ่าน view ได้ % แต่อ่านตารางตรงๆ ได้ % (ต้องเท่ากันและเป็น 1000000) → NAV รั่วผ่าน view', v_view, v_direct;
+  end if;
+
+  perform pg_temp.login('staff');
+  select coalesce(sum(value), 0) into v_view from sri_os.v_asset_latest_value;
+  if v_view <> 0 then
+    raise exception 'FAIL: Staff อ่านมูลค่าผ่าน view ได้ %', v_view;
+  end if;
+
+  perform pg_temp.login('mgmt');
+  select coalesce(sum(value), 0) into v_view from sri_os.v_asset_latest_value;
+  if v_view <> 10000000 then
+    raise exception 'FAIL: Management ต้องเห็น NAV ทั้งพอร์ต (ได้ %)', v_view;
+  end if;
+  raise notice 'ok 9.7 · view เคารพ RLS · Manager 1,000,000 · Staff 0 · Management 10,000,000';
+end $$;
+
+-- 9.8 contracts / schedules ต้องมีขอบเขตทรัพย์ ไม่ใช่กั้นแค่ owner
+do $$
+declare v numeric; v_s numeric;
+begin
+  perform pg_temp.login('mgr');
+  select coalesce(sum(principal), 0) into v from sri_os.contracts where code like 'TST-CT%';
+  select coalesce(sum(principal_amount), 0) into v_s from sri_os.schedules;
+  if v <> 1000000 or v_s <> 1000000 then
+    raise exception 'FAIL: Manager รวมสัญญาได้ % / งวด % (ต้อง 1000000 ทั้งคู่)', v, v_s;
+  end if;
+
+  perform pg_temp.login('staff');
+  select coalesce(sum(principal), 0) into v from sri_os.contracts;
+  select coalesce(sum(principal_amount), 0) into v_s from sri_os.schedules;
+  if v <> 0 or v_s <> 0 then
+    raise exception 'FAIL: Staff อ่านสัญญา/งวดได้ % / %', v, v_s;
+  end if;
+
+  perform pg_temp.login('mgmt');
+  select coalesce(sum(principal), 0) into v from sri_os.contracts where code like 'TST-CT%';
+  if v <> 10000000 then
+    raise exception 'FAIL: Management ต้องเห็นสัญญาทั้งพอร์ต (ได้ %)', v;
+  end if;
+  raise notice 'ok 9.8 · สัญญา/งวด: Manager 1,000,000 · Staff 0 · Management 10,000,000';
+end $$;
+
+-- 9.9 ใบยืนยันรับ-จ่าย = ยอดเงินจริง · เดิมกั้นแค่ owner ของบัญชีธนาคาร → Staff เห็น 123,456
+do $$
+declare v numeric;
+begin
+  perform pg_temp.login('staff');
+  select coalesce(sum(expected_amount), 0) into v from sri_os.cash_confirmations;
+  if v <> 0 then
+    raise exception 'FAIL: Staff เห็นยอดเงินเข้า-ออกจริง % (ต้อง 0)', v;
+  end if;
+
+  -- Manager เห็นได้เฉพาะของเอกสารที่ตัวเองมองเห็น (ทรัพย์ที่ดูแล) ไม่ใช่ทุกใบในบัญชีเดียวกัน
+  perform pg_temp.login('mgr');
+  -- นับเฉพาะใบที่ผูกกับรายการเงิน (ใบที่ผูกร่างมีจากเทสต์ 7.1 และ Manager เห็นร่างได้ตามขอบเขต owner)
+  select coalesce(sum(expected_amount), 0) into v
+    from sri_os.cash_confirmations where transaction_id is not null;
+  if v <> 123456 then
+    raise exception 'FAIL: Manager เห็นใบยืนยันรวม % (ต้อง 123456 เฉพาะของทรัพย์ที่ดูแล)', v;
+  end if;
+
+  perform pg_temp.login('mgmt');
+  select coalesce(sum(expected_amount), 0) into v from sri_os.cash_confirmations;
+  if v < 1123455 then
+    raise exception 'FAIL: Management ต้องเห็นใบยืนยันทั้งหมด (ได้ %)', v;
+  end if;
+  raise notice 'ok 9.9 · ใบยืนยันรับ-จ่าย: Staff 0 · Manager 123,456 · Management ทั้งหมด';
+end $$;
+
 reset role;
+
+-- ============================================================
+-- 10 · กฎเงินต้องไม่ขึ้นกับตารางสิทธิ์
+--   CHECK กันชื่อคีย์เป็นแค่การกันพลาด (txn.delete · lines.remove ผ่านได้)
+--   สิ่งที่กันได้จริงคือ **trigger ที่บังคับกฎเงินไม่เรียก fn_can เลย**
+--   ไม่ว่าใครจะสร้างคีย์ชื่ออะไรในตาราง permissions ก็ปิดกฎไม่ได้
+-- ============================================================
+do $$
+declare v text; n int;
+begin
+  select string_agg(distinct p.proname, ', '), count(distinct p.proname) into v, n
+    from pg_trigger tg
+    join pg_class c  on c.oid = tg.tgrelid
+    join pg_namespace ns on ns.oid = c.relnamespace
+    join pg_proc p   on p.oid = tg.tgfoid
+   where ns.nspname = 'sri_os' and not tg.tgisinternal
+     and p.prosrc ~* 'fn_can';
+  if v is not null then
+    raise exception 'FAIL: trigger function อ้างถึง fn_can — กฎเงินจะถูกปิดได้จากหน้า Settings: %', v;
+  end if;
+
+  select count(distinct p.proname) into n
+    from pg_trigger tg
+    join pg_class c  on c.oid = tg.tgrelid
+    join pg_namespace ns on ns.oid = c.relnamespace
+    join pg_proc p   on p.oid = tg.tgfoid
+   where ns.nspname = 'sri_os' and not tg.tgisinternal;
+  if n < 8 then
+    raise exception 'FAIL: นับ trigger function ได้แค่ % ตัว เทสต์นี้อาจไม่ได้ตรวจอะไรเลย', n;
+  end if;
+  raise notice 'ok 10 · trigger function ทั้ง % ตัวไม่มีตัวไหนเรียก fn_can', n;
+end $$;
+
+-- ทุก view ในสคีมาต้องตั้ง security_invoker ไม่งั้นเป็นทางลัดข้าม RLS
+do $$
+declare v text; n int;
+begin
+  select string_agg(c.relname, ', '), count(*) into v, n
+    from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+   where ns.nspname = 'sri_os' and c.relkind in ('v', 'm')
+     and not coalesce(array_to_string(c.reloptions, ',') ilike '%security_invoker=true%', false);
+  if v is not null then
+    raise exception 'FAIL: view ที่ไม่ได้ตั้ง security_invoker (% ตัว): %', n, v;
+  end if;
+  raise notice 'ok 10b · view ทุกตัวในสคีมาตั้ง security_invoker แล้ว';
+end $$;
 
 do $$ begin raise notice '=== ผ่านทั้งหมด ==='; end $$;
 

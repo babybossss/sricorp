@@ -47,13 +47,14 @@ SQL
 
 # migration ที่กำลังทดสอบ — กันไว้รันทีหลัง เพื่อให้แทรกสถานะจริงของ project
 # (policy ที่ใส่มือไว้ ไม่อยู่ในรีโป) ก่อน แล้วค่อยปล่อยของใหม่ทับ
-UNDER_TEST=${UNDER_TEST:-20261006190000_roles_permissions.sql}
+UNDER_TEST=${UNDER_TEST:-"20261006190000_roles_permissions.sql 20261007000000_line_integrity_and_view_rls.sql"}
+in_under_test() { case " $UNDER_TEST " in *" $1 "*) return 0;; *) return 1;; esac; }
 LOG=${TMPDIR:-/tmp}/srios-mig.log
 
 fail=0
 for f in "$REPO"/supabase/migrations/*.sql; do
   name=$(basename "$f")
-  [ "$name" = "$UNDER_TEST" ] && continue
+  in_under_test "$name" && continue
   if psql_run < "$f" >"$LOG" 2>&1; then
     echo "  migration ok    $name"
   else
@@ -67,10 +68,11 @@ done
 echo "  legacy state    _legacy_db_state.sql"
 psql_run < "$REPO/supabase/tests/_legacy_db_state.sql"
 
-if [ -f "$REPO/supabase/migrations/$UNDER_TEST" ]; then
-  psql_run < "$REPO/supabase/migrations/$UNDER_TEST"
-  echo "  migration ok    $UNDER_TEST  (รันหลังสถานะจริง)"
-fi
+for name in $UNDER_TEST; do
+  [ -f "$REPO/supabase/migrations/$name" ] || continue
+  psql_run < "$REPO/supabase/migrations/$name"
+  echo "  migration ok    $name  (รันหลังสถานะจริง)"
+done
 
 for t in "$REPO"/supabase/tests/*_test.sql; do
   echo "== test $(basename "$t")"
