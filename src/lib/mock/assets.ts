@@ -23,7 +23,7 @@ export const FREQUENCY_LABEL: Record<Frequency, string> = {
 export const PER_YEAR: Record<Frequency, number> = { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
 
 /** ทรัพย์เป็นอะไร — ชุดนี้มาจากค่าที่โผล่จริงในไฟล์ของลูกพี่ */
-export type AssetKind = "condo" | "house" | "townhome" | "land" | "commercial" | "warehouse";
+export type AssetKind = "condo" | "house" | "townhome" | "land" | "commercial" | "warehouse" | "other";
 export const KIND_LABEL: Record<AssetKind, string> = {
   condo: "คอนโด",
   house: "บ้าน",
@@ -31,16 +31,20 @@ export const KIND_LABEL: Record<AssetKind, string> = {
   land: "ที่ดินเปล่า",
   commercial: "อาคารพาณิชย์",
   warehouse: "คลังสินค้า",
+  /** ทรัพย์ที่เพิ่งลงทะเบียนด้วย 4 ช่องบังคับ — ยังไม่ได้ระบุชนิด (เติมทีหลังได้ตาม D-083 ข้อ 3) */
+  other: "ยังไม่ระบุชนิด",
 };
 
 /** ถือไว้ทำอะไร — ตัวนี้คือสิ่งที่ลูกพี่เรียกว่า "ประเภททรัพย์" ตอนกรองและดูสัดส่วน */
-export type HoldingType = "rental" | "srr" | "mortgage" | "loan" | "for_sale";
+export type HoldingType = "rental" | "srr" | "mortgage" | "loan" | "for_sale" | "unset";
 export const HOLDING_LABEL: Record<HoldingType, string> = {
   rental: "ปล่อยเช่า",
   srr: "สัญญาขายฝาก",
   mortgage: "สัญญาจำนอง",
   loan: "ปล่อยกู้ถือโฉนด",
   for_sale: "รอขาย",
+  /** ลงทะเบียนแล้วแต่หมวดย่อยไม่บอกว่าถือไว้ทำอะไร — ห้ามเดาให้ว่าเป็นปล่อยเช่าหรือรอขาย */
+  unset: "ยังไม่ระบุประเภทการถือ",
 };
 
 export type RecurringPlan = {
@@ -125,6 +129,17 @@ export type AssetRef = {
   };
 
   note?: string;
+
+  /**
+   * หมวดตามผังหมวดทรัพย์ (`src/lib/rules/asset-classes.ts`) — 2 ใน 4 ช่องบังคับของ D-083
+   * ทรัพย์เดิมในไฟล์ของลูกพี่ยังไม่มีค่านี้ (ว่างได้) · ทรัพย์ที่เกิดจากการลงทะเบียนใหม่มีเสมอ
+   */
+  classCode?: string;
+  categoryCode?: string;
+  /** ช่องที่ร่างแก้ไขได้ (ตรงกับคอลัมน์ `assets.funding_source` / `ownership_pct`) */
+  fundingSource?: string;
+  /** สัดส่วนถือครอง 0 < x ≤ 1 */
+  ownershipPct?: number;
 };
 
 export const ASSETS: AssetRef[] = [
@@ -301,3 +316,146 @@ export function yieldPct(a: AssetRef): number | null {
   if (a.status !== "active" || !a.cost) return null;
   return (yearlyFor(a).net / a.cost) * 100;
 }
+
+/* ============================================================
+   ยอดรวมของพอร์ต — **รับได้เฉพาะ `AssetRef[]` (ทรัพย์ที่อนุมัติแล้ว)**
+   ============================================================
+
+   ร่างทะเบียน (`AssetDraft`) เป็นคนละ type กับ `AssetRef` โดยตั้งใจ ตามเจตนาของ
+   ADR 0001: ร่างไม่อยู่ในตาราง `assets` จึงไม่ถูกนับ "โดยโครงสร้าง ไม่ใช่โดยความจำ"
+   ฟังก์ชันสองตัวนี้จึงส่งร่างเข้ามาไม่ได้ (typecheck ไม่ผ่าน) และทั้ง Dashboard
+   กับยอดรวมท้ายตารางต้องเรียกผ่านที่นี่ที่เดียว — ห้ามรวมเองในหน้าจอ
+   */
+
+export type PortfolioTotals = {
+  count: number;
+  activeCount: number;
+  cost: number;
+  value: number;
+  netMonth: number;
+  netYear: number;
+};
+
+export function portfolioTotals(assets: readonly AssetRef[]): PortfolioTotals {
+  return assets.reduce<PortfolioTotals>(
+    (t, a) => ({
+      count: t.count + 1,
+      activeCount: t.activeCount + (a.status === "active" ? 1 : 0),
+      cost: t.cost + a.cost,
+      value: t.value + currentValue(a).value,
+      netMonth: t.netMonth + monthlyFor(a).net,
+      netYear: t.netYear + yearlyFor(a).net,
+    }),
+    { count: 0, activeCount: 0, cost: 0, value: 0, netMonth: 0, netYear: 0 }
+  );
+}
+
+/** สัดส่วนประเภททรัพย์ — คิดจากมูลค่าปัจจุบัน ไม่ใช่จำนวนชิ้น */
+export function holdingMix(assets: readonly AssetRef[]): { h: HoldingType; value: number; pct: number }[] {
+  const total = assets.reduce((t, a) => t + currentValue(a).value, 0);
+  return (Object.keys(HOLDING_LABEL) as HoldingType[])
+    .map((h) => {
+      const value = assets.filter((a) => a.holding === h).reduce((t, a) => t + currentValue(a).value, 0);
+      return { h, value, pct: total ? (value / total) * 100 : 0 };
+    })
+    .filter((m) => m.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+/**
+ * หมวดย่อยในผังหมวดทรัพย์ → ประเภทการถือ — **เฉพาะที่หมวดบอกชัดอยู่แล้ว**
+ * หมวดอื่นคืน `unset` ไม่เดา (เดาผิด = สัดส่วนในแถบ Dashboard ผิดเงียบๆ)
+ */
+export const HOLDING_BY_CATEGORY: Record<string, HoldingType> = {
+  RE_RENTAL: "rental",
+  RE_FOR_SALE: "for_sale",
+  RE_SRR: "srr",
+};
+
+/* ============================================================
+   ร่างทะเบียนทรัพย์ (mock) — รูปร่างตรงกับตาราง `asset_drafts`
+   (`supabase/migrations/20261008000000_asset_permissions.sql`)
+   ============================================================ */
+
+export type DraftKind = "create" | "update";
+export type DraftStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+/**
+ * ช่องที่เสนอแก้ — **key ที่ไม่มีใน patch = ไม่แตะ** · key ที่มีค่า `null` = ลบค่าออก
+ * สองอย่างนี้ห้ามปนกัน (ปนแล้ว diff จะแสดงว่าลบหรือไม่เปลี่ยนผิด)
+ */
+export type DraftPatch = Record<string, string | number | null>;
+
+export type DraftActor = { id: string; name: string };
+
+export type AssetDraft = {
+  id: string;
+  kind: DraftKind;
+  /** kind='update' ชี้ทรัพย์จริง · kind='create' ต้องเป็น null (CHECK ใน DB) */
+  targetAssetId: string | null;
+  ownerId: string;
+  /** 4 ช่องบังคับของ D-083 — บังคับเมื่อ kind='create' · kind='update' ต้องเป็น null (ส่งผ่าน patch) */
+  name: string | null;
+  classCode: string | null;
+  categoryCode: string | null;
+  patch: DraftPatch;
+  note?: string;
+  status: DraftStatus;
+  rejectReason?: string;
+  /** ตั้งได้ตอนอนุมัติเท่านั้น */
+  appliedAssetId?: string | null;
+  createdBy: DraftActor;
+  /** ISO 8601 */
+  createdAt: string;
+  reviewedBy?: DraftActor;
+  reviewedAt?: string;
+};
+
+/** ผู้ใช้จำลองในข้อมูลตัวอย่าง — id ไม่ตรงกับผู้ใช้จริงที่ล็อกอิน (จึงไม่เคยถูกนับเป็น "ร่างของฉัน") */
+const MOCK_STAFF: DraftActor = { id: "mock-staff-1", name: "พนักงานตัวอย่าง (Staff)" };
+const MOCK_MANAGER: DraftActor = { id: "mock-manager-1", name: "ผู้จัดการตัวอย่าง (Manager)" };
+
+export const ASSET_DRAFTS: AssetDraft[] = [
+  {
+    id: "d1",
+    kind: "create",
+    targetAssetId: null,
+    ownerId: "corp",
+    name: "ที่ดินตัวอย่าง F",
+    classCode: "RE",
+    categoryCode: "RE_FOR_SALE",
+    patch: { location: "บางนา กรุงเทพมหานคร", size_note: "2 ไร่ 1 งาน" },
+    note: "ซื้อมาเตรียมขาย ยังไม่ได้ตีราคา",
+    status: "pending",
+    createdBy: MOCK_STAFF,
+    createdAt: "2026-10-06T09:12:00+07:00",
+  },
+  {
+    // ร่างแก้ไขที่ครบทุกแบบของ diff: เปลี่ยนค่า · ลบค่าออก · เพิ่มค่าใหม่
+    id: "d2",
+    kind: "update",
+    targetAssetId: "rent1",
+    ownerId: "thanakorn",
+    name: null,
+    classCode: null,
+    categoryCode: null,
+    patch: { name: "คอนโดตัวอย่าง C (ห้อง 12A)", size_note: null, funding_source: "เงินกู้ SCB + เงินสะสม" },
+    note: "แก้ชื่อให้ตรงกับห้องจริง · ขนาดในโฉนดไม่ตรง รอตรวจใหม่",
+    status: "pending",
+    createdBy: MOCK_STAFF,
+    createdAt: "2026-10-07T10:30:00+07:00",
+  },
+  {
+    id: "d3",
+    kind: "create",
+    targetAssetId: null,
+    ownerId: "sutee",
+    name: "ทาวน์โฮมตัวอย่าง G",
+    classCode: "RE",
+    categoryCode: "RE_RENTAL",
+    patch: {},
+    status: "pending",
+    createdBy: MOCK_MANAGER,
+    createdAt: "2026-10-07T11:05:00+07:00",
+  },
+];

@@ -4,23 +4,28 @@ import * as React from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
-  ASSETS, monthlyFor, monthlyOf, yearlyFor, currentValue, yieldPct,
+  monthlyFor, monthlyOf, currentValue, yieldPct, portfolioTotals, holdingMix,
   FREQUENCY_LABEL, HOLDING_LABEL, KIND_LABEL, VALUE_BASIS_LABEL,
-  type AssetRef, type HoldingType,
+  type AssetRef, type AssetDraft, type HoldingType,
 } from "@/lib/mock/assets";
 import { entityById } from "@/lib/mock/entities";
 import { money, signedMoney } from "@/lib/format";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
-import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { Button } from "./tall-button";
+import { Select } from "./fields";
 import { Field } from "@/components/ui/field";
-import { Dialog, SheetContent, DialogHeader, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
+import { Dialog, SheetContent, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { AssetMap } from "./asset-map";
 import { MapsLinkField } from "./maps-link-field";
 import { AssetKindIcon } from "./asset-kind-icon";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { useAssetStore } from "./asset-store";
+import { canSeeDraftQueue, registerMode, sheetActions, visibleDrafts, type Perms } from "./asset-drafts";
+import { LINK_BUTTON_CLASS, SheetHeader } from "./draft-parts";
+import { ProposeEditDialog } from "./propose-edit-dialog";
 
 type Layout = "table" | "cards" | "map";
 type SortKey = "name" | "value" | "net" | "yield" | "cost";
@@ -33,13 +38,18 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: "name", label: "ชื่อทรัพย์ ก–ฮ" },
 ];
 
-/** สีประจำประเภทการถือ — ใช้ทั้งแถบสัดส่วนและป้ายในตาราง ให้ตาจับคู่กันได้ */
+/**
+ * สีประจำประเภทการถือ — ใช้ทั้งแถบสัดส่วนและจุดในคำอธิบาย ให้ตาจับคู่กันได้
+ * เป็นคลาสโทเคนจาก `tailwind.config.ts` (เดิมเป็น hex ตรงๆ ซึ่งผิดกติกา) ·
+ * ความหมายอ่านได้จากข้อความ+เปอร์เซ็นต์ข้างจุดเสมอ ไม่พึ่งสีอย่างเดียว
+ */
 const HOLDING_TONE: Record<HoldingType, string> = {
-  rental: "#2563eb",
-  srr: "#7c3aed",
-  mortgage: "#0f766e",
-  loan: "#b45309",
-  for_sale: "#64748b",
+  rental: "bg-brand-600",
+  srr: "bg-info",
+  mortgage: "bg-pos",
+  loan: "bg-warn",
+  for_sale: "bg-ink-600",
+  unset: "bg-ink-400",
 };
 
 /**
@@ -48,7 +58,14 @@ const HOLDING_TONE: Record<HoldingType, string> = {
  * ตัวเลขทุกตัวเป็น**ต่อเดือน** · โครงข้อมูลอ้างอิงไฟล์ ASSET HOLDING ของลูกพี่
  * หน้านี้เป็นต้นทางของ Auto-Key (D-067) และของราคาประเมินที่ใช้ตีมูลค่าในงบดุล
  */
-export function AssetManager() {
+export function AssetManager({ currentUser }: { currentUser: { id: string; name: string } }) {
+  const perms: Perms = usePermissions();
+  /*
+    **ทุกยอดในหน้านี้อ่านจาก `assets` (อนุมัติแล้ว) เท่านั้น** — ร่างอยู่ใน `drafts` แยกต่างหาก
+    และไม่เคยถูกส่งเข้า `portfolioTotals` / `holdingMix` (ADR 0001)
+  */
+  const assets = useAssetStore((s) => s.assets);
+  const allDrafts = useAssetStore((s) => s.drafts);
   const [layout, setLayout] = React.useState<Layout>("table");
   const [holding, setHolding] = React.useState<HoldingType | "all">("all");
   const [status, setStatus] = React.useState<"all" | "active" | "inactive">("all");
@@ -56,7 +73,7 @@ export function AssetManager() {
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   const rows = React.useMemo(() => {
-    const out = ASSETS.filter(
+    const out = assets.filter(
       (a) => (holding === "all" || a.holding === holding) && (status === "all" || a.status === status)
     );
     const by: Record<SortKey, (a: AssetRef) => number | string> = {
@@ -71,20 +88,21 @@ export function AssetManager() {
       const b = by[sort](y);
       return typeof a === "string" ? a.localeCompare(b as string, "th") : (a as number) - (b as number);
     });
-  }, [holding, status, sort]);
+  }, [assets, holding, status, sort]);
 
   const openAsset = React.useCallback((id: string) => setOpenId(id), []);
 
   return (
     <div className="flex flex-col gap-4 pb-24">
-      <Dashboard />
+      <DraftStrip perms={perms} allDrafts={allDrafts} userId={currentUser.id} />
+      <Dashboard assets={assets} />
 
       <div className="flex flex-wrap items-end gap-3 rounded-card border border-line bg-surface p-[14px_18px] shadow-card">
         <Field label="ประเภททรัพย์" className="min-w-[220px]">
           <Select value={holding} onChange={(e) => setHolding(e.target.value as HoldingType | "all")}>
-            <option value="all">ทุกประเภท ({ASSETS.length})</option>
+            <option value="all">ทุกประเภท ({assets.length})</option>
             {(Object.keys(HOLDING_LABEL) as HoldingType[]).map((h) => {
-              const n = ASSETS.filter((a) => a.holding === h).length;
+              const n = assets.filter((a) => a.holding === h).length;
               return (
                 <option key={h} value={h} disabled={n === 0}>
                   {HOLDING_LABEL[h]} ({n})
@@ -112,7 +130,7 @@ export function AssetManager() {
 
         <div className="ml-auto flex gap-2">
           {([["table", "ตาราง"], ["cards", "การ์ด"], ["map", "แผนที่"]] as [Layout, string][]).map(([k, label]) => (
-            <Button key={k} size="sm" variant={layout === k ? "primary" : "secondary"} onClick={() => setLayout(k)}>
+            <Button key={k} variant={layout === k ? "primary" : "secondary"} onClick={() => setLayout(k)}>
               {label}
             </Button>
           ))}
@@ -123,45 +141,74 @@ export function AssetManager() {
       {layout === "cards" ? <CardLayout rows={rows} onOpen={openAsset} /> : null}
       {layout === "map" ? <AssetMap rows={rows} onOpen={openAsset} /> : null}
 
-      <AssetSheet asset={ASSETS.find((a) => a.id === openId) ?? null} onClose={() => setOpenId(null)} />
+      <AssetSheet asset={assets.find((a) => a.id === openId) ?? null} perms={perms} currentUser={currentUser} onClose={() => setOpenId(null)} />
+    </div>
+  );
+}
+
+/* ---------- ทางเข้าลงทะเบียน + คิวร่าง ---------- */
+
+/**
+ * ปุ่มลงทะเบียน/คิวร่าง — โชว์ตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย · RLS คือของจริง)
+ * และบอกตรงนี้เลยว่ามีร่างค้างกี่รายการ **ที่ยังไม่อยู่ในตัวเลขด้านล่าง** — คนอ่านพอร์ตจะได้ไม่งง
+ * ว่าทรัพย์ที่เพิ่งลงไปหายไปไหน
+ */
+function DraftStrip({ perms, allDrafts, userId }: { perms: Perms; allDrafts: AssetDraft[]; userId: string }) {
+  const mode = registerMode(perms);
+  const queue = canSeeDraftQueue(perms);
+  const pending = visibleDrafts(allDrafts, perms, userId).filter((d) => d.status === "pending").length;
+  if (mode === "none" && !queue) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface p-[14px_18px] shadow-card" data-testid="draft-strip">
+      {pending > 0 ? (
+        <div className="mr-auto text-base" data-testid="draft-strip-note">
+          <b>มีร่างรออนุมัติ {pending} รายการ</b>
+          <span className="text-ink-600"> — ยังไม่ถูกนับในตัวเลขของหน้านี้</span>
+        </div>
+      ) : (
+        <div className="mr-auto text-base text-ink-600">ไม่มีร่างค้างอนุมัติ</div>
+      )}
+      {mode !== "none" ? (
+        <Link href="/assets/new" className={cn(LINK_BUTTON_CLASS, "border-brand-600 bg-brand-600 text-white hover:bg-brand-700")}>
+          ลงทะเบียนทรัพย์
+        </Link>
+      ) : null}
+      {queue ? (
+        <Link href="/assets/drafts" className={cn(LINK_BUTTON_CLASS, "border-line bg-surface text-ink-900 hover:border-ink-400")}>
+          คิวร่าง ({pending})
+        </Link>
+      ) : null}
     </div>
   );
 }
 
 /* ---------- แถบสรุปข้างบน ---------- */
 
-function Dashboard() {
-  const active = ASSETS.filter((a) => a.status === "active");
-  const totalValue = ASSETS.reduce((t, a) => t + currentValue(a).value, 0);
-  const totalCost = ASSETS.reduce((t, a) => t + a.cost, 0);
-  const netMonth = ASSETS.reduce((t, a) => t + monthlyFor(a).net, 0);
-  const netYear = ASSETS.reduce((t, a) => t + yearlyFor(a).net, 0);
-
-  /* สัดส่วนคิดจาก**มูลค่าปัจจุบัน** ไม่ใช่จำนวนชิ้น — ที่ดินผืนเดียวอาจใหญ่กว่าคอนโดห้าห้องรวมกัน */
-  const mix = (Object.keys(HOLDING_LABEL) as HoldingType[])
-    .map((h) => {
-      const v = ASSETS.filter((a) => a.holding === h).reduce((t, a) => t + currentValue(a).value, 0);
-      return { h, value: v, pct: totalValue ? (v / totalValue) * 100 : 0 };
-    })
-    .filter((m) => m.value > 0)
-    .sort((a, b) => b.value - a.value);
+function Dashboard({ assets }: { assets: AssetRef[] }) {
+  const t = portfolioTotals(assets);
+  const totalValue = t.value;
+  const totalCost = t.cost;
+  const netMonth = t.netMonth;
+  const netYear = t.netYear;
+  const mix = holdingMix(assets);
 
   return (
     <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
       <div className="flex flex-col gap-2.5 rounded-card border border-line bg-surface p-[16px_20px] shadow-card">
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-base font-semibold">สัดส่วนประเภททรัพย์</span>
-          <span className="text-sm text-ink-400">คิดจากมูลค่าปัจจุบัน {money(totalValue)}</span>
+          <span className="text-sm text-ink-600">คิดจากมูลค่าปัจจุบัน {money(totalValue)} (ไม่รวมร่าง)</span>
         </div>
         <div className="flex h-3 overflow-hidden rounded-pill">
           {mix.map((m) => (
-            <div key={m.h} style={{ width: `${m.pct}%`, background: HOLDING_TONE[m.h] }} title={HOLDING_LABEL[m.h]} />
+            <div key={m.h} className={HOLDING_TONE[m.h]} style={{ width: `${m.pct}%` }} title={HOLDING_LABEL[m.h]} />
           ))}
         </div>
         <div className="flex flex-wrap gap-x-5 gap-y-1.5">
           {mix.map((m) => (
             <span key={m.h} className="inline-flex items-center gap-1.5 text-base">
-              <span className="h-2.5 w-2.5 flex-none rounded-pill" style={{ background: HOLDING_TONE[m.h] }} />
+              <span className={cn("h-2.5 w-2.5 flex-none rounded-pill", HOLDING_TONE[m.h])} />
               {HOLDING_LABEL[m.h]}
               <b className="tabular-nums">{m.pct.toFixed(1)}%</b>
             </span>
@@ -173,7 +220,7 @@ function Dashboard() {
         <Figure label="ผลตอบแทนต่อปี" value={totalCost ? `${((netYear / totalCost) * 100).toFixed(2)}%` : "—"} tone="pos" strong
           sub="คิดจากต้นทุนรวม" />
         <Figure label="สุทธิต่อเดือน" value={signedMoney(netMonth)} tone={netMonth < 0 ? "neg" : "pos"}
-          sub={`ทรัพย์ที่สร้างรายได้ ${active.length} / ${ASSETS.length}`} />
+          sub={`ทรัพย์ที่สร้างรายได้ ${t.activeCount} / ${t.count}`} />
       </div>
     </div>
   );
@@ -182,11 +229,11 @@ function Dashboard() {
 function Figure({ label, value, sub, tone, strong }: { label: string; value: string; sub?: string; tone?: "pos" | "neg"; strong?: boolean }) {
   return (
     <div>
-      <div className="text-sm text-ink-400">{label}</div>
-      <div className={cn("tabular-nums font-semibold", strong ? "text-h1" : "text-h2", tone === "pos" && "text-pos", tone === "neg" && "text-neg")}>
+      <div className="text-sm text-ink-600">{label}</div>
+      <div className={cn("tabular-nums font-semibold", strong ? "text-h1" : "text-h2", tone === "pos" && "text-pos-fg", tone === "neg" && "text-neg-fg")}>
         {value}
       </div>
-      {sub ? <div className="text-sm text-ink-400">{sub}</div> : null}
+      {sub ? <div className="text-sm text-ink-600">{sub}</div> : null}
     </div>
   );
 }
@@ -230,15 +277,15 @@ function Owner({ ownerId }: { ownerId: string }) {
 
 function Net({ asset, className }: { asset: AssetRef; className?: string }) {
   const m = monthlyFor(asset);
-  if (asset.status !== "active") return <span className={cn("text-ink-400", className)}>—</span>;
-  return <span className={cn("tabular-nums font-semibold", m.net < 0 ? "text-neg" : "text-pos", className)}>{signedMoney(m.net)}</span>;
+  if (asset.status !== "active") return <span className={cn("text-ink-600", className)}>—</span>;
+  return <span className={cn("tabular-nums font-semibold", m.net < 0 ? "text-neg-fg" : "text-pos-fg", className)}>{signedMoney(m.net)}</span>;
 }
 
 function AssetName({ asset }: { asset: AssetRef }) {
   return (
     <span className="min-w-0">
       <span className="block whitespace-nowrap font-semibold">{asset.name}</span>
-      <span className="block text-sm text-ink-400">
+      <span className="block text-sm text-ink-600">
         {KIND_LABEL[asset.kind]} · {HOLDING_LABEL[asset.holding]}
       </span>
     </span>
@@ -248,10 +295,8 @@ function AssetName({ asset }: { asset: AssetRef }) {
 /* ---------- แบบ A · ตาราง ---------- */
 
 function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
-  const totals = rows.reduce(
-    (t, a) => ({ cost: t.cost + a.cost, value: t.value + currentValue(a).value, net: t.net + monthlyFor(a).net }),
-    { cost: 0, value: 0, net: 0 }
-  );
+  const pt = portfolioTotals(rows);
+  const totals = { cost: pt.cost, value: pt.value, net: pt.netMonth };
 
   return (
     <TableShell>
@@ -288,11 +333,11 @@ function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) 
                 <Td align="right" className="whitespace-nowrap tabular-nums">{money(a.cost)}</Td>
                 <Td align="right" className="whitespace-nowrap tabular-nums">
                   {money(cv.value)}
-                  {cv.basis === "cost" ? <span className="block text-sm text-ink-400">ยังไม่ประเมิน</span> : null}
+                  {cv.basis === "cost" ? <span className="block text-sm text-ink-600">ยังไม่ประเมิน</span> : null}
                 </Td>
                 <Td align="right" className="whitespace-nowrap"><Net asset={a} /></Td>
                 <Td align="right" className="whitespace-nowrap tabular-nums">
-                  {y === null ? <span className="text-ink-400">—</span> : <b className={y < 0 ? "text-neg" : "text-pos"}>{y.toFixed(2)}%</b>}
+                  {y === null ? <span className="text-ink-600">—</span> : <b className={y < 0 ? "text-neg-fg" : "text-pos-fg"}>{y.toFixed(2)}%</b>}
                 </Td>
               </tr>
             );
@@ -307,7 +352,7 @@ function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) 
             <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">{money(totals.cost)}</Td>
             <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">{money(totals.value)}</Td>
             <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">
-              <span className={totals.net < 0 ? "text-neg" : "text-pos"}>{signedMoney(totals.net)}</span>
+              <span className={totals.net < 0 ? "text-neg-fg" : "text-pos-fg"}>{signedMoney(totals.net)}</span>
             </Td>
             <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">
               {totals.cost ? `${(((totals.net * 12) / totals.cost) * 100).toFixed(2)}%` : "—"}
@@ -350,18 +395,18 @@ function CardLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) =
               <div className="flex items-start gap-2">
                 <div className="mr-auto min-w-0">
                   <div className="font-semibold">{a.name}</div>
-                  <div className="text-sm text-ink-400">{KIND_LABEL[a.kind]} · {HOLDING_LABEL[a.holding]}</div>
+                  <div className="text-sm text-ink-600">{KIND_LABEL[a.kind]} · {HOLDING_LABEL[a.holding]}</div>
                 </div>
                 <StatusChip asset={a} />
               </div>
               <Owner ownerId={a.ownerId} />
               <div className="mt-auto flex items-end justify-between border-t border-line pt-2.5">
-                <div className="text-sm text-ink-400">
+                <div className="text-sm text-ink-600">
                   <div>ต้นทุน {money(a.cost)}</div>
                   <div>มูลค่า {money(cv.value)}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-ink-400">สุทธิ/เดือน</div>
+                  <div className="text-sm text-ink-600">สุทธิ/เดือน</div>
                   <Net asset={a} className="text-h2" />
                 </div>
               </div>
@@ -375,9 +420,26 @@ function CardLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) =
 
 /* ---------- แผงขวา ---------- */
 
-function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () => void }) {
+function AssetSheet({
+  asset,
+  perms,
+  currentUser,
+  onClose,
+}: {
+  asset: AssetRef | null;
+  perms: Perms;
+  currentUser: { id: string; name: string };
+  onClose: () => void;
+}) {
   const showToast = useApp((s) => s.showToast);
+  const drafts = useAssetStore((s) => s.drafts);
+  const [proposing, setProposing] = React.useState(false);
   if (!asset) return null;
+
+  // ร่างแก้ไขที่ค้างของทรัพย์นี้ (เฉพาะที่ผู้ใช้มีสิทธิ์เห็น) — บอกไว้ว่ายังไม่มีผลกับตัวเลขข้างบน
+  const pendingEdits = visibleDrafts(drafts, perms, currentUser.id).filter(
+    (d) => d.status === "pending" && d.kind === "update" && d.targetAssetId === asset.id
+  ).length;
 
   const m = monthlyFor(asset);
   const cv = currentValue(asset);
@@ -388,7 +450,7 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <SheetContent aria-describedby={undefined} width="max-w-[620px]">
         <DialogPrimitive.Title className="sr-only">รายละเอียดทรัพย์</DialogPrimitive.Title>
-        <DialogHeader title={asset.name} onClose={onClose} />
+        <SheetHeader title={asset.name} onClose={onClose} />
 
         <div className="flex flex-1 flex-col gap-5 overflow-auto p-[20px_24px]">
           <div className="flex gap-4">
@@ -397,12 +459,17 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
               <StatusChip asset={asset} />
               <div className="text-base text-ink-600">{KIND_LABEL[asset.kind]} · {HOLDING_LABEL[asset.holding]}</div>
               <Owner ownerId={asset.ownerId} />
-              <Button variant="secondary" size="sm" onClick={() => showToast("ตัวอย่างหน้าจอ — ต่อ Supabase Storage แล้วจะอัพรูปได้จริง")}>
+              <Button variant="secondary" onClick={() => showToast("ตัวอย่างหน้าจอ — ต่อ Supabase Storage แล้วจะอัพรูปได้จริง")}>
                 เปลี่ยนรูป
               </Button>
             </div>
           </div>
           {asset.statusNote ? <div className="text-base text-ink-600">{asset.statusNote}</div> : null}
+          {pendingEdits > 0 ? (
+            <div role="note" className="rounded border border-warn bg-warn-bg p-[10px_12px] text-base leading-7 text-warn-fg">
+              มีร่างแก้ไขทรัพย์นี้รออนุมัติ {pendingEdits} รายการ — ข้อมูลข้างล่างยังเป็นค่าเดิม
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Mini label="ต้นทุน" value={money(asset.cost)} />
@@ -518,7 +585,7 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
                   <li key={r.id} className="flex flex-wrap items-center gap-2 rounded-card border border-line bg-canvas p-[12px_14px]">
                     <div className="mr-auto">
                       <div className="text-base font-semibold">{r.label}</div>
-                      <div className="text-sm text-ink-400">
+                      <div className="text-sm text-ink-600">
                         {FREQUENCY_LABEL[r.frequency]} · {money(r.amount)} ต่องวด · เฉลี่ย {money(monthlyOf(r))} ต่อเดือน
                       </div>
                     </div>
@@ -537,17 +604,35 @@ function AssetSheet({ asset, onClose }: { asset: AssetRef | null; onClose: () =>
           </Section>
         </div>
 
+        {/*
+          ปุ่มตามสิทธิ์ — ไม่โชว์ปุ่มที่กดแล้วถูกปฏิเสธ
+          **ซ่อนปุ่มคือความสะดวก ไม่ใช่ความปลอดภัย** ความปลอดภัยจริงอยู่ที่ RLS ใน DB
+          (`assets_update` · `asset_drafts_insert` · `valuations_insert`)
+          - ตีราคา: asset.value เท่านั้น (Manager ไม่มี)
+          - แก้ตรง: asset.manage · เสนอแก้เป็นร่าง: คนที่แก้ตรงไม่ได้ (Staff)
+        */}
         <DialogFooter className="justify-between">
-          <Button variant="secondary" size="sm" asChild>
+          <Button variant="secondary" asChild>
             <Link href={`/assets/${asset.id}`} className="no-underline hover:no-underline">
               ดูทะเบียนเต็ม
             </Link>
           </Button>
-          <Button size="sm" onClick={() => showToast("ตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล")}>
-            แก้ไขทรัพย์
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {sheetActions(perms).map((a) => (
+              <Button
+                key={a.id}
+                variant={a.id === "value" ? "secondary" : "primary"}
+                onClick={() => (a.id === "propose" ? setProposing(true) : showToast("ตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล"))}
+              >
+                {a.label}
+              </Button>
+            ))}
+          </div>
         </DialogFooter>
       </SheetContent>
+      {proposing ? (
+        <ProposeEditDialog asset={asset} perms={perms} currentUser={currentUser} onClose={() => setProposing(false)} />
+      ) : null}
     </Dialog>
   );
 }
@@ -564,12 +649,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 /** แสดงเฉพาะช่องที่มีค่า — ช่องว่างเปล่าเต็มหน้าทำให้หาของที่มีจริงยากขึ้น */
 function Rows({ items }: { items: [string, React.ReactNode | undefined][] }) {
   const shown = items.filter(([, v]) => v !== undefined && v !== null && v !== "");
-  if (shown.length === 0) return <div className="text-base text-ink-400">ยังไม่ได้กรอก</div>;
+  if (shown.length === 0) return <div className="text-base text-ink-600">ยังไม่ได้กรอก</div>;
   return (
     <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-base">
       {shown.map(([k, v]) => (
         <React.Fragment key={k}>
-          <dt className="whitespace-nowrap text-ink-400">{k}</dt>
+          <dt className="whitespace-nowrap text-ink-600">{k}</dt>
           <dd className="m-0">{v}</dd>
         </React.Fragment>
       ))}
@@ -580,9 +665,9 @@ function Rows({ items }: { items: [string, React.ReactNode | undefined][] }) {
 function Mini({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-card border border-line bg-canvas p-[12px_14px]">
-      <div className="text-sm text-ink-400">{label}</div>
+      <div className="text-sm text-ink-600">{label}</div>
       <div className="text-base font-semibold tabular-nums">{value}</div>
-      {sub ? <div className="text-sm text-ink-400">{sub}</div> : null}
+      {sub ? <div className="text-sm text-ink-600">{sub}</div> : null}
     </div>
   );
 }

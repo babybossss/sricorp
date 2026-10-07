@@ -103,7 +103,7 @@ export function AssetDetail({ name }: { name: string }) {
               <CardBody>
                 <CardLabel>มูลค่าปัจจุบัน</CardLabel>
                 <div className="text-h1 font-semibold">฿ 2,780,000</div>
-                <div className="text-sm font-semibold text-pos">▲ กำไรยังไม่รับรู้ 330,000</div>
+                <div className="text-sm font-semibold text-pos-fg">▲ กำไรยังไม่รับรู้ 330,000</div>
               </CardBody>
             </Card>
             <Card>
@@ -136,11 +136,11 @@ export function AssetDetail({ name }: { name: string }) {
                       className={cn("w-full rounded-t-md", v ? "bg-brand-600" : "bg-line")}
                       style={{ height: v ? `${Math.round((v / 12) * 130)}px` : "4px" }}
                     />
-                    <div className="text-sm text-ink-400">{MONTHS[i].replace(".", "")}</div>
+                    <div className="text-sm text-ink-600">{MONTHS[i].replace(".", "")}</div>
                   </div>
                 ))}
               </div>
-              <div className="mt-2 text-sm text-ink-400">เดือน พ.ค. ไม่มีรายรับ — ห้องว่างระหว่างเปลี่ยนผู้เช่า</div>
+              <div className="mt-2 text-sm text-ink-600">เดือน พ.ค. ไม่มีรายรับ — ห้องว่างระหว่างเปลี่ยนผู้เช่า</div>
             </CardBody>
           </Card>
 
@@ -195,10 +195,10 @@ export function AssetDetail({ name }: { name: string }) {
               <CardBody>
                 <div className="mb-2 text-base font-semibold">ไฟล์สัญญา (บังคับ)</div>
                 <div className="flex items-center gap-3 rounded border border-line p-3">
-                  <div className="flex h-16 w-[52px] items-center justify-center rounded-md border border-line bg-canvas text-sm text-ink-400">PDF</div>
+                  <div className="flex h-16 w-[52px] items-center justify-center rounded-md border border-line bg-canvas text-sm text-ink-600">PDF</div>
                   <div className="min-w-0 flex-1">
                     <div className="text-base font-semibold">lease-condoC.pdf</div>
-                    <div className="text-sm text-ink-400">4 หน้า · 1.2 MB</div>
+                    <div className="text-sm text-ink-600">4 หน้า · 1.2 MB</div>
                   </div>
                 </div>
               </CardBody>
@@ -224,8 +224,8 @@ export function AssetDetail({ name }: { name: string }) {
                 <tr key={r.date + r.detail}>
                   <Td className="whitespace-nowrap p-[12px_14px]">{r.date}</Td>
                   <Td className="p-[12px_14px]">{r.detail}</Td>
-                  <Td align="right" className="p-[12px_14px] font-semibold text-pos">{r.in}</Td>
-                  <Td align="right" className="p-[12px_14px] font-semibold text-neg">{r.out}</Td>
+                  <Td align="right" className="p-[12px_14px] font-semibold text-pos-fg">{r.in}</Td>
+                  <Td align="right" className="p-[12px_14px] font-semibold text-neg-fg">{r.out}</Td>
                   <Td className="p-[12px_14px]">{r.status}</Td>
                 </tr>
               ))}
@@ -238,9 +238,9 @@ export function AssetDetail({ name }: { name: string }) {
         <div className="grid gap-4 rounded-card border border-line bg-surface p-5 shadow-card [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
           {DOCS.map((d) => (
             <div key={d.name} className="flex flex-col gap-2 rounded border border-line p-3.5">
-              <div className="flex h-[120px] items-center justify-center rounded-lg border border-line bg-canvas text-base text-ink-400">{d.kind}</div>
+              <div className="flex h-[120px] items-center justify-center rounded-lg border border-line bg-canvas text-base text-ink-600">{d.kind}</div>
               <div className="text-base font-semibold">{d.name}</div>
-              <div className="text-sm text-ink-400">{d.meta}</div>
+              <div className="text-sm text-ink-600">{d.meta}</div>
             </div>
           ))}
         </div>

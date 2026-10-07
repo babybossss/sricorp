@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { parseGoogleMapsUrl, isShortLink, PARSE_MESSAGE, SOURCE_LABEL, looksOutsideThailand } from "@/lib/maps/google-url";
-import { Input } from "@/components/ui/input";
+import { Input } from "./fields";
 import { Field } from "@/components/ui/field";
-import { Button } from "@/components/ui/button";
+import { Button } from "./tall-button";
 
 type Coord = { lat: number; lng: number; note: string };
 
@@ -78,12 +78,12 @@ export function MapsLinkField({
   const outside = resolved && looksOutsideThailand(resolved.lat, resolved.lng);
 
   return (
-    <Field label="ลิงก์ Google Maps" hint="เปิดทรัพย์ใน Google Maps แล้วก๊อปลิงก์มาวาง ระบบจะดึงพิกัดให้เอง">
+    <Field label="ลิงก์ Google Maps">
       <div className="flex flex-col gap-2">
         <Input value={url} onChange={(e) => apply(e.target.value)} placeholder="https://www.google.com/maps/place/..." />
 
         {isShortLink(url) && !resolved ? (
-          <Button variant="secondary" size="sm" onClick={follow} disabled={busy}>
+          <Button variant="secondary" onClick={follow} disabled={busy}>
             {busy ? "กำลังตามลิงก์..." : "ดึงพิกัดจากลิงก์ย่อ"}
           </Button>
         ) : null}
@@ -108,6 +108,9 @@ export function MapsLinkField({
         {problem ? (
           <div className="rounded border border-warn bg-warn-bg p-[10px_12px] text-sm leading-6 text-warn-fg">{problem}</div>
         ) : null}
+
+        {/* hint เขียนเอง: Field hint ใช้ ink-400 ซึ่ง contrast 3.15:1 ต่ำกว่าเกณฑ์ */}
+        <span className="text-sm text-ink-600">เปิดทรัพย์ใน Google Maps แล้วก๊อปลิงก์มาวาง ระบบจะดึงพิกัดให้เอง</span>
       </div>
     </Field>
   );
