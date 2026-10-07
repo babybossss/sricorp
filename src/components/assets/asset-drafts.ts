@@ -119,10 +119,10 @@ export function reviewActions(p: Perms, d: AssetDraft, userId: string): ReviewAc
 /**
  * ช่องส่วนขยายที่ฟอร์ม/แผง diff รู้จัก (ใน `patch`)
  *
- * **นี่เป็นชุดย่อยของ whitelist ฝั่ง DB** (`fn_asset_draft_patch_keys()`) ที่ mock ของทะเบียน
- * แสดงได้จริง · เอกสาร §8 ข้อ 2 ให้ `src/lib/assets/draft-rules.ts` (งาน W4 ยังไม่เสร็จ)
- * เป็นแหล่งความจริงเดียวของรายชื่อช่อง — พอไฟล์นั้นมา ให้เปลี่ยน `key` ที่นี่ไปอ้างจากมัน
- * และเพิ่มเทสต์ว่า `PATCH_FIELDS` ⊆ whitelist (ตอนนี้เทียบไม่ได้ เพราะยังไม่มีให้เทียบ)
+ * **นี่เป็นชุดย่อยของ whitelist ฝั่ง DB** (`fn_asset_draft_patch_keys()`) ที่ mock ของทะเบียนแสดงได้จริง
+ * DB เป็นตัวบังคับ — **ห้ามเพิ่มช่องที่นี่ก่อน DB** (ผู้ใช้กรอกแล้วส่งไม่ได้) · มีเทสต์เทียบกับ migration จริง
+ * (`src/lib/assets/__tests__/draft-whitelist.test.ts` · `npm run check:draft-fields -- --migrations`)
+ * ช่องที่ DB มีแต่ฟอร์มยังไม่รองรับ ขึ้นเป็นคำเตือน ไม่ใช่ความผิดพลาด
  */
 export type PatchField = {
   key: string;
