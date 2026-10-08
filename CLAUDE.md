@@ -29,8 +29,21 @@
   `gainCoa` · `lossCoa` · `interestCoa` · `accrualCoa` (ค้างรับ-ค้างจ่าย)
 - เงื่อนไขที่ฟอร์มต้องบังคับก็อยู่ในตารางกฎ (`requires`) — **ห้ามเช็ครหัสหมวดตรงๆ ในโค้ด**
   เช่น การโอนดูจาก `requires: transferTarget` ไม่ใช่ `code === "trf.internal"`
-- ตาราง `sri_os.txn_types` ใน DB เป็นสำเนา — sync ด้วย `npm run sync:rules`
+- ของใน DB เป็น **สำเนา** ของตารางกฎทั้งสามชุด — sync ด้วย `npm run sync:rules`
+  ซึ่ง **เขียนไฟล์ migration ไม่ต่อ DB** (กฎใน DB ต้องมีประวัติใน git เสมอ)
+
+  | ต้นฉบับในโค้ด | สำเนาใน DB |
+  |---|---|
+  | `src/lib/rules/coa.ts` | ตาราง `chart_of_accounts` |
+  | `src/lib/rules/tx-rules.ts` | ตาราง `txn_types` |
+  | `src/lib/rules/intercompany.ts` | ฟังก์ชัน `fn_intercompany_pairs()` |
+
   สคริปต์จะ **พังทันที** ถ้ามีฟิลด์ใหม่ที่มันยังไม่รู้จัก (กัน DB ถือกฎที่ไม่ครบเงียบๆ)
+  และ `npm run check:sync` **พังถ้าโค้ดกับ migration ในรีโปไม่ตรงกัน**
+  (รวม `check:rules-sync` · อ่าน migration ไม่ออก = พัง ไม่ยอมผ่านด้วยชุดว่าง)
+
+  เคยครอบแต่ `txn_types` → ผังบัญชีใน DB ขาด 3 รหัสที่ `intercompany.ts` ใช้
+  **รายการข้ามผู้ถือทุกลักษณะถูกปฏิเสธ** และไม่มีอะไรจับได้จนไปเจอตอนลองลงจริง
 
 ห้ามมีคู่บัญชีกระจายอยู่ในหน้าจอหรือใน engine ถ้าต้องเพิ่มประเภทรายการ ใช้ `/new-txn-type`
 
