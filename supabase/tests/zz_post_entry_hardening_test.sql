@@ -300,7 +300,12 @@ begin
             jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0001','debit',0,'credit',500))))))
   $q$, v_t, v_s, v_s, v_t, v_t, v_s), 'ครบคู่');
 
-  -- (ง) ครบคู่แต่ **บัญชีระหว่างกันไม่จับคู่กัน**: 1310 ข้างหนึ่ง แต่อีกข้างไม่มี 2310
+  -- (ง) ครบคู่แต่ **บัญชีระหว่างกันไม่จับคู่กัน**: 1310 ทั้งสองข้าง ไม่มี 2310 เลย
+  --     เดิมเคสนี้ใช้ 2400 (เงินกู้ยืมอื่น) ฝั่งผู้รับ — ตั้งแต่ 20261008000012
+  --     บัญชีระหว่างกันถูกล็อกเป็น **รหัสตรง** ที่ trg_lines_rule_coa → 2400 ถูกปฏิเสธ
+  --     ก่อนถึงด่านจับคู่ ทำให้เคสนี้ไม่ได้ทดสอบ "การจับคู่" อีก (เคส 2400 ย้ายไป
+  --     zz_line_guards_test.sql) · ใช้ 1310 ทั้งสองข้างแทน ซึ่งเป็นรหัสที่ลงได้
+  --     แต่ **หักกลบกันไม่ได้** → ยังพิสูจน์ด่านจับคู่บัญชีระหว่างกันตามเจตนาเดิม
   perform pg_temp.must_fail_like('H2d 1310 ไม่มี 2310 คู่', format($q$
     select sri_os.fn_post_entry(jsonb_build_object(
       'txn_type_code','trf.internal','doc_date','2026-09-10','cash_date','2026-09-10','memo','H2d',
@@ -312,7 +317,7 @@ begin
         jsonb_build_object('owner_id', %L, 'counter_owner_id', %L, 'intercompany_nature','loan',
           'lines', jsonb_build_array(
             jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0002','debit',500,'credit',0),
-            jsonb_build_object('coa_code','2400','debit',0,'credit',500))))))
+            jsonb_build_object('coa_code','1310','debit',0,'credit',500))))))
   $q$, v_t, v_s, v_s, v_t), 'จับคู่');
 
   -- (จ) ผู้ถืออีกฝ่ายเป็นคนเดียวกับผู้ถือของรายการ = ไม่ใช่รายการข้ามผู้ถือ
@@ -765,25 +770,36 @@ begin
 end $$;
 
 -- H8b · คู่ข้ามผู้ถือที่ไม่ได้ใช้บัญชีระหว่างกันเลย (1300/2400 แบบที่เทสต์เดิมใช้)
---       ยัง **ลงได้** โดยตั้งใจ: ด่านบัญชีจับคู่มีผลเฉพาะเมื่อแตะบัญชีระหว่างกัน
---       ถ้าวันหนึ่งจะล็อกให้เป็น 1310/2310 เท่านั้น ต้องแก้ fixture ของ T4/T5 พร้อมกัน
+--       **กลับขั้ว 08/10**: เคสนี้เคยต้องลงได้ เพราะด่านเทียบได้แค่ "ประเภทบัญชี"
+--       (1300 ก็เป็นสินทรัพย์เหมือน 1310) และ T4/T5 ที่ apply แล้วใช้ 1300/2400 อยู่
+--       ตอนนี้ T4/T5 แก้เป็น 1310/2310 ของจริงแล้ว → 20261008000012 ล็อกเป็น **รหัสตรง**
+--       จึงต้อง **ถูกปฏิเสธ** · ถ้าปล่อยไว้ งบรวมจะตัดรายการระหว่างกันไม่ลง
+--       เพราะ 1300 (เงินให้กู้ยืม) ไม่ใช่บัญชีที่คู่กับ 2310 เลย
 do $$
 declare
   v_t uuid := (select id from sri_os.owners where code='THANAKORN');
   v_s uuid := (select id from sri_os.owners where code='SUTEE');
+  v_n int;
 begin
-  perform sri_os.fn_post_entry(jsonb_build_object(
-    'txn_type_code','trf.internal','doc_date','2026-09-21','cash_date','2026-09-21','memo','H8b',
-    'transactions', jsonb_build_array(
-      jsonb_build_object('owner_id', v_t, 'counter_owner_id', v_s, 'intercompany_nature','loan',
-        'lines', jsonb_build_array(
-          jsonb_build_object('coa_code','1300','debit',700,'credit',0,'cf_category','investing'),
-          jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0001','debit',0,'credit',700,'cf_category','investing'))),
-      jsonb_build_object('owner_id', v_s, 'counter_owner_id', v_t, 'intercompany_nature','loan',
-        'lines', jsonb_build_array(
-          jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0002','debit',700,'credit',0,'cf_category','financing'),
-          jsonb_build_object('coa_code','2400','debit',0,'credit',700,'cf_category','financing'))))));
-  raise notice 'ok H8b · ขาข้ามผู้ถือที่ใช้บัญชีประเภทเดียวกับที่ตารางกฎกำหนด (1300/2400) ยังลงได้ — ยังล็อกเป็นรหัสตรงไม่ได้ ดู H10';
+  perform pg_temp.must_fail_like('H8b ขาข้ามผู้ถือที่ไม่ใช่บัญชีระหว่างกัน', format($q$
+    select sri_os.fn_post_entry(jsonb_build_object(
+      'txn_type_code','trf.internal','doc_date','2026-09-21','cash_date','2026-09-21','memo','H8b',
+      'transactions', jsonb_build_array(
+        jsonb_build_object('owner_id', %L, 'counter_owner_id', %L, 'intercompany_nature','loan',
+          'lines', jsonb_build_array(
+            jsonb_build_object('coa_code','1300','debit',700,'credit',0,'cf_category','investing'),
+            jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0001','debit',0,'credit',700,'cf_category','investing'))),
+        jsonb_build_object('owner_id', %L, 'counter_owner_id', %L, 'intercompany_nature','loan',
+          'lines', jsonb_build_array(
+            jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0002','debit',700,'credit',0,'cf_category','financing'),
+            jsonb_build_object('coa_code','2400','debit',0,'credit',700,'cf_category','financing'))))))
+  $q$, v_t, v_s, v_s, v_t), 'ตารางกฎ');
+
+  reset role;
+  select count(*) into v_n from sri_os.transactions where memo = 'H8b';
+  set local role authenticated;
+  if v_n <> 0 then raise exception 'FAIL: H8b ที่ถูกปฏิเสธทิ้งรายการไว้ % แถว', v_n; end if;
+  raise notice 'ok H8b · ขาข้ามผู้ถือที่ใช้แค่ "บัญชีประเภทเดียวกัน" (1300/2400) ถูกปฏิเสธแล้ว — ล็อกเป็นรหัสตรง 1310/2310 ที่ trg_lines_rule_coa';
 end $$;
 
 -- ============================================================
@@ -843,7 +859,9 @@ end $$;
 --       (ถ้าวันหนึ่งปิดได้ ให้ย้ายขึ้นมาเป็นเคสจริง)
 -- ============================================================
 do $$ begin
-  raise notice 'ok H10 · ที่ยังไม่ปิด: (1) ด่าน "คู่บัญชีตรงหมวด" กับ "bank เฉพาะขาเงินสด" อยู่ในประตู ไม่ใช่ trigger → INSERT ตรงยังเลี่ยงได้ (ย้ายได้เมื่อแก้ fixture ที่ใส่คู่บัญชีสมมติ) · (2) ขาข้ามผู้ถือเทียบได้แค่ประเภทบัญชี ยังไม่ใช่รหัสตรง · (3) D-095 ไฟล์แนบยังเป็นชื่อไฟล์ลอยๆ ตามที่ decision นั้นตั้งใจ';
+  -- (1) และ (2) **ปิดแล้ว 08/10** ด้วย 20261008000012 (เทสต์อยู่ใน zz_line_guards_test.sql)
+  --     เหลือไว้เป็นบันทึกว่าเคยเปิดอยู่และปิดด้วยอะไร ไม่ใช่ลบทิ้งแล้วลืม
+  raise notice 'ok H10 · ที่ยังไม่ปิด: (1) D-095 ไฟล์แนบยังเป็นชื่อไฟล์ลอยๆ ตามที่ decision นั้นตั้งใจ · ปิดแล้ว: ด่าน "คู่บัญชีตรงตารางกฎ" + "bank เฉพาะขาเงินสด" เป็น trigger แล้ว (INSERT ตรงก็ถูกกัน) และขาข้ามผู้ถือล็อกเป็นรหัสตรง — ดู supabase/tests/zz_line_guards_test.sql';
 end $$;
 
 reset role;

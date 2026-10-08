@@ -167,8 +167,7 @@ insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000000d1', c.id,
        case when c.rn = 1 then 250 else 0 end,
        case when c.rn = 2 then 250 else 0 end
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
 -- ============================================================
 -- X0 · โครงสร้าง: ไล่จาก pg_trigger / pg_proc จริง ไม่ใช่ไล่ไฟล์
@@ -818,8 +817,7 @@ begin
   select '00000000-0000-0000-0000-0000000000e1', c.id,
          case when c.rn = 1 then 120 else 0 end,
          case when c.rn = 2 then 120 else 0 end
-    from (select id, row_number() over (order by code) rn
-            from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
   values ('00000000-0000-0000-0000-0000000000e2', v_o, 'inc.other', current_date,

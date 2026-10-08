@@ -84,8 +84,7 @@ values ('00000000-0000-0000-0000-00000000e001', (select id from sri_os.owners wh
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, asset_id)
 select '00000000-0000-0000-0000-00000000e001', c.id, case when c.rn = 1 then 500 else 0 end,
        case when c.rn = 2 then 500 else 0 end, '00000000-0000-0000-0000-00000000a001'
-  from (select id, row_number() over (order by code) rn from sri_os.chart_of_accounts
-        where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
 do $$ declare s text := (select nspname from pg_namespace where oid = pg_my_temp_schema());
 begin execute format('grant usage on schema %I to authenticated', s);

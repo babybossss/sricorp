@@ -109,8 +109,7 @@ select '00000000-0000-0000-0000-00000000e9f1', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end,
        '00000000-0000-0000-0000-00000000e001'
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
 insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
 select '00000000-0000-0000-0000-00000000eb01', id, 'KBANK', 'smoke', 'smoke'
@@ -782,7 +781,7 @@ declare v_bank uuid; v_coa uuid; v_coa2 uuid;
 begin
   reset role;
   select id into v_coa  from sri_os.chart_of_accounts where code = '1100';
-  select id into v_coa2 from sri_os.chart_of_accounts where code not like '11%' order by code limit 1;
+  select id into v_coa2 from sri_os.chart_of_accounts where code = '1220';
   update sri_os.bank_accounts set coa_id = v_coa where id = '00000000-0000-0000-0000-00000000eb01';
 
   -- ยังไม่มีบรรทัดบัญชีผูก → เปลี่ยนได้
@@ -790,16 +789,19 @@ begin
     'update sri_os.bank_accounts set coa_id = %L where id = %L', v_coa2, '00000000-0000-0000-0000-00000000eb01'), 1);
 
   -- ใส่บรรทัดบัญชีที่ผูกบัญชีนี้ แล้วลองเปลี่ยนอีกครั้ง
-  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
-  select '00000000-0000-0000-0000-00000000e9f2', id, 'inc.other', current_date, array['b.pdf']
+  -- คู่บัญชีของ inc.other จากตารางกฎ: Dr 1100 เงินฝาก (ขาที่ผูกบัญชีธนาคาร) / Cr 4900 รายได้อื่น
+  -- **bank_account_id อยู่บนขาเงินสดเท่านั้น** (ของเดิมผูกไว้กับขาที่ไม่ใช่เงินสด
+  --   ซึ่งของจริงเป็นไปไม่ได้ และทำให้ยกด่านข้อ 7 เป็น trigger ไม่ได้)
+  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, attachments)
+  select '00000000-0000-0000-0000-00000000e9f2', id, 'inc.other', current_date, current_date, array['b.pdf']
     from sri_os.owners where code = 'SRI_CORP';
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, bank_account_id)
-  select '00000000-0000-0000-0000-00000000e9f2', c.id,
-         case when c.rn = 1 then 300 else 0 end,
-         case when c.rn = 2 then 300 else 0 end,
-         case when c.rn = 1 then '00000000-0000-0000-0000-00000000eb01'::uuid else null end
-    from (select id, row_number() over (order by code) rn
-            from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  select '00000000-0000-0000-0000-00000000e9f2', c2.id,
+         case when v.rn = 1 then 300 else 0 end,
+         case when v.rn = 2 then 300 else 0 end,
+         case when v.rn = 1 then '00000000-0000-0000-0000-00000000eb01'::uuid else null end
+    from sri_os.chart_of_accounts c2
+    join (values ('1100', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code;
 
   perform pg_temp.must_fail('เปลี่ยน coa_id ของบัญชีที่มีรายการแล้ว', format(
     'update sri_os.bank_accounts set coa_id = %L where id = %L', v_coa, '00000000-0000-0000-0000-00000000eb01'));

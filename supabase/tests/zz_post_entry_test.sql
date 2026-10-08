@@ -363,6 +363,9 @@ end $$;
 
 -- ============================================================
 -- T4 · ข้ามผู้ถือ → สอง transaction · ทั้งคู่สมดุลในตัวเอง
+--      บัญชีระหว่างกันใช้ **คู่จริง** 1310 ↔ 2310 (src/lib/rules/intercompany.ts)
+--      ของเดิมใช้ 1300/2400 ซึ่งไม่ใช่คู่กันเลย (ตอนนั้นผังบัญชียังไม่มี 1310/2310)
+--      แล้วทำให้ล็อกรหัสตรงที่ด่านไม่ได้ · ตอนนี้ล็อกแล้วที่ trg_lines_rule_coa
 -- ============================================================
 do $$
 declare
@@ -378,7 +381,7 @@ begin
       jsonb_build_object(
         'owner_id', v_own_t, 'counter_owner_id', v_own_s, 'intercompany_nature','loan',
         'lines', jsonb_build_array(
-          jsonb_build_object('coa_code','1300','debit',20000,'credit',0,'cf_category','investing'),
+          jsonb_build_object('coa_code','1310','debit',20000,'credit',0,'cf_category','investing'),
           jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000b0001',
                              'debit',0,'credit',20000,'cf_category','investing'))),
       jsonb_build_object(
@@ -386,7 +389,7 @@ begin
         'lines', jsonb_build_array(
           jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000b0002',
                              'debit',20000,'credit',0,'cf_category','financing'),
-          jsonb_build_object('coa_code','2400','debit',0,'credit',20000,'cf_category','financing'))))));
+          jsonb_build_object('coa_code','2310','debit',0,'credit',20000,'cf_category','financing'))))));
   select array_agg(x::uuid order by ord) into v_ids
     from jsonb_array_elements_text(v_out -> 'transaction_ids') with ordinality as t(x, ord);
   if cardinality(v_ids) <> 2 then
@@ -443,12 +446,12 @@ begin
       'transactions', jsonb_build_array(
         jsonb_build_object('owner_id', %L, 'counter_owner_id', %L, 'intercompany_nature','loan',
           'lines', jsonb_build_array(
-            jsonb_build_object('coa_code','1300','debit',500,'credit',0),
+            jsonb_build_object('coa_code','1310','debit',500,'credit',0),
             jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000b0001','debit',0,'credit',500))),
         jsonb_build_object('owner_id', %L, 'counter_owner_id', %L, 'intercompany_nature','loan',
           'lines', jsonb_build_array(
             jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000b0002','debit',500,'credit',0),
-            jsonb_build_object('coa_code','2400','debit',0,'credit',500)))))
+            jsonb_build_object('coa_code','2310','debit',0,'credit',500)))))
   $q$, v_own_t, v_own_x, v_own_x, v_own_t));
   select count(*) into v_after from sri_os.transactions;
   if v_after <> v_before then

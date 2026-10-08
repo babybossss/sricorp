@@ -23,8 +23,7 @@ insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0001', c.id,
        case when c.rn = 1 then 500 else 0 end,
        case when c.rn = 2 then 500 else 0 end
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -45,8 +44,7 @@ begin
     select '00000000-0000-0000-0000-0000000f0001', c.id,
            case when c.rn = 1 then 300 else 0 end,
            case when c.rn = 2 then 300 else 0 end
-      from (select id, row_number() over (order by code) rn
-              from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
     raise exception 'FAIL: ยัดบรรทัดเพิ่มเข้ารายการที่ post แล้วได้';
   exception when raise_exception then
     v_err := sqlerrm;
@@ -143,7 +141,7 @@ values ('00000000-0000-0000-0000-0000000f0003',
         'inc.other', current_date, array['evidence.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit)
 select '00000000-0000-0000-0000-0000000f0003', id, 100
-  from sri_os.chart_of_accounts where code not like '11%' order by code limit 1;
+  from sri_os.chart_of_accounts where code = '1220';
 commit;
 \set ON_ERROR_STOP 1
 
@@ -221,8 +219,7 @@ insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0006', c.id,
        case when c.rn = 1 then 2000 else 0 end,
        case when c.rn = 2 then 2000 else 0 end
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -295,8 +292,7 @@ begin
     select '00000000-0000-0000-0000-0000000f0007', c.id,
            case when c.rn = 1 then 777 else 0 end,
            case when c.rn = 2 then 777 else 0 end
-      from (select id, row_number() over (order by code) rn
-              from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
   exception when others then
     raise exception 'FAIL: post ในบล็อกที่มี exception handler (subtransaction) ถูกปฏิเสธ: %', sqlerrm;
   end;
@@ -324,8 +320,7 @@ select '00000000-0000-0000-0000-0000000f0014', c.id,
        case when c.rn = 1 then 140 else 0 end,
        case when c.rn = 2 then 140 else 0 end,
        '2001-01-01 00:00:00+00'
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -468,8 +463,7 @@ insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0018', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -494,8 +488,7 @@ insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0019', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end
-  from (select id, row_number() over (order by code) rn
-          from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 begin;
@@ -592,8 +585,7 @@ begin
   select '00000000-0000-0000-0000-0000000f0023', c.id,
          case when c.rn = 1 then 230 else 0 end,
          case when c.rn = 2 then 230 else 0 end
-    from (select id, row_number() over (order by code) rn
-            from sri_os.chart_of_accounts where code not like '11%' order by code limit 2) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
   -- ขากลับรายการ: ไม่มีไฟล์แนบ · ผ่านได้เพราะชี้ต้นฉบับจริง (ต้องเรียก fn_reverse_link_ok ได้)
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)

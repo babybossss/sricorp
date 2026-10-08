@@ -571,11 +571,7 @@ select t.id, c.id,
     ('00000000-0000-0000-0000-00000000c003'::uuid,  10),
     ('00000000-0000-0000-0000-00000000c004'::uuid,   7)
   ) as t(id, amt)
-  cross join (
-    select id, row_number() over (order by code) rn
-      from sri_os.chart_of_accounts
-     where code not like '11%' order by code limit 2
-  ) c;
+  cross join (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 
 -- ใบยืนยันรับ-จ่ายเงิน = ยอดเงินเข้า-ออกจริง · ผูกกับรายการของทรัพย์คนละตัว
 insert into sri_os.cash_confirmations(transaction_id, bank_account_id, expected_amount, actual_amount)
@@ -743,7 +739,7 @@ begin
 
   -- เส้นทาง post จริงเขียนบรรทัดบัญชีต่อท้ายและอ่านกลับด้วย ต้องไม่ติด policy
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit)
-  select v, id, 50 from sri_os.chart_of_accounts where code not like '11%' order by code limit 1
+  select v, id, 50 from sri_os.chart_of_accounts where code = '1220'
   returning id into v;
   if v is null then raise exception 'FAIL: Manager อ่านบรรทัดบัญชีที่ตัวเองเพิ่งลงไม่ได้'; end if;
   raise notice 'ok 9.6 · created_by default auth.uid() ทำให้ insert ... returning (หัวรายการ + บรรทัด) ใช้ได้';
