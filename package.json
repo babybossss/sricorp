@@ -17,7 +17,8 @@
     "sync:rules": "tsx scripts/sync-txn-types.ts",
     "check:permissions": "tsx scripts/check-permissions.ts",
     "check:draft-fields": "tsx scripts/check-draft-fields.ts",
-    "check:sync": "tsx scripts/check-permissions.ts --migrations && tsx scripts/check-draft-fields.ts --migrations"
+    "check:rules-sync": "tsx scripts/check-rules-sync.ts",
+    "check:sync": "tsx scripts/check-permissions.ts --migrations && tsx scripts/check-draft-fields.ts --migrations && tsx scripts/check-rules-sync.ts --migrations"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.4",
