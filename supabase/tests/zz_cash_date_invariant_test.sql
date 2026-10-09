@@ -122,6 +122,18 @@ begin
   set constraints all deferred;
 end $fn$;
 
+-- UPDATE แล้ว **ยิงด่านที่เลื่อนไว้ทันที**
+--   ด่าน cash_date เป็น constraint trigger ที่เลื่อนไว้ → ตัว `update` เองไม่ดัง
+--   ของจริงมันดังตอน COMMIT (ข้อมูลไม่เคยลงจริง) แต่ในเทสต์ที่ทั้งไฟล์อยู่ในธุรกรรมเดียว
+--   ถ้าไม่ยิงเอง จะได้ผล "สำเร็จ" ปลอมๆ แล้วเทสต์จะเชื่อว่ากันไม่ได้
+--   → ทุกเคส UPDATE (ทั้งที่ต้องผ่านและต้องไม่ผ่าน) ต้องเดินผ่านตัวช่วยนี้
+create or replace function pg_temp.upd(p_sql text) returns void
+language plpgsql as $fn$
+begin
+  execute p_sql;
+  perform pg_temp.fire();
+end $fn$;
+
 -- หัวรายการหนึ่งใบ + บรรทัดจาก jsonb ในธุรกรรมเดียวกัน (เส้นทางเดียวกับที่ fn_post_entry เขียน)
 --   p_lines = [{"coa":"1100","dr":5000,"cr":0,"cf":"operating","bank":"<uuid>"}, ...]
 --   **ไม่ใส่ค่า default ให้ cash_date** โดยตั้งใจ — ผู้เรียกต้องบอกทุกครั้งว่าจะส่งอะไร
@@ -467,7 +479,8 @@ begin
        {"coa":"4900","dr":0,"cr":7000,"cf":"operating"}]'::jsonb);
 
   perform pg_temp.must_fail_like('C6 ลบ cash_date ทิ้งหลัง commit', format(
-    $q$ update sri_os.transactions set cash_date = null where id = %L $q$, v),
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set cash_date = null where id = %L $u$, v)),
     'บรรทัดเงินสด');
   select cash_date into v_cash from sri_os.transactions where id = v;
   if v_cash is null then
@@ -477,7 +490,8 @@ begin
   -- C6b · **แก้วันที่เป็นวันอื่นยังต้องทำได้** (กระทบยอดธนาคารแล้วพบว่าเงินเข้าอีกวัน)
   --        ถ้ากันข้อนี้ด้วย = กันแน่นเกินและปิดเส้นทางที่ Entity Policy เปิดไว้
   perform pg_temp.must_pass('C6b แก้ cash_date เป็นวันอื่น', format(
-    $q$ update sri_os.transactions set cash_date = date '2026-10-21' where id = %L $q$, v));
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set cash_date = date '2026-10-21' where id = %L $u$, v)));
 
   raise notice 'ok C6 · ลบ cash_date ของรายการที่มีเงินสดไม่ได้ · แก้เป็นวันอื่นยังทำได้';
 end $$;
@@ -508,7 +522,8 @@ begin
 
   -- C7 · ย้ายลิงก์ไปชี้ใบอื่น (ต้นฉบับเดิมกลับเป็น "ยังไม่ถูกกลับรายการ" แล้วกลับซ้ำได้)
   perform pg_temp.must_fail_like('C7 ย้าย reverses_id ไปชี้ใบอื่น', format(
-    $q$ update sri_os.transactions set reverses_id = %L where id = %L $q$, v_o2, v_r),
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set reverses_id = %L where id = %L $u$, v_o2, v_r)),
     'reverses_id');
   select reverses_id into v_link from sri_os.transactions where id = v_r;
   if v_link <> v_o1 then
@@ -519,7 +534,8 @@ begin
   --        เส้นทางนี้ **ด่านลิงก์เดิมไม่เห็นเลย** (new.source <> reverse และ new.reverses_id is null)
   --        → ถ้าถอดด่านใหม่ออก เคสนี้ผ่านทันที = ตัววัด M3 ที่แท้จริง
   perform pg_temp.must_fail_like('C8a ลบ reverses_id ทิ้งพร้อมเปลี่ยน source', format(
-    $q$ update sri_os.transactions set reverses_id = null, source = 'manual' where id = %L $q$, v_r),
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set reverses_id = null, source = 'manual' where id = %L $u$, v_r)),
     'reverses_id');
   select reverses_id, source::text into v_link, v_src from sri_os.transactions where id = v_r;
   if v_link is null then
@@ -528,7 +544,8 @@ begin
 
   -- C8b · ลบลิงก์ทิ้งเฉยๆ (ด่านลิงก์เดิมก็ปฏิเสธด้วย — ต้องยังปฏิเสธอยู่)
   perform pg_temp.must_fail_like('C8b ลบ reverses_id ทิ้ง', format(
-    $q$ update sri_os.transactions set reverses_id = null where id = %L $q$, v_r),
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set reverses_id = null where id = %L $u$, v_r)),
     'reverses_id');
 
   -- C8c · null → ค่าใด **ยังทำได้** แต่ต้องผ่านด่านสะท้อนบรรทัดเดิม
@@ -538,12 +555,14 @@ begin
   --        → ปิดทางนี้ด้วยคือกันแน่นเกิน: ใบที่ลงถูกแล้วแต่ลืมใส่ลิงก์จะซ่อมไม่ได้เลย
   perform pg_temp.mk_txn(v_x, 'THANAKORN', 'inc.other', null, pg_temp.mirror_of(v_o2));
   perform pg_temp.must_pass('C8c ตั้ง reverses_id จาก null เป็นค่าที่สะท้อนบรรทัดจริง', format(
-    $q$ update sri_os.transactions set reverses_id = %L, source = 'reverse' where id = %L $q$,
-    v_o2, v_x));
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set reverses_id = %L, source = 'reverse' where id = %L $u$,
+           v_o2, v_x)));
 
   -- C8d · และเมื่อตั้งแล้วก็แช่แข็งทันที (ไม่ใช่ช่องที่เปิดค้างไว้)
   perform pg_temp.must_fail_like('C8d ตั้งแล้วเปลี่ยนอีกไม่ได้', format(
-    $q$ update sri_os.transactions set reverses_id = %L where id = %L $q$, v_o1, v_x),
+    $q$ select pg_temp.upd(%L) $q$,
+    format($u$ update sri_os.transactions set reverses_id = %L where id = %L $u$, v_o1, v_x)),
     'reverses_id');
 
   raise notice 'ok C7/C8 · reverses_id ที่ไม่เป็น null เปลี่ยน/ลบไม่ได้ทุกผู้ถือ · null → ค่าใด ยังทำได้และถูกตรวจด้วยด่านสะท้อนบรรทัด';
