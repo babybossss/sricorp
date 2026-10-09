@@ -1,0 +1,42 @@
+# ============================================================
+# SRI OS - ลำดับการ apply migration · แหล่งความจริงเดียว
+#
+# ไฟล์ในนี้ต้องรัน **ท้ายสุด ตามลำดับที่เขียนไว้** ไม่ใช่เรียงตามชื่อไฟล์
+#
+# ทำไม: ไฟล์ seed ของ txn_types ที่มาทีหลังเขียนทับแถวของไฟล์ก่อนหน้า
+#   และไฟล์ที่เพิ่ม check constraint ของ txn_types เพิ่มตอนที่แถว seed
+#   รุ่นเก่ายังละเมิด constraint นั้นอยู่ -> ถ้ารันเรียงตามชื่อ ไฟล์นั้นพัง
+#   คอลัมน์ gain_coa_code จะไม่เกิด แล้วพังต่อเป็นทอดๆ
+#   วัดแล้ว 09/10 บน DB เปล่า: เรียงตามชื่อ = พัง 9 ไฟล์
+#
+# ทำไมต้องเป็นไฟล์แยก ไม่ฝังในสคริปต์:
+#   scripts/test-rls-local.sh (ตรวจ) กับ scripts/apply-migrations.sh (ลงของจริง)
+#   ต้องใช้ลำดับเดียวกัน ไม่งั้น **สิ่งที่เราทดสอบกับสิ่งที่เรา apply
+#   เป็นคนละอย่าง** ซึ่งเป็นบั๊กประเภทที่โปรเจกต์นี้เจอซ้ำที่สุด
+#
+# เพิ่ม migration ใหม่: ถ้ามันพึ่งของในรายการนี้ ให้ต่อท้าย
+# บรรทัดว่างและบรรทัดที่เริ่มด้วย # ถูกข้าม
+# ============================================================
+20261006190000_roles_permissions.sql
+20261007000000_line_integrity_and_view_rls.sql
+20261007000001_grants.sql
+20261007000002_txn_type_rule_constraints.sql
+20261007000003_permission_tables_read_only.sql
+20261007000004_rule_tables_read_only.sql
+20261007000005_owners_rule_columns_immutable.sql
+20261007000006_asset_taxonomy_rls.sql
+20261007000007_function_execute_acl.sql
+20261008000000_asset_permissions.sql
+20261008000001_valuation_revision.sql
+20261008000002_valuation_delete_guard.sql
+20261008000003_delete_guards.sql
+20261008000004_history_guards.sql
+20261008000005_access_audit.sql
+20261008000006_approval_integrity.sql
+20261008000007_assign_and_contract_tiers.sql
+20261008000008_post_entry_rpc.sql
+20261008000010_coa_intercompany.sql
+20261008000011_post_entry_hardening.sql
+20261008000012_line_guards_as_triggers.sql
+20261008000013_drop_redundant_door_checks.sql
+20261009000000_reverse_integrity.sql
