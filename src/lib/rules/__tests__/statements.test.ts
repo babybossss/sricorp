@@ -1,14 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { COA, coa } from "../coa";
-import {
-  BS_LAYOUT,
-  PL_LAYOUT,
-  bsCodes,
-  plCodes,
-  findLayoutGaps,
-  isBalanceSheetType,
-  statementOf,
-} from "../statements";
+import { BS_LAYOUT, PL_LAYOUT, bsCodes, cashflowLineOf, cfSubCodes, findCashflowLayoutGaps, findLayoutGaps, isBalanceSheetType, plCodes, statementOf } from "../statements";
+import { TX_TYPES } from "../tx-rules";
 
 /**
  * บัญชีที่ไม่อยู่ในโครงงบ = ยอดหายจากรายงานโดยไม่มีอะไรฟ้อง
@@ -70,5 +63,40 @@ describe("โครงงบต้องครอบคลุมผังบั�
 
   it("จำนวนรหัสในโครงงบรวมกันเท่ากับจำนวนบัญชีในผัง", () => {
     expect(bsCodes().length + plCodes().length).toBe(COA.length);
+  });
+});
+
+describe("โครงงบกระแสเงินสด", () => {
+  it("ทุกหมวดที่เข้างบกระแสเงินสดได้ อยู่ในโครงงบ ครั้งเดียว ในส่วนที่ถูกต้อง", () => {
+    // เทสต์นี้คือสิ่งที่ทำให้ "เพิ่มหมวดใหม่แล้วลืมใส่ในงบกระแสเงินสด" พังที่นี่
+    // ไม่ใช่ยอดหายจากรายงานเงียบๆ จนลูกพี่มาเจอเองตอนกระทบยอดไม่ลง
+    expect(findCashflowLayoutGaps()).toEqual({
+      missing: [],
+      duplicated: [],
+      unknown: [],
+      wrongSection: [],
+    });
+  });
+
+  it("หมวดโอนระหว่างบัญชีตัวเองไม่อยู่ในโครงงบ", () => {
+    // โอนเงินระหว่างบัญชีของกองกลางไม่ใช่กระแสเงินสด — ถ้าโผล่ในงบ
+    // ยอดจะพองทั้งเงินเข้าและเงินออกด้วยจำนวนเท่ากัน
+    expect(cfSubCodes()).not.toContain("trf.internal");
+  });
+
+  it("หาบรรทัดของหมวดได้ และหมวดที่ไม่มีในโครงงบต้องโยน error ไม่ใช่คืนค่าว่าง", () => {
+    expect(cashflowLineOf("inc.rent").section).toBe("operating");
+    expect(cashflowLineOf("inv.sell_re").section).toBe("investing");
+    expect(cashflowLineOf("fin.drawings").section).toBe("financing");
+    // คืนค่าว่างแปลว่ายอดก้อนนั้นหายไปจากงบโดยไม่มีอะไรเตือน
+    expect(() => cashflowLineOf("trf.internal")).toThrow(/ไม่อยู่ในโครงงบกระแสเงินสด/);
+    expect(() => cashflowLineOf("ไม่มีหมวดนี้")).toThrow();
+  });
+
+  it("ดอกเบี้ยจ่ายอยู่ส่วนเดียวกับที่ตารางกฎจัดไว้ ไม่ใช่ที่โครงงบตัดสินเอง", () => {
+    // ถ้าวันหนึ่งย้ายดอกเบี้ยจ่ายไปฝั่งดำเนินงาน ต้องย้ายที่ตารางกฎ
+    // แล้วเทสต์ wrongSection ข้างบนจะบังคับให้ย้ายโครงงบตามเอง
+    const sub = TX_TYPES.flatMap((t) => t.subs).find((s) => s.code === "fin.interest_paid");
+    expect(cashflowLineOf("fin.interest_paid").section).toBe(sub?.cashflow);
   });
 });
