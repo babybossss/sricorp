@@ -178,10 +178,12 @@ begin
          case when p_reverses is null then 'manual' else 'reverse' end::sri_os.txn_source,
          p_reverses
     from sri_os.owners o where o.code = 'SRI_CORP';
+  -- ใบกลับรายการต้องเป็น **ภาพกลับด้าน** ของต้นฉบับ (D-097 ข้อ 1 · บังคับที่
+  -- trg_reverse_mirrors_original) → สลับ dr/cr เมื่อ p_reverses ไม่เป็น null
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select p_txn, c.id,
-         case when c.rn = 1 then p_amount else 0 end,
-         case when c.rn = 2 then p_amount else 0 end
+         case when (c.rn = 1) <> (p_reverses is not null) then p_amount else 0 end,
+         case when (c.rn = 2) <> (p_reverses is not null) then p_amount else 0 end
     from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
 end $fn$;
 

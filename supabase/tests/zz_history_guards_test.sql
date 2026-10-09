@@ -817,8 +817,10 @@ begin
   select '00000000-0000-0000-0000-00000000cf02', l.coa_id, l.credit, l.debit
     from sri_os.transaction_lines l where l.transaction_id = '00000000-0000-0000-0000-00000000cf01';
 
+  -- void **ใบกลับรายการ** ไม่ใช่ต้นฉบับ (D-097: ต้นฉบับที่ถูกกลับรายการต้องยัง posted
+  -- ไม่งั้นสมุดผิดไป −ต้นฉบับ · trg_void_blocked_by_reverse ปฏิเสธเส้นทางเดิมแล้ว)
   update sri_os.transactions set status = 'void'
-   where id = '00000000-0000-0000-0000-00000000cf01';
+   where id = '00000000-0000-0000-0000-00000000cf02';
 
   select count(*) into n from sri_os.transaction_lines
    where transaction_id = '00000000-0000-0000-0000-00000000cf02';

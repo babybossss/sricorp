@@ -499,7 +499,10 @@ values ('00000000-0000-0000-0000-0000000f001a',
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f001a', l.coa_id, l.credit, l.debit
   from sri_os.transaction_lines l where l.transaction_id = '00000000-0000-0000-0000-0000000f0019';
-update sri_os.transactions set status = 'void' where id = '00000000-0000-0000-0000-0000000f0019';
+-- เดิมบรรทัดถัดไป void ต้นฉบับทิ้งด้วย · **ถอดออกแล้ว (09/10)** ตาม D-097:
+--   void กับ reverse เป็นสองกลไกที่ใช้ต่างสถานการณ์ ห้ามปนกัน — ต้นฉบับที่ถูก
+--   กลับรายการต้องยัง posted (นับต่อไป) ไม่งั้นสมุดผิดไป −ต้นฉบับ
+--   ตอนนี้ trg_void_blocked_by_reverse ปฏิเสธคำสั่งนั้นแล้ว (ดู zz_reverse_integrity_test R12)
 commit;
 
 do $$

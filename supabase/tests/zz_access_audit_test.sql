@@ -827,8 +827,10 @@ begin
     from sri_os.transaction_lines l
    where l.transaction_id = '00000000-0000-0000-0000-0000000000e1';
 
+  -- void **ใบกลับรายการ** ไม่ใช่ต้นฉบับ (D-097: ต้นฉบับที่ถูกกลับรายการต้องยัง posted
+  -- ไม่งั้นสมุดผิดไป −ต้นฉบับ · trg_void_blocked_by_reverse ปฏิเสธเส้นทางเดิมแล้ว)
   update sri_os.transactions set status = 'void'
-   where id = '00000000-0000-0000-0000-0000000000e1';
+   where id = '00000000-0000-0000-0000-0000000000e2';
 
   insert into sri_os.period_closes(owner_id, period, closed_by)
   values (v_o, date_trunc('month', current_date)::date, pg_temp.xuid('x_mgmt'));
