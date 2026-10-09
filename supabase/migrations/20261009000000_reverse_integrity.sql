@@ -126,7 +126,7 @@ language plpgsql set search_path = sri_os, public as $fn$
 begin
   if new.source = 'reverse' or new.reverses_id is not null then
     if not fn_reverse_link_ok(new.id, new.owner_id, new.reverses_id) then
-      raise exception 'รายการกลับรายการต้องชี้ไปรายการจริงของผู้ถือเดียวกัน ที่ยัง**ไม่ถูก void** และยังไม่ถูกกลับรายการ (source % · reverses_id %) · ถ้าต้นฉบับถูก void ไปแล้วมันไม่ถูกนับในงบอยู่แล้ว การลงใบกลับรายการทับจะทำให้สมุดผิดไปเท่ายอดต้นฉบับ (D-097)',
+      raise exception 'รายการกลับรายการต้องชี้ไปรายการจริงของผู้ถือเดียวกัน ที่ยังไม่ถูก void และยังไม่ถูกกลับรายการ (source % · reverses_id %) · ถ้าต้นฉบับถูก void ไปแล้ว มันไม่ถูกนับในงบอยู่แล้ว การลงใบกลับรายการทับจะทำให้สมุดผิดไปเท่ายอดต้นฉบับ (D-097)',
         new.source, coalesce(new.reverses_id::text, 'null');
     end if;
   end if;
