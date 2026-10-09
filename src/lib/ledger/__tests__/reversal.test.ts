@@ -18,6 +18,7 @@ function rentSource(over: Partial<ReversalSource> = {}): ReversalSource {
     ownerId: OWNER_A,
     status: "posted",
     hasLiveReversal: false,
+    docDate: "2026-10-20",
     lines: [
       { coaCode: "1100", bankAccountId: "bank-kbank", debit: 30000, credit: 0, cfCategory: "operating" },
       { coaCode: "4100", assetId: "asset-condo-1", debit: 0, credit: 30000, cfCategory: "operating" },
@@ -27,6 +28,14 @@ function rentSource(over: Partial<ReversalSource> = {}): ReversalSource {
 }
 
 const reason = "ลงผิดหลัง ที่ถูกคือคอนโดอีกห้อง";
+
+/** input มาตรฐานของรายการที่มีบรรทัดเงินสด */
+const withCash = (originals: ReversalSource[]) => ({
+  originals,
+  reason,
+  docDate: "2026-10-26",
+  cashDate: "2026-10-26",
+});
 
 /** ยอดสุทธิต่อรหัสบัญชีของสองใบรวมกัน — ต้องเป็นศูนย์ทุกรหัส */
 function netByCoa(a: PostingLine[], b: PostingLine[]): Record<string, number> {
@@ -40,7 +49,7 @@ function netByCoa(a: PostingLine[], b: PostingLine[]): Record<string, number> {
 describe("buildReversal · การสะท้อนบรรทัด", () => {
   it("สลับเดบิต/เครดิต และยอดสุทธิของสองใบรวมกันเป็นศูนย์ทุกรหัสบัญชี", () => {
     const src = rentSource();
-    const { transactions } = buildReversal({ originals: [src], reason });
+    const { transactions } = buildReversal(withCash([src]));
 
     expect(transactions).toHaveLength(1);
     const rev = transactions[0];
@@ -58,7 +67,7 @@ describe("buildReversal · การสะท้อนบรรทัด", () =>
   });
 
   it("คัดลอกมิติทุกตัวที่ต้นฉบับมี (ธนาคาร · ทรัพย์ · หมวดกระแสเงินสด)", () => {
-    const { transactions } = buildReversal({ originals: [rentSource()], reason });
+    const { transactions } = buildReversal(withCash([rentSource()]));
     const [cash, revenue] = transactions[0].lines;
 
     // ทิ้งไว้ตัวใดตัวหนึ่ง = รายงานเพี้ยนแบบที่งบรวมยังสมดุล จึงไม่มีอะไรดังเตือน
@@ -74,13 +83,19 @@ describe("buildReversal · การสะท้อนบรรทัด", () =>
       ownerId: OWNER_A,
       status: "posted",
       hasLiveReversal: false,
+      docDate: "2026-10-20",
       // รายการตั้งค้างรับ ไม่มีขาเงินสด จึงไม่มี bankAccountId และไม่เข้างบกระแสเงินสด
       lines: [
         { coaCode: "1200", debit: 12000, credit: 0 },
         { coaCode: "4100", debit: 0, credit: 12000 },
       ],
     };
-    const { transactions } = buildReversal({ originals: [accrual], reason });
+    // ค้างรับไม่มีบรรทัดเงินสด → ห้ามส่ง cashDate
+    const { transactions } = buildReversal({
+      originals: [accrual],
+      reason,
+      docDate: "2026-10-26",
+    });
     for (const l of transactions[0].lines) {
       expect("bankAccountId" in l).toBe(false);
       expect("assetId" in l).toBe(false);
@@ -95,7 +110,7 @@ describe("buildReversal · การสะท้อนบรรทัด", () =>
         { coaCode: "4100", debit: 0, credit: 10000.33 },
       ],
     });
-    const { transactions } = buildReversal({ originals: [odd], reason });
+    const { transactions } = buildReversal(withCash([odd]));
     expect(transactions[0].lines[0].credit).toBe(10000.33);
     expect(transactions[0].lines[1].debit).toBe(10000.33);
   });
@@ -109,7 +124,7 @@ describe("buildReversal · การสะท้อนบรรทัด", () =>
         { coaCode: "4300", debit: 0, credit: 2_000_000, cfCategory: "none" },
       ],
     });
-    const { transactions } = buildReversal({ originals: [sale], reason });
+    const { transactions } = buildReversal(withCash([sale]));
     expect(transactions[0].lines).toHaveLength(3);
     const net = netByCoa(sale.lines, transactions[0].lines);
     for (const v of Object.values(net)) expect(v).toBe(0);
@@ -118,91 +133,74 @@ describe("buildReversal · การสะท้อนบรรทัด", () =>
 
 describe("buildReversal · ข้อมูลไม่ครบต้องปฏิเสธ ไม่ใช่เดา", () => {
   it("ไม่ส่งรายการมาเลย", () => {
-    expect(() => buildReversal({ originals: [], reason })).toThrow(PostingError);
+    expect(() => buildReversal({ originals: [], reason, docDate: "2026-10-26" })).toThrow(PostingError);
   });
 
   it("ไม่ใส่เหตุผล", () => {
-    expect(() => buildReversal({ originals: [rentSource()], reason: "   " })).toThrow(/เหตุผล/);
+    expect(() => buildReversal({ ...withCash([rentSource()]), reason: "   " })).toThrow(/เหตุผล/);
   });
 
   it("ต้นฉบับถูก void ไปแล้ว — กลับอีกจะหักซ้ำ", () => {
-    expect(() => buildReversal({ originals: [rentSource({ status: "void" })], reason })).toThrow(
+    expect(() => buildReversal(withCash([rentSource({ status: "void" })]))).toThrow(
       /ยกเลิก \(void\)/,
     );
   });
 
   it("ต้นฉบับมีใบกลับรายการที่ยังมีผลอยู่แล้ว", () => {
     expect(() =>
-      buildReversal({ originals: [rentSource({ hasLiveReversal: true })], reason }),
+      buildReversal(withCash([rentSource({ hasLiveReversal: true })])),
     ).toThrow(/หักสองรอบ/);
   });
 
   it("บรรทัดที่อ่านมามีน้อยกว่าสองบรรทัด", () => {
     expect(() =>
-      buildReversal({
-        originals: [rentSource({ lines: [{ coaCode: "1100", debit: 30000, credit: 0 }] })],
-        reason,
-      }),
+      buildReversal(
+        withCash([rentSource({ lines: [{ coaCode: "1100", debit: 30000, credit: 0 }] })]),
+      ),
     ).toThrow(/อย่างน้อยสองบรรทัด/);
   });
 
   it("บรรทัดที่อ่านมาไม่สมดุล — ห้ามปัดให้ลงตัว", () => {
-    expect(() =>
-      buildReversal({
-        originals: [
-          rentSource({
-            lines: [
-              { coaCode: "1100", debit: 30000, credit: 0 },
-              { coaCode: "4100", debit: 0, credit: 29000 },
-            ],
-          }),
-        ],
-        reason,
-      }),
-    ).toThrow(/ไม่สมดุล/);
+    const unbalanced = rentSource({
+      lines: [
+        { coaCode: "1100", debit: 30000, credit: 0 },
+        { coaCode: "4100", debit: 0, credit: 29000 },
+      ],
+    });
+    expect(() => buildReversal(withCash([unbalanced]))).toThrow(/ไม่สมดุล/);
   });
 
   it("บรรทัดที่สองข้างเป็นศูนย์", () => {
-    expect(() =>
-      buildReversal({
-        originals: [
-          rentSource({
-            lines: [
-              { coaCode: "1100", debit: 0, credit: 0 },
-              { coaCode: "4100", debit: 0, credit: 0 },
-            ],
-          }),
-        ],
-        reason,
-      }),
-    ).toThrow(PostingError);
+    const zero = rentSource({
+      lines: [
+        { coaCode: "1100", debit: 0, credit: 0 },
+        { coaCode: "4100", debit: 0, credit: 0 },
+      ],
+    });
+    expect(() => buildReversal(withCash([zero]))).toThrow(PostingError);
   });
 
   it("บรรทัดที่มีทั้งเดบิตและเครดิต", () => {
-    expect(() =>
-      buildReversal({
-        originals: [
-          rentSource({
-            lines: [
-              { coaCode: "1100", debit: 500, credit: 500 },
-              { coaCode: "4100", debit: 500, credit: 500 },
-            ],
-          }),
-        ],
-        reason,
-      }),
-    ).toThrow(/เดบิตหรือเครดิตอย่างใดอย่างหนึ่ง/);
+    const both = rentSource({
+      lines: [
+        { coaCode: "1100", debit: 500, credit: 500 },
+        { coaCode: "4100", debit: 500, credit: 500 },
+      ],
+    });
+    expect(() => buildReversal(withCash([both]))).toThrow(
+      /เดบิตหรือเครดิตอย่างใดอย่างหนึ่ง/,
+    );
   });
 
   it("ไม่มี id ของต้นฉบับ", () => {
-    expect(() => buildReversal({ originals: [rentSource({ txnId: "" })], reason })).toThrow(
+    expect(() => buildReversal(withCash([rentSource({ txnId: "" })]))).toThrow(
       /ไม่มี id/,
     );
   });
 
   it("ส่งรายการเดิมมาซ้ำสองครั้ง", () => {
     expect(() =>
-      buildReversal({ originals: [rentSource(), rentSource()], reason }),
+      buildReversal(withCash([rentSource(), rentSource()])),
     ).toThrow(/ซ้ำสองครั้ง/);
   });
 });
@@ -213,6 +211,7 @@ describe("buildReversal · รายการข้ามผู้ถือต�
     ownerId: OWNER_A,
     status: "posted",
     hasLiveReversal: false,
+    docDate: "2026-10-20",
     counterOwnerId: OWNER_B,
     intercompanyNature: "advance",
     lines: [
@@ -226,6 +225,7 @@ describe("buildReversal · รายการข้ามผู้ถือต�
     ownerId: OWNER_B,
     status: "posted",
     hasLiveReversal: false,
+    docDate: "2026-10-20",
     counterOwnerId: OWNER_A,
     intercompanyNature: "advance",
     lines: [
@@ -235,11 +235,11 @@ describe("buildReversal · รายการข้ามผู้ถือต�
   });
 
   it("ส่งมาขาเดียว → ปฏิเสธ (ลูกหนี้/เจ้าหนี้ระหว่างกันจะไม่ตรงกันตลอดไป)", () => {
-    expect(() => buildReversal({ originals: [legA()], reason })).toThrow(/ข้ามผู้ถือ/);
+    expect(() => buildReversal(withCash([legA()]))).toThrow(/ข้ามผู้ถือ/);
   });
 
   it("ส่งมาครบสองขา → ได้ใบกลับรายการสองใบ แต่ละใบสมดุลในตัว และเก็บลักษณะไว้", () => {
-    const { transactions } = buildReversal({ originals: [legA(), legB()], reason });
+    const { transactions } = buildReversal(withCash([legA(), legB()]));
     expect(transactions).toHaveLength(2);
     for (const t of transactions) {
       expect(t.intercompanyNature).toBe("advance");
@@ -254,7 +254,7 @@ describe("buildReversal · รายการข้ามผู้ถือต�
 
   it("ขาหนึ่ง void แล้ว → ปฏิเสธทั้งคู่ ไม่กลับข้างเดียว", () => {
     expect(() =>
-      buildReversal({ originals: [legA(), { ...legB(), status: "void" }], reason }),
+      buildReversal(withCash([legA(), { ...legB(), status: "void" }])),
     ).toThrow(PostingError);
   });
 });
@@ -269,14 +269,105 @@ describe("buildReversal · สิ่งที่ต้องไม่ทำ", ()
         { coaCode: "4100", debit: 0, credit: 1000 },
       ],
     });
-    const { transactions } = buildReversal({ originals: [legacy], reason });
+    // ไม่มีบรรทัด 11xx → ห้ามส่ง cashDate (ถ้าส่ง = เงินสดผี)
+    const { transactions } = buildReversal({
+      originals: [legacy],
+      reason,
+      docDate: "2026-10-26",
+    });
     expect(transactions[0].lines.map((l) => l.coaCode)).toEqual(["9999", "4100"]);
   });
 
   it("ไม่แตะบรรทัดของต้นฉบับที่ส่งเข้ามา", () => {
     const src = rentSource();
     const before = JSON.stringify(src.lines);
-    buildReversal({ originals: [src], reason });
+    buildReversal(withCash([src]));
     expect(JSON.stringify(src.lines)).toBe(before);
+  });
+});
+
+describe("buildReversal · วันที่เงินเคลื่อน (รูที่ยืนยันด้วยการรันจริง)", () => {
+  it("มีบรรทัดเงินสดแต่ไม่ส่งวันที่เงินเคลื่อน → ปฏิเสธ", () => {
+    // นี่คือเคสที่รันบน DB แล้วผ่านฉลุย: งบดุล 0.00 แต่งบกระแสเงินสด +5,000 ตลอดกาล
+    expect(() =>
+      buildReversal({ originals: [rentSource()], reason, docDate: "2026-10-26" }),
+    ).toThrow(/งบกระแสเงินสดจะค้างยอดนั้นไว้ตลอดกาล/);
+  });
+
+  it("ไม่มีบรรทัดเงินสดแต่ส่งวันที่เงินเคลื่อน → ปฏิเสธ (เงินสดผี)", () => {
+    const accrual = rentSource({
+      lines: [
+        { coaCode: "1200", debit: 12000, credit: 0 },
+        { coaCode: "4100", debit: 0, credit: 12000 },
+      ],
+    });
+    expect(() =>
+      buildReversal({ originals: [accrual], reason, docDate: "2026-10-26", cashDate: "2026-10-26" }),
+    ).toThrow(/ไม่มีบรรทัดเงินสดเลย/);
+  });
+
+  it("ข้ามผู้ถือ: ใส่วันที่เงินเคลื่อนเฉพาะขาที่มีบรรทัดเงินสด", () => {
+    const cashLeg: ReversalSource = {
+      txnId: "txn-x-cash",
+      ownerId: OWNER_A,
+      status: "posted",
+      hasLiveReversal: false,
+      docDate: "2026-10-20",
+      counterOwnerId: OWNER_B,
+      intercompanyNature: "advance",
+      lines: [
+        { coaCode: "1310", debit: 50000, credit: 0 },
+        { coaCode: "1100", bankAccountId: "bank-kbank", debit: 0, credit: 50000, cfCategory: "investing" },
+      ],
+    };
+    // ขาปลายทางยังไม่ได้รับเงิน — ลงลูกหนี้/เจ้าหนี้ระหว่างกัน ไม่มีบรรทัดเงินสด
+    const noCashLeg: ReversalSource = {
+      txnId: "txn-x-nocash",
+      ownerId: OWNER_B,
+      status: "posted",
+      hasLiveReversal: false,
+      docDate: "2026-10-20",
+      counterOwnerId: OWNER_A,
+      intercompanyNature: "advance",
+      lines: [
+        { coaCode: "1220", debit: 50000, credit: 0 },
+        { coaCode: "2310", debit: 0, credit: 50000 },
+      ],
+    };
+    const { transactions } = buildReversal({
+      originals: [cashLeg, noCashLeg],
+      reason,
+      docDate: "2026-10-26",
+      cashDate: "2026-10-26",
+    });
+    const byOwner = Object.fromEntries(transactions.map((t) => [t.ownerId, t]));
+    expect(byOwner[OWNER_A].cashDate).toBe("2026-10-26");
+    // ขาที่ไม่มีบรรทัดเงินสดต้องเป็น null ไม่ใช่รับค่ามาตามอีกขา
+    expect(byOwner[OWNER_B].cashDate).toBeNull();
+  });
+
+  it("ลงวันที่ก่อนต้นฉบับ → ปฏิเสธ", () => {
+    expect(() =>
+      buildReversal({ ...withCash([rentSource()]), docDate: "2026-10-01", cashDate: "2026-10-01" }),
+    ).toThrow(/ก่อนวันที่ของต้นฉบับ/);
+  });
+
+  it("วันที่เงินเคลื่อนก่อนวันที่เอกสารของใบเดียวกัน → ปฏิเสธ", () => {
+    expect(() =>
+      buildReversal({ ...withCash([rentSource()]), docDate: "2026-10-26", cashDate: "2026-10-21" }),
+    ).toThrow(/อยู่ก่อนวันที่เอกสาร/);
+  });
+
+  it("วันที่ที่ไม่มีอยู่จริงถูกปฏิเสธ ไม่ใช่เลื่อนให้เงียบๆ", () => {
+    // new Date("2026-02-30") เลื่อนเป็น 2026-03-02 โดยไม่โยน error
+    expect(() =>
+      buildReversal({ ...withCash([rentSource()]), docDate: "2026-02-30" }),
+    ).toThrow(/ไม่ใช่วันที่ที่มีอยู่จริง/);
+  });
+
+  it("เหตุผลลงไปในสมุดผ่าน memo ไม่ใช่อยู่แค่ในข้อความสรุป", () => {
+    const { transactions } = buildReversal(withCash([rentSource()]));
+    expect(transactions[0].memo).toContain(reason);
+    expect(transactions[0].memo).toContain("txn-rent-001");
   });
 });

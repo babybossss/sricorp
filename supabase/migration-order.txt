@@ -40,3 +40,4 @@
 20261008000012_line_guards_as_triggers.sql
 20261008000013_drop_redundant_door_checks.sql
 20261009000000_reverse_integrity.sql
+20261009000001_cash_date_invariant.sql
