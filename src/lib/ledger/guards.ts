@@ -28,6 +28,27 @@ import {
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * YYYY-MM-DD ที่เป็นวันที่จริง (2026-02-30 ต้องไม่ผ่าน)
+ *
+ * อยู่ที่นี่เพราะทุกเส้นทางที่ตัดสินด้วยวันที่ (กลับรายการ · งบ · ปิดงวด) ต้องใช้ด่านเดียวกัน
+ * วันที่ที่ไม่มีจริงถูก `new Date()` เลื่อนให้เงียบๆ → รายการไปโผล่งวดอื่น
+ *
+ * หมายเหตุ: `reversal.ts` ยังมีสำเนาของด่านนี้เป็นฟังก์ชันภายใน (แก้ไฟล์นั้นไม่ได้ในรอบนี้)
+ * ให้ยุบมาใช้ตัวนี้ตอนที่แตะ `reversal.ts` ครั้งถัดไป
+ */
+export function assertIsoDate(v: string | undefined, label: string): string {
+  const t = (v ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+    throw new PostingError(`${label} ต้องเป็นวันที่รูปแบบ YYYY-MM-DD (ได้ "${v ?? ""}")`);
+  }
+  const d = new Date(`${t}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) {
+    throw new PostingError(`${label} ไม่ใช่วันที่ที่มีอยู่จริง ("${t}")`);
+  }
+  return t;
+}
+
 /** ตัวเลขเงินที่รับได้: จำกัด ไม่ใช่ NaN/Infinity และไม่ติดลบ */
 export function money(n: number, label: string): number {
   if (typeof n !== "number" || !Number.isFinite(n)) {

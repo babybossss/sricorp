@@ -14,6 +14,7 @@
 
 import { COA, type CoaType } from "./coa";
 import { TX_TYPES, type CashflowSection } from "./tx-rules";
+import { INTERCOMPANY_RULES, type IntercompanyNature } from "./intercompany";
 
 export type BsSide = "asset" | "liability" | "equity";
 
@@ -245,10 +246,29 @@ export function findLayoutGaps(): { missing: string[]; duplicated: string[]; unk
  * มีเทสต์บังคับว่าทุกหมวดต้องอยู่ในส่วนที่ตรงกับ `cashflow` ของตัวเอง
  * ------------------------------------------------------------------ */
 
+/**
+ * ขาของรายการข้ามผู้ถือ — ฝ่ายจ่ายกับฝ่ายรับอยู่ **ส่วนต่างกัน** ของงบ
+ * (เงินทดรอง/กู้ยืม/เพิ่มทุน: จ่าย = ลงทุน · รับ = จัดหาเงิน · ปันผลสลับกัน)
+ */
+export type IntercompanyLeg = { nature: IntercompanyNature; side: "payer" | "receiver" };
+
 export type CfLine = {
   line: string;
   /** รหัส **หมวดรายการ** (ไม่ใช่รหัสบัญชี) ที่รวมอยู่ในบรรทัดนี้ */
   subCodes: string[];
+  /**
+   * ขาของรายการข้ามผู้ถือที่รวมอยู่ในบรรทัดนี้
+   *
+   * **ต้องแยกจาก `subCodes` เพราะคีย์ไม่เหมือนกัน** — รายการข้ามผู้ถือใช้
+   * หมวด `trf.internal` ซึ่งตารางกฎตั้ง `cashflow: "none"` (โอนระหว่างบัญชี
+   * ตัวเองไม่ใช่กระแสเงินสด) แต่พอข้ามผู้ถือ **มันเป็นกระแสเงินสดจริงของแต่ละฝ่าย**
+   * และหมวดมาจาก `intercompany.ts` ไม่ใช่จากตารางกฎ
+   *
+   * เคยพลาดเพราะตรงนี้: ตัวตรวจช่องว่างดูแต่ตารางกฎ จึงพอใจว่า `trf.internal`
+   * เป็น "none" แล้วไม่ต้องอยู่ในโครงงบ ทั้งที่ของจริงสร้างกระแสเงินสดอยู่
+   * (จุดบอดเดียวกับที่ `sync:rules` พลาด `intercompany.ts` — ดู D-096)
+   */
+  legs?: IntercompanyLeg[];
 };
 
 export type CfSection = {
@@ -274,6 +294,9 @@ export const CF_LAYOUT: CfSection[] = [
       { line: "เงินสดจ่ายเจ้าหนี้ค้างจ่าย", subCodes: ["fin.pay_payable"] },
       { line: "เงินมัดจำจ่ายและรับคืน", subCodes: ["inv.deposit_paid", "inv.deposit_returned"] },
       { line: "เงินมัดจำผู้เช่า รับและคืน", subCodes: ["fin.deposit_received", "fin.deposit_refund"] },
+      // แยกจาก "เงินสดรับจากเงินปันผล" โดยตั้งใจ — ตัวนี้ถูกตัดออกในงบกองกลางรวม
+      // ถ้ารวมบรรทัดกัน จะมองไม่ออกว่ายอดไหนหายไปเพราะการตัดรายการระหว่างกัน
+      { line: "เงินปันผลรับจากกิจการในกองกลาง", subCodes: [], legs: [{ nature: "dividend", side: "receiver" }] },
     ],
   },
   {
@@ -287,6 +310,8 @@ export const CF_LAYOUT: CfSection[] = [
       { line: "รับคืนเงินต้น ขายฝาก จำนอง และเงินให้กู้", subCodes: ["inv.srr_redeem", "inv.mortgage_redeem", "inv.loan_back"] },
       { line: "ซื้อหลักทรัพย์และทองคำ", subCodes: ["inv.buy_securities", "inv.buy_commodity"] },
       { line: "ขายหลักทรัพย์และทองคำ", subCodes: ["inv.sell_securities", "inv.sell_commodity"] },
+      { line: "เงินจ่ายให้กิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)", subCodes: [],
+        legs: [{ nature: "advance", side: "payer" }, { nature: "loan", side: "payer" }, { nature: "capital", side: "payer" }] },
     ],
   },
   {
@@ -302,6 +327,9 @@ export const CF_LAYOUT: CfSection[] = [
       { line: "ดอกเบี้ยจ่าย", subCodes: ["fin.interest_paid"] },
       { line: "เพิ่มทุน", subCodes: ["fin.capital"] },
       { line: "ถอนทุน / จ่ายปันผล", subCodes: ["fin.drawings"] },
+      { line: "เงินรับจากกิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)", subCodes: [],
+        legs: [{ nature: "advance", side: "receiver" }, { nature: "loan", side: "receiver" }, { nature: "capital", side: "receiver" }] },
+      { line: "จ่ายปันผลให้กิจการในกองกลาง", subCodes: [], legs: [{ nature: "dividend", side: "payer" }] },
     ],
   },
 ];
@@ -331,6 +359,30 @@ export function cashflowLineOf(subCode: string): { section: Exclude<CashflowSect
 }
 
 /**
+ * บรรทัดในงบของขารายการข้ามผู้ถือ
+ *
+ * ฝั่งผู้เรียกรู้ `nature` จากหัวรายการ และรู้ `side` จากบัญชีคู่ของขานั้น
+ * (`INTERCOMPANY_RULES[nature].payer.coa` vs `.receiver.coa`)
+ * **ห้ามตัดสิน side จากทิศของเงิน** เพราะใบกลับรายการสลับทิศ แล้วยอดจะไปลง
+ * บรรทัดของฝ่ายตรงข้าม ทำให้ต้นฉบับกับใบกลับรายการไม่หักกันในบรรทัดเดียว
+ */
+export function cashflowLineOfLeg(
+  nature: IntercompanyNature,
+  side: "payer" | "receiver",
+): { section: Exclude<CashflowSection, "none">; title: string; line: string } {
+  for (const s of CF_LAYOUT) {
+    for (const l of s.lines) {
+      if (l.legs?.some((g) => g.nature === nature && g.side === side)) {
+        return { section: s.section, title: s.title, line: l.line };
+      }
+    }
+  }
+  throw new Error(
+    `ขารายการข้ามผู้ถือ ${nature}/${side} ไม่อยู่ในโครงงบกระแสเงินสด — เพิ่มใน CF_LAYOUT ก่อน`,
+  );
+}
+
+/**
  * ช่องว่างของโครงงบกระแสเงินสด — ใช้ในเทสต์
  *
  * `missing`    หมวดที่เข้างบกระแสเงินสดได้ แต่โครงงบไม่มี → ยอดจะหายจากรายงานเงียบๆ
@@ -345,6 +397,12 @@ export function findCashflowLayoutGaps(): {
   duplicated: string[];
   unknown: string[];
   wrongSection: { subCode: string; inLayout: string; inRules: string }[];
+  /** ขารายการข้ามผู้ถือที่โครงงบไม่มีบรรทัดรองรับ → ยอดหลุดไปอยู่บรรทัดตกหล่น */
+  missingLegs: string[];
+  /** ขาที่อยู่สองบรรทัด → ยอดถูกนับซ้ำ */
+  duplicatedLegs: string[];
+  /** ขาที่อยู่ผิดส่วนจาก `intercompany.ts` → ยอดรวมถูกแต่ส่วนผิด */
+  wrongSectionLegs: { leg: string; inLayout: string; inRules: string }[];
 } {
   const subs = TX_TYPES.flatMap((t) => t.subs);
   const ruleSection = new Map(subs.map((s) => [s.code, s.cashflow]));
@@ -364,9 +422,37 @@ export function findCashflowLayoutGaps(): {
     }
   }
 
+  // ---------- ขารายการข้ามผู้ถือ ----------
+  // ครอบ `intercompany.ts` ด้วยโดยตั้งใจ · ไฟล์นี้หลุดจากเครื่องตรวจมาแล้วสองครั้ง
+  // (D-096 `sync:rules` ไม่ครอบ · และโครงงบนี้ตอนแรกก็ไม่ครอบ)
+  const legKey = (n: string, sd: string) => `${n}/${sd}`;
+  const ruleLegs = new Map<string, Exclude<CashflowSection, "none">>();
+  for (const [nature, rule] of Object.entries(INTERCOMPANY_RULES)) {
+    for (const side of ["payer", "receiver"] as const) {
+      ruleLegs.set(legKey(nature, side), rule[side].cashflow as Exclude<CashflowSection, "none">);
+    }
+  }
+  const seenLegs = new Map<string, number>();
+  const wrongSectionLegs: { leg: string; inLayout: string; inRules: string }[] = [];
+  for (const sec of CF_LAYOUT) {
+    for (const l of sec.lines) {
+      for (const g of l.legs ?? []) {
+        const k = legKey(g.nature, g.side);
+        seenLegs.set(k, (seenLegs.get(k) ?? 0) + 1);
+        const r = ruleLegs.get(k);
+        if (r !== undefined && r !== sec.section) {
+          wrongSectionLegs.push({ leg: k, inLayout: sec.section, inRules: r });
+        }
+      }
+    }
+  }
+
   return {
     // หมวดที่ cashflow เป็น "none" ต้อง **ไม่** อยู่ในโครงงบ (โอนระหว่างบัญชีตัวเอง)
     missing: subs.filter((s) => s.cashflow !== "none" && !seen.has(s.code)).map((s) => s.code),
+    missingLegs: [...ruleLegs.keys()].filter((k) => !seenLegs.has(k)),
+    duplicatedLegs: [...seenLegs.entries()].filter(([, n]) => n > 1).map(([k]) => k),
+    wrongSectionLegs,
     duplicated: [...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c),
     unknown: [...seen.keys()].filter((c) => !ruleSection.has(c) || ruleSection.get(c) === "none"),
     wrongSection,

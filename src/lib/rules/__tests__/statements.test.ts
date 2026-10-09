@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { COA, coa } from "../coa";
-import { BS_LAYOUT, PL_LAYOUT, bsCodes, cashflowLineOf, cfSubCodes, findCashflowLayoutGaps, findLayoutGaps, isBalanceSheetType, plCodes, statementOf } from "../statements";
+import { BS_LAYOUT, PL_LAYOUT, bsCodes, cashflowLineOf, cashflowLineOfLeg, cfSubCodes, findCashflowLayoutGaps, findLayoutGaps, isBalanceSheetType, plCodes, statementOf } from "../statements";
 import { TX_TYPES } from "../tx-rules";
 
 /**
@@ -75,6 +75,9 @@ describe("โครงงบกระแสเงินสด", () => {
       duplicated: [],
       unknown: [],
       wrongSection: [],
+      missingLegs: [],
+      duplicatedLegs: [],
+      wrongSectionLegs: [],
     });
   });
 
@@ -98,5 +101,41 @@ describe("โครงงบกระแสเงินสด", () => {
     // แล้วเทสต์ wrongSection ข้างบนจะบังคับให้ย้ายโครงงบตามเอง
     const sub = TX_TYPES.flatMap((t) => t.subs).find((s) => s.code === "fin.interest_paid");
     expect(cashflowLineOf("fin.interest_paid").section).toBe(sub?.cashflow);
+  });
+});
+
+describe("โครงงบกระแสเงินสด · ขารายการข้ามผู้ถือ", () => {
+  it("ทุกลักษณะทั้งสองฝ่ายมีบรรทัดรองรับ ในส่วนที่ intercompany.ts กำหนด", () => {
+    // 4 ลักษณะ x 2 ฝ่าย = 8 ขา · เคยหลุดทั้ง 8 เพราะตัวตรวจดูแต่ตารางกฎ
+    // ซึ่งบอกว่า trf.internal เป็น "none" แล้วจบ ทั้งที่ของจริงสร้างกระแสเงินสด
+    const g = findCashflowLayoutGaps();
+    expect(g.missingLegs).toEqual([]);
+    expect(g.duplicatedLegs).toEqual([]);
+    expect(g.wrongSectionLegs).toEqual([]);
+  });
+
+  it("ฝ่ายจ่ายกับฝ่ายรับอยู่ส่วนต่างกันตามที่ตารางกำหนด", () => {
+    // เงินทดรอง/กู้ยืม/เพิ่มทุน: จ่าย = ลงทุน · รับ = จัดหาเงิน
+    for (const nature of ["advance", "loan", "capital"] as const) {
+      expect(cashflowLineOfLeg(nature, "payer").section).toBe("investing");
+      expect(cashflowLineOfLeg(nature, "receiver").section).toBe("financing");
+    }
+    // ปันผลสลับกัน: ฝ่ายจ่ายลดส่วนของเจ้าของ (จัดหาเงิน) · ฝ่ายรับเป็นรายได้ (ดำเนินงาน)
+    expect(cashflowLineOfLeg("dividend", "payer").section).toBe("financing");
+    expect(cashflowLineOfLeg("dividend", "receiver").section).toBe("operating");
+  });
+
+  it("ขาที่ไม่มีในโครงงบต้องโยน error ไม่ใช่คืนบรรทัดมั่วๆ", () => {
+    expect(() => cashflowLineOfLeg("advance", "ไม่มีฝ่ายนี้" as never)).toThrow(
+      /ไม่อยู่ในโครงงบกระแสเงินสด/,
+    );
+  });
+
+  it("เงินปันผลระหว่างกันแยกบรรทัดจากเงินปันผลจากภายนอก", () => {
+    // ต้องแยก เพราะตัวในกองกลางถูกตัดออกในงบรวม — รวมบรรทัดกันแล้วจะมองไม่ออก
+    // ว่ายอดหายไปเพราะการตัดรายการระหว่างกัน ไม่ใช่เพราะปันผลลดลง
+    expect(cashflowLineOfLeg("dividend", "receiver").line).not.toBe(
+      cashflowLineOf("inc.dividend").line,
+    );
   });
 });
