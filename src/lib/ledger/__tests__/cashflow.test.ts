@@ -43,6 +43,7 @@ const tx = (over: Partial<CashflowTxn> = {}): CashflowTxn => ({
   docDate: "2026-01-05",
   cashDate: "2026-01-05",
   counterOwnerId: null,
+  intercompanyNature: null,
   lines: [],
   ...over,
 });
@@ -232,11 +233,12 @@ describe("โอนระหว่างบัญชีตัวเอง", () =
   });
 });
 
-/** ขาคู่กันของรายการข้ามผู้ถือ — กู้ยืมระหว่างกัน 1 ล้าน */
+/** ขาคู่กันของรายการข้ามผู้ถือ — กู้ยืมระหว่างกัน 1 ล้าน (บัญชีคู่ 1310/2310) */
 const icPayer = tx({
   txnId: "ic-pay",
   ownerId: CORP,
   counterOwnerId: THANAKORN,
+  intercompanyNature: "loan",
   subCode: "trf.internal",
   lines: [ln("1310", 1_000_000, 0, "investing"), ln(CASH, 0, 1_000_000, "investing")],
 });
@@ -245,24 +247,112 @@ const icReceiver = tx({
   txnId: "ic-recv",
   ownerId: THANAKORN,
   counterOwnerId: CORP,
+  intercompanyNature: "loan",
   subCode: "trf.internal",
   lines: [ln(CASH, 1_000_000, 0, "financing"), ln("2310", 0, 1_000_000, "financing")],
 });
 
+const IC_PAY_LINE = "เงินจ่ายให้กิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)";
+const IC_RECV_LINE = "เงินรับจากกิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)";
+
 describe("ข้ามผู้ถือ — สองมุมมอง", () => {
-  it("งบรายผู้ถือ: ฝ่ายจ่ายเงินออกจริง", () => {
+  it("งบรายผู้ถือ: ฝ่ายจ่ายเงินออกจริง อยู่บรรทัดลงทุนของกองกลาง", () => {
     const st = run([icPayer, icReceiver], { ownerIds: [CORP] });
+    expect(lineAmount(st, "investing", IC_PAY_LINE)).toBe(-1_000_000);
     expect(section(st, "investing").total).toBe(-1_000_000);
     expect(st.netChange).toBe(-1_000_000);
     expect(st.eliminated).toEqual([]);
     expect(st.reconciled).toBe(true);
+    // รายการข้ามผู้ถือปกติ **ห้าม** มีเสียงรบกวนใน anomalies
+    expect(st.anomalies).toEqual([]);
   });
 
-  it("งบรายผู้ถือ: ฝ่ายรับเงินเข้าจริง", () => {
+  it("งบรายผู้ถือ: ฝ่ายรับเงินเข้าจริง อยู่บรรทัดจัดหาเงินของกองกลาง", () => {
     const st = run([icPayer, icReceiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(st, "financing", IC_RECV_LINE)).toBe(1_000_000);
     expect(section(st, "financing").total).toBe(1_000_000);
     expect(st.netChange).toBe(1_000_000);
     expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("เงินทดรอง: ฝ่ายจ่าย → ลงทุน · ฝ่ายรับ → จัดหาเงิน", () => {
+    const payer = tx({
+      txnId: "adv-pay",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "advance",
+      subCode: "trf.internal",
+      lines: [ln("1310", 200_000, 0, "investing"), ln(CASH, 0, 200_000, "investing")],
+    });
+    const receiver = tx({
+      txnId: "adv-recv",
+      ownerId: THANAKORN,
+      counterOwnerId: CORP,
+      intercompanyNature: "advance",
+      subCode: "trf.internal",
+      lines: [ln(CASH, 200_000, 0, "financing"), ln("2310", 0, 200_000, "financing")],
+    });
+
+    const stPayer = run([payer, receiver], { ownerIds: [CORP] });
+    expect(lineAmount(stPayer, "investing", IC_PAY_LINE)).toBe(-200_000);
+    expect(stPayer.anomalies).toEqual([]);
+
+    const stRecv = run([payer, receiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(stRecv, "financing", IC_RECV_LINE)).toBe(200_000);
+    expect(stRecv.anomalies).toEqual([]);
+  });
+
+  it("ปันผลระหว่างกัน: ฝ่ายจ่าย → จัดหาเงิน · ฝ่ายรับ → ดำเนินงาน คนละบรรทัดกับ inc.dividend", () => {
+    const payer = tx({
+      txnId: "div-pay",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "dividend",
+      subCode: "trf.internal",
+      lines: [ln("3200", 300_000, 0, "financing"), ln(CASH, 0, 300_000, "financing")],
+    });
+    const receiver = tx({
+      txnId: "div-recv",
+      ownerId: THANAKORN,
+      counterOwnerId: CORP,
+      intercompanyNature: "dividend",
+      subCode: "trf.internal",
+      lines: [ln(CASH, 300_000, 0, "operating"), ln("4410", 0, 300_000, "operating")],
+    });
+
+    const stPayer = run([payer, receiver], { ownerIds: [CORP] });
+    expect(lineAmount(stPayer, "financing", "จ่ายปันผลให้กิจการในกองกลาง")).toBe(-300_000);
+    expect(lineAmount(stPayer, "financing", "ถอนทุน / จ่ายปันผล")).toBe(0);
+    expect(stPayer.anomalies).toEqual([]);
+
+    const stRecv = run([payer, receiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(stRecv, "operating", "เงินปันผลรับจากกิจการในกองกลาง")).toBe(300_000);
+    // ปันผลรับจากข้างนอกกองกลางอยู่คนละบรรทัด ไม่งั้นมองไม่ออกว่ายอดไหนถูกตัดในงบรวม
+    expect(lineAmount(stRecv, "operating", "เงินสดรับจากเงินปันผล")).toBe(0);
+    expect(stRecv.anomalies).toEqual([]);
+  });
+
+  it("ใบกลับรายการของขาฝ่ายจ่าย ลงบรรทัดเดียวกับต้นฉบับ (ตัดสิน side จากบัญชีคู่)", () => {
+    // ใบกลับรายการสลับทิศเงิน: เงิน **เข้า** ทั้งที่ยังเป็นขาฝ่ายจ่าย
+    const reversePayer = tx({
+      txnId: "ic-pay-rev",
+      source: "reverse",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "loan",
+      subCode: "trf.internal",
+      docDate: "2026-01-20",
+      cashDate: "2026-01-20",
+      lines: [ln("1310", 0, 1_000_000, "investing"), ln(CASH, 1_000_000, 0, "investing")],
+    });
+
+    const st = run([icPayer, reversePayer], { ownerIds: [CORP] });
+    // ต้นฉบับ −1 ล้าน + ใบกลับ +1 ล้าน ต้องหักกันใน **บรรทัดเดียว**
+    expect(lineAmount(st, "investing", IC_PAY_LINE)).toBe(0);
+    // ห้ามไปโผล่บรรทัดของฝ่ายรับ
+    expect(lineAmount(st, "financing", IC_RECV_LINE)).toBe(0);
+    expect(section(st, "financing").total).toBe(0);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
   });
 
   it("งบรวมที่มีทั้งสองฝ่าย: ตัดออกเป็นศูนย์", () => {
@@ -409,10 +499,38 @@ describe("ข้อมูลขาด — ต้องชัดเจน ห้�
     expect(st.reconciled).toBe(true);
   });
 
-  it("รายการข้ามผู้ถือ (trf.internal) ไม่มีบรรทัดในโครงงบ → ยอดอยู่ครบและมี anomaly", () => {
-    const st = run([icPayer, icReceiver], { ownerIds: [CORP] });
-    expect(st.anomalies.map((a) => a.kind)).toContain("subCodeNotInLayout");
-    expect(section(st, "investing").total).toBe(-1_000_000);
+  it("ขาข้ามผู้ถือที่บัญชีคู่ไม่ตรงทั้งสองฝ่าย → เข้า anomalies ไม่ใช่เดาฝ่าย", () => {
+    const st = run([
+      tx({
+        txnId: "ic-weird",
+        counterOwnerId: THANAKORN,
+        intercompanyNature: "loan",
+        subCode: "trf.internal",
+        // 1300 ไม่ใช่ทั้ง 1310 (ฝ่ายจ่าย) และ 2310 (ฝ่ายรับ)
+        lines: [ln("1300", 500_000, 0, "investing"), ln(CASH, 0, 500_000, "investing")],
+      }),
+    ]);
+    const a = st.anomalies.find((x) => x.kind === "intercompanySideUnknown");
+    expect(a).toBeDefined();
+    expect(a!.txnId).toBe("ic-weird");
+    // ยอดไม่หาย → ยังกระทบยอดได้
+    expect(section(st, "investing").total).toBe(-500_000);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ลักษณะข้ามผู้ถือที่ไม่มีใน intercompany.ts หรือไม่มีผู้ถืออีกฝ่าย → PostingError", () => {
+    expect(() => run([tx({ intercompanyNature: "barter" as never, counterOwnerId: THANAKORN })])).toThrow(
+      PostingError
+    );
+    expect(() =>
+      run([
+        tx({
+          intercompanyNature: "loan",
+          counterOwnerId: null,
+          lines: [ln("1310", 1, 0, "investing"), ln(CASH, 0, 1, "investing")],
+        }),
+      ])
+    ).toThrow(PostingError);
   });
 
   it("ฟิลด์บังคับที่หายไป → PostingError ไม่ใช่เดา", () => {
@@ -420,7 +538,8 @@ describe("ข้อมูลขาด — ต้องชัดเจน ห้�
     expect(() => run([rentIn({ txnId: "" })])).toThrow(PostingError);
     expect(() => run([rentIn({ subCode: "" })])).toThrow(PostingError);
     expect(() => run([rentIn({ docDate: "05/01/2026" })])).toThrow(PostingError);
-    expect(() => run([rentIn({ cashDate: "2026-02-30" })])).toThrow(PostingError);
+    // 2026-02-30 ไม่มีจริง · `new Date()` เลื่อนเป็น 2 มี.ค. เงียบๆ → ต้องปฏิเสธ ไม่ใช่เลื่อนงวด
+    expect(() => run([rentIn({ cashDate: "2026-02-30" })])).toThrow(/ไม่ใช่วันที่ที่มีอยู่จริง/);
     expect(() => run([rentIn({ status: "draft" as never })])).toThrow(PostingError);
   });
 

@@ -12,6 +12,9 @@
  *
  * - **ส่วน** (ดำเนินงาน/ลงทุน/จัดหาเงิน) มาจาก `cfCategory` ที่เก็บไว้ในบรรทัดเงินสด
  * - **ชื่อบรรทัด** มาจากโครงงบ `cashflowLineOf(subCode)` (`src/lib/rules/statements.ts`)
+ *   ยกเว้น **ขาของรายการข้ามผู้ถือ** ที่ใช้ `cashflowLineOfLeg(nature, side)` เพราะคีย์
+ *   คนละชุด (หมวดเป็น `trf.internal` ที่ `cashflow: "none"` แต่เงินเคลื่อนจริงของแต่ละฝ่าย)
+ *   และ `side` ตัดสินจาก **บัญชีคู่** เทียบกับ `INTERCOMPANY_RULES` ไม่ใช่จากทิศของเงิน
  * - ถ้าสองอย่างนี้ **ขัดกัน** → ยึดของที่เก็บไว้ (ประวัติชนะ) **แต่ต้องรายงานเป็น
  *   ความผิดปกติ** ห้ามเลือกข้างเงียบๆ เพราะข้างที่เลือกผิดคือกระแสเงินสดจากการ
  *   ดำเนินงาน ซึ่งเป็นตัวเลขที่ใช้ตัดสินว่าธุรกิจเลี้ยงตัวเองได้หรือไม่
@@ -55,7 +58,8 @@
  */
 
 import { isCashAccount } from "@/lib/rules/coa";
-import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf } from "@/lib/rules/statements";
+import { INTERCOMPANY_RULES, type IntercompanyNature } from "@/lib/rules/intercompany";
+import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf, cashflowLineOfLeg } from "@/lib/rules/statements";
 import type { CashflowSection } from "@/lib/rules/tx-rules";
 import { assertIsoDate, round2 } from "./guards";
 import type { TxnStatus } from "./reversal";
@@ -67,7 +71,11 @@ export type CfSectionKey = Exclude<CashflowSection, "none">;
 /** ที่มาของรายการ — ชนิดเดียวกับ `sri_os.txn_source` */
 export type TxnSource = "manual" | "schedule" | "payroll" | "reimburse" | "import" | "reverse";
 
+/** ฝ่ายของขารายการข้ามผู้ถือ — ตัดสินจาก **บัญชีคู่** ห้ามตัดสินจากทิศของเงิน */
+export type LegSide = "payer" | "receiver";
+
 const TXN_SOURCES: TxnSource[] = ["manual", "schedule", "payroll", "reimburse", "import", "reverse"];
+const IC_NATURES = Object.keys(INTERCOMPANY_RULES) as IntercompanyNature[];
 const TXN_STATUSES: TxnStatus[] = ["posted", "void"];
 const CF_CATEGORIES: CashflowSection[] = ["operating", "investing", "financing", "none"];
 
@@ -106,6 +114,14 @@ export type CashflowTxn = {
   lines: CashflowSourceLine[];
   /** ผู้ถืออีกฝ่าย ถ้าใบนี้เป็นขาหนึ่งของรายการข้ามผู้ถือ · `null` ถ้าไม่ใช่ */
   counterOwnerId: string | null;
+  /**
+   * ลักษณะของรายการข้ามผู้ถือจากหัวรายการ · `null` ถ้าไม่ใช่รายการข้ามผู้ถือ
+   *
+   * **จำเป็น** เพราะขาข้ามผู้ถือใช้หมวด `trf.internal` ที่ตารางกฎตั้ง `cashflow: "none"`
+   * บรรทัดในงบจึงหาด้วย `cashflowLineOfLeg(nature, side)` ไม่ใช่ `cashflowLineOf(subCode)`
+   * และ `advance` กับ `loan` ใช้บัญชีคู่เดียวกัน (1310/2310) จึงแยกกันได้ด้วยฟิลด์นี้เท่านั้น
+   */
+  intercompanyNature: IntercompanyNature | null;
 };
 
 export type CashflowInput = {
@@ -149,7 +165,8 @@ export type CashflowStatementSection = {
  *
  * `cashWithoutCashDate`      มีบรรทัดเงินสดแต่ไม่มี `cashDate` → งบดุลขยับ งบ CF ไม่ขยับ
  * `cashDateWithoutCashLine`  มี `cashDate` แต่ไม่มีบรรทัดเงินสด → วันที่เงินเคลื่อนของอะไร
- * `subCodeNotInLayout`       โครงงบไม่มีบรรทัดรองรับหมวดนี้ → ยอดไปอยู่บรรทัดรวม
+ * `subCodeNotInLayout`       โครงงบไม่มีบรรทัดรองรับหมวด/ขานี้ → ยอดไปอยู่บรรทัดรวม
+ * `intercompanySideUnknown`  ขาข้ามผู้ถือที่บัญชีคู่ไม่ตรงกับฝ่ายจ่ายหรือฝ่ายรับ → เดาฝ่ายไม่ได้
  * `sectionConflict`          `cfCategory` ที่เก็บไว้ขัดกับส่วนที่โครงงบบอก
  * `mixedCfCategory`          บรรทัดเงินสดของใบเดียวกันอยู่คนละส่วน
  * `cashOutsideStatement`     บรรทัดเงินสด `cfCategory = 'none'` ที่ไม่หักกันเป็นศูนย์
@@ -160,6 +177,7 @@ export type CashflowAnomalyKind =
   | "cashWithoutCashDate"
   | "cashDateWithoutCashLine"
   | "subCodeNotInLayout"
+  | "intercompanySideUnknown"
   | "sectionConflict"
   | "mixedCfCategory"
   | "cashOutsideStatement"
@@ -299,12 +317,34 @@ function assertTxn(raw: unknown): CashflowTxn {
     rawCashDate === null ? null : assertIsoDate(rawCashDate, `วันที่เงินเคลื่อนของรายการ ${txnId}`);
   const counterOwnerId = requireNullableString(o, "counterOwnerId", `ผู้ถืออีกฝ่ายของรายการ ${txnId}`);
 
+  const rawNature = requireNullableString(o, "intercompanyNature", `ลักษณะรายการข้ามผู้ถือของรายการ ${txnId}`);
+  const intercompanyNature = rawNature === null ? null : (rawNature as IntercompanyNature);
+  if (intercompanyNature !== null && !IC_NATURES.includes(intercompanyNature)) {
+    fail(`รายการ ${txnId} มีลักษณะรายการข้ามผู้ถือ "${rawNature}" ที่ไม่มีใน intercompany.ts`);
+  }
+  // ขาข้ามผู้ถือต้องมาเป็นคู่เสมอ (1 transaction = 1 owner) — มีลักษณะแต่ไม่มีอีกฝ่าย
+  // แปลว่าข้อมูลหัวรายการไม่ครบ ตัดสินไม่ได้ว่าจะตัดในงบรวมหรือไม่ จึงต้องปฏิเสธ
+  if (intercompanyNature !== null && counterOwnerId === null) {
+    fail(`รายการ ${txnId} ระบุลักษณะรายการข้ามผู้ถือ (${intercompanyNature}) แต่ไม่มีผู้ถืออีกฝ่าย`);
+  }
+
   if (!has(o, "lines") || !Array.isArray(o.lines) || o.lines.length === 0) {
     fail(`รายการ ${txnId} ไม่มีบรรทัดบัญชี — รายการในสมุดต้องมีอย่างน้อยสองบรรทัด`);
   }
   const lines = (o.lines as unknown[]).map((l, i) => assertLine(l, txnId, i));
 
-  return { txnId, ownerId, status, source, subCode, docDate, cashDate, lines, counterOwnerId };
+  return {
+    txnId,
+    ownerId,
+    status,
+    source,
+    subCode,
+    docDate,
+    cashDate,
+    lines,
+    counterOwnerId,
+    intercompanyNature,
+  };
 }
 
 function assertOwnerIds(raw: unknown): string[] {
@@ -356,14 +396,47 @@ function addTo(
   else m.set(key, { line, subCodes: [], inLayout, satang });
 }
 
+type LineTarget = { section: CfSectionKey; line: string };
+
 /** โครงงบรู้จักหมวดนี้ไหม — `cashflowLineOf()` โยนเมื่อไม่รู้จัก จึงห่อไว้ที่เดียว */
-function layoutOf(subCode: string): { section: CfSectionKey; line: string } | null {
+function layoutOf(subCode: string): LineTarget | null {
   try {
     const l = cashflowLineOf(subCode);
     return { section: l.section, line: l.line };
   } catch {
     return null;
   }
+}
+
+/** บรรทัดของขารายการข้ามผู้ถือ — คีย์คนละชุดกับหมวดย่อย (ดู `CfLine.legs`) */
+function legLayoutOf(nature: IntercompanyNature, side: LegSide): LineTarget | null {
+  try {
+    const l = cashflowLineOfLeg(nature, side);
+    return { section: l.section, line: l.line };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ขานี้เป็นฝ่ายจ่ายหรือฝ่ายรับ — ตัดสินจาก **บัญชีคู่** ของขานั้น
+ *
+ * **ห้ามตัดสินจากทิศของเงิน** เพราะใบกลับรายการสลับทิศ ยอดจะไปลงบรรทัดของ
+ * ฝ่ายตรงข้าม แล้วต้นฉบับกับใบกลับรายการจะไม่หักกันในบรรทัดเดียว (งบรวมยังเป็นศูนย์
+ * แต่สองบรรทัดค้างยอดหักกลบกัน ซึ่งอ่านงบไม่รู้เรื่อง)
+ *
+ * `advance` กับ `loan` ใช้บัญชีคู่เดียวกัน (1310/2310) — แยกกันได้เพราะ `nature`
+ * มาจากหัวรายการ ไม่ได้เดาจากบัญชี · ภายใน `nature` เดียว บัญชีของสองฝ่ายต่างกันเสมอ
+ *
+ * คืน `null` เมื่อบัญชีคู่ไม่ตรงกับทั้งสองฝ่าย หรือตรงทั้งคู่ → **เดาไม่ได้ ต้องดัง**
+ */
+function sideOfLeg(nature: IntercompanyNature, lines: CashflowSourceLine[]): LegSide | null {
+  const rule = INTERCOMPANY_RULES[nature];
+  const codes = new Set(lines.filter((l) => !isCashAccount(l.coaCode)).map((l) => l.coaCode));
+  const isPayer = codes.has(rule.payer.coa);
+  const isReceiver = codes.has(rule.receiver.coa);
+  if (isPayer === isReceiver) return null;
+  return isPayer ? "payer" : "receiver";
 }
 
 /* ------------------------------------------------------------------ *
@@ -476,6 +549,34 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       );
     }
 
+    /* ---- บรรทัดของรายการนี้ ----
+       ขารายการข้ามผู้ถือใช้คีย์คนละชุดกับหมวดย่อย: หมวดคือ `trf.internal`
+       (`cashflow: "none"`) แต่ของจริงเป็นกระแสเงินสดของแต่ละฝ่าย จึงต้องหาบรรทัด
+       ด้วย `cashflowLineOfLeg(nature, side)` ไม่ใช่ `cashflowLineOf(subCode)` */
+    let target: LineTarget | null;
+    let unmappedKind: CashflowAnomalyKind;
+    let unmappedWhy: string;
+    if (t.intercompanyNature !== null) {
+      const side = sideOfLeg(t.intercompanyNature, t.lines);
+      if (side === null) {
+        target = null;
+        unmappedKind = "intercompanySideUnknown";
+        unmappedWhy =
+          `รายการ ${t.txnId} เป็นขาข้ามผู้ถือลักษณะ ${t.intercompanyNature} ` +
+          `แต่บัญชีคู่ไม่ตรงกับฝ่ายจ่าย (${INTERCOMPANY_RULES[t.intercompanyNature].payer.coa}) ` +
+          `หรือฝ่ายรับ (${INTERCOMPANY_RULES[t.intercompanyNature].receiver.coa}) — ` +
+          "ตัดสินฝ่ายจากบัญชีคู่ไม่ได้ และห้ามเดาจากทิศของเงินเพราะใบกลับรายการสลับทิศ";
+      } else {
+        target = legLayoutOf(t.intercompanyNature, side);
+        unmappedKind = "subCodeNotInLayout";
+        unmappedWhy = `ขาข้ามผู้ถือ ${t.intercompanyNature}/${side} ไม่มีบรรทัดในโครงงบกระแสเงินสด`;
+      }
+    } else {
+      target = layoutOf(t.subCode);
+      unmappedKind = "subCodeNotInLayout";
+      unmappedWhy = `หมวด ${t.subCode} ไม่มีบรรทัดในโครงงบกระแสเงินสด`;
+    }
+
     for (const [category, satang] of moving) {
       if (category === "none") {
         note(
@@ -489,15 +590,14 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
         continue;
       }
 
-      const layout = layoutOf(t.subCode);
+      const layout = target;
       if (!layout) {
         note(
-          "subCodeNotInLayout",
+          unmappedKind,
           t.txnId,
           t.subCode,
           satang,
-          `หมวด ${t.subCode} ไม่มีบรรทัดในโครงงบกระแสเงินสด — ` +
-            `ยอดไปรวมที่ "${CF_UNMAPPED_LINE}" ของกิจกรรม${CF_SECTION_TH[category]}`
+          `${unmappedWhy} — ยอดไปรวมที่ "${CF_UNMAPPED_LINE}" ของกิจกรรม${CF_SECTION_TH[category]}`
         );
         addTo(buckets, category, CF_UNMAPPED_LINE, false, satang);
         continue;

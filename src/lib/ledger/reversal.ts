@@ -27,7 +27,7 @@
  * ตัวกั้นสุดท้ายคือ trigger ที่อ่านบรรทัดต้นฉบับจาก DB มาเทียบเอง
  */
 import { PostingError, type PostingLine, type PostingResult, type PostingTransaction } from "./types";
-import { assertBalanced, assertLinesValid, round2, totalDebit } from "./guards";
+import { assertBalanced, assertIsoDate, assertLinesValid, round2, totalDebit } from "./guards";
 import { isCashAccount } from "../rules/coa";
 import type { IntercompanyNature } from "../rules/intercompany";
 
@@ -152,21 +152,6 @@ function mirrorLine(src: PostingLine, index: number): PostingLine {
   return mirrored;
 }
 
-/** YYYY-MM-DD ที่เป็นวันที่จริง (2026-02-30 ต้องไม่ผ่าน) */
-function assertDate(v: string | undefined, label: string): string {
-  const t = (v ?? "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-    fail(`${label} ต้องเป็นวันที่รูปแบบ YYYY-MM-DD (ได้ "${v ?? ""}")`);
-  }
-  // `new Date("2026-02-30")` เลื่อนเป็น 2026-03-02 โดยไม่โยน error
-  // → เทียบข้อความกลับ ไม่งั้นวันที่ที่ไม่มีจริงจะถูกรับแล้วเลื่อนเงียบๆ
-  const d = new Date(`${t}T00:00:00Z`);
-  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) {
-    fail(`${label} ไม่ใช่วันที่ที่มีอยู่จริง ("${t}")`);
-  }
-  return t;
-}
-
 /** ขานี้มีบรรทัดเงินสด/เงินฝากหรือไม่ — ใช้ `isCashAccount` ตัวเดียวกับที่ทั้งระบบใช้ */
 function hasCashLine(lines: PostingLine[]): boolean {
   return lines.some((l) => isCashAccount(l.coaCode));
@@ -175,7 +160,7 @@ function hasCashLine(lines: PostingLine[]): boolean {
 function assertSourceUsable(src: ReversalSource): void {
   if (!src.txnId) fail("ไม่มี id ของรายการต้นฉบับ — กลับรายการโดยไม่รู้ว่ากลับอะไรไม่ได้");
   if (!src.ownerId) fail(`รายการ ${src.txnId} ไม่มีผู้ถือ — กลับรายการไม่ได้`);
-  assertDate(src.docDate, `วันที่เอกสารของรายการ ${src.txnId}`);
+  assertIsoDate(src.docDate, `วันที่เอกสารของรายการ ${src.txnId}`);
 
   // D-097 ด่าน 2: ต้นฉบับที่ void แล้วไม่นับในงบอยู่แล้ว
   // ถ้ายังลงใบกลับรายการที่ยังนับ สมุดจะผิดไป −ต้นฉบับ (ผิดเท่าตัวของยอดเดิม)
@@ -268,7 +253,7 @@ export function buildReversal(input: ReversalInput): ReversalResult {
   }
   assertPairsComplete(originals);
 
-  const docDate = assertDate(input.docDate, "วันที่ของใบกลับรายการ");
+  const docDate = assertIsoDate(input.docDate, "วันที่ของใบกลับรายการ");
 
   // ย้อนไปก่อนวันที่ของต้นฉบับไม่ถูกต้องในทุกกรณี — เงินยังไม่เกิดในวันนั้น
   // (เครื่องยนต์บังคับได้แค่นี้ · "ต้องอยู่ในงวดที่ยังไม่ปิด" ต้องถามจาก DB)
@@ -303,7 +288,7 @@ export function buildReversal(input: ReversalInput): ReversalResult {
         "ถ้ารับไว้ งบกระแสเงินสดจะนับเงินที่ไม่มีการเคลื่อนจริง",
     );
   }
-  const cashDate = anyCash ? assertDate(cashRaw, "วันที่เงินเคลื่อนของใบกลับรายการ") : null;
+  const cashDate = anyCash ? assertIsoDate(cashRaw, "วันที่เงินเคลื่อนของใบกลับรายการ") : null;
   if (cashDate !== null && cashDate < docDate) {
     // เงินเคลื่อนก่อนวันที่เอกสารของใบเดียวกันไม่สมเหตุสมผล
     fail(`วันที่เงินเคลื่อน (${cashDate}) อยู่ก่อนวันที่เอกสารของใบกลับรายการ (${docDate})`);
