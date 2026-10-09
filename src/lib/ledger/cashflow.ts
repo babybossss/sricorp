@@ -72,9 +72,9 @@ import { isCashAccount } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES, type IntercompanyNature } from "@/lib/rules/intercompany";
 import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf, cashflowLineOfLeg } from "@/lib/rules/statements";
 import type { CashflowSection } from "@/lib/rules/tx-rules";
-import { assertIsoDate, round2 } from "./guards";
+import { assertBalanced, assertIsoDate, round2 } from "./guards";
 import type { TxnStatus } from "./reversal";
-import { PostingError } from "./types";
+import { PostingError, type PostingLine } from "./types";
 
 /** ส่วนของงบกระแสเงินสด — `none` ไม่ใช่ส่วน แต่คือ "ไม่เข้างบนี้" */
 export type CfSectionKey = Exclude<CashflowSection, "none">;
@@ -150,13 +150,34 @@ export type CashflowInput = {
    * ชุดนี้คือตัวตัดสินว่ารายการข้ามผู้ถือจะถูกตัดหรือไม่ (ดูกฎข้อ 4 ด้านบน)
    */
   ownerIds: string[];
+  /**
+   * เงินสดต้นงวดจาก **ยอดธนาคารจริง** (ไม่บังคับ) — บาท · ติดลบได้ (เบิกเกินบัญชี)
+   *
+   * นี่คือจุดเดียวในไฟล์นี้ที่เทียบกับ **แหล่งที่เป็นอิสระจากสมุด** ถ้าส่งมา:
+   * ไม่ตรงกับที่คำนวณได้จากรายการก่อนงวด → `openingCashMismatch`
+   * และงบจะใช้ **ค่าที่ส่งมา** เป็นฐาน เพราะยอดธนาคารจริงเชื่อถือได้กว่ารายการที่ส่งมาให้
+   *
+   * ถ้าไม่ส่ง งบยังทำได้ แต่ `openingCashSource` จะเป็น `"computed"` —
+   * ผู้เรียกที่ส่งมาแค่รายการในงวดจะได้ยอดต้นงวด 0 ซึ่ง **ไม่ใช่ยอดจริง**
+   * และห้ามให้ `reconciled: true` หลอกให้เข้าใจว่ายอดต้นงวดถูกตรวจแล้ว
+   */
+  openingCash?: number;
 };
 
 export type CashflowStatementLine = {
   line: string;
   /** หมวดที่โครงงบจัดไว้ให้บรรทัดนี้ · ว่างสำหรับบรรทัดที่โครงงบไม่มี */
   subCodes: string[];
-  /** บาท · เงินเข้าเป็นบวก เงินออกเป็นลบ */
+  /**
+   * บาท · **เงินเข้าขั้นต้น** ของบรรทัดนี้ (บวกเสมอ)
+   *
+   * วิธีตรงต้องเห็นว่าเงินเข้าเท่าไหร่ ออกเท่าไหร่ — ถ้าเหลือแต่ยอดสุทธิ
+   * ใบที่รับและจ่ายในหมวดเดียวกันจะหักกลบจนเป็นศูนย์แล้ว **หายจากงบเงียบๆ**
+   */
+  inflow: number;
+  /** บาท · **เงินออกขั้นต้น** ของบรรทัดนี้ (บวกเสมอ) */
+  outflow: number;
+  /** บาท · ยอดสุทธิ = `inflow − outflow` (เงินออกจึงติดลบ) */
   amount: number;
   /** `false` = บรรทัดที่งอกขึ้นเพราะข้อมูลไม่ตรงโครงงบ (มี anomaly คู่กันเสมอ) */
   inLayout: boolean;
@@ -168,6 +189,8 @@ export type CashflowStatementSection = {
   /** ชื่อสั้นภาษาไทย จาก `CF_SECTION_TH` */
   sectionTh: string;
   lines: CashflowStatementLine[];
+  inflow: number;
+  outflow: number;
   total: number;
 };
 
@@ -182,7 +205,13 @@ export type CashflowStatementSection = {
  * `mixedCfCategory`          บรรทัดเงินสดของใบเดียวกันอยู่คนละส่วน
  * `cashOutsideStatement`     บรรทัดเงินสด `cfCategory = 'none'` ที่ไม่หักกันเป็นศูนย์
  * `intercompanyNotNetted`    คู่รายการระหว่างกันที่ตัดออกแล้วเงินสดไม่หักกันเป็นศูนย์
+ * `openingCashMismatch`      ยอดต้นงวดจากธนาคารจริงไม่ตรงกับที่คำนวณได้จากรายการก่อนงวด
  * `unreconciled`             ด่านกระทบยอดไม่ผ่าน (สรุปรวม)
+ *
+ * **ไม่อยู่ในนี้โดยตั้งใจ**: `txnId` ซ้ำ และใบที่เดบิตไม่เท่าเครดิต → **ปฏิเสธด้วย
+ * `PostingError`** เพราะ DB บังคับทั้งสองอย่างอยู่แล้ว ข้อมูลแบบนั้นจึงไม่ใช่
+ * "ของในสมุดที่ผิดปกติ" แต่เป็นบั๊กของผู้เรียก · และถ้าแค่รายงาน ยอดจะถูกนับซ้ำ
+ * ทั้งสองข้างของด่านกระทบยอดจนส่วนต่างเป็นศูนย์ = งบผิดโดยไม่มีอะไรเตือน
  */
 export type CashflowAnomalyKind =
   | "cashWithoutCashDate"
@@ -193,6 +222,7 @@ export type CashflowAnomalyKind =
   | "mixedCfCategory"
   | "cashOutsideStatement"
   | "intercompanyNotNetted"
+  | "openingCashMismatch"
   | "unreconciled";
 
 export type CashflowAnomaly = {
@@ -223,7 +253,23 @@ export type CashflowStatement = {
   sections: CashflowStatementSection[];
   /** ผลรวมสามส่วน = เงินสดเปลี่ยนแปลงสุทธิตามงบ */
   netChange: number;
+  /** เงินเข้าขั้นต้นรวมทั้งงบ (บวก) */
+  totalInflow: number;
+  /** เงินออกขั้นต้นรวมทั้งงบ (บวก) */
+  totalOutflow: number;
+  /** ฐานที่งบใช้ — ยอดจริงที่ผู้เรียกส่งมาถ้ามี ไม่งั้นคือค่าที่คำนวณได้ */
   openingCash: number;
+  /**
+   * ยอดต้นงวดนี้มาจากไหน — **หน้าจอต้องแสดงต่างกัน**
+   *
+   * `"computed"` = บวกจากรายการก่อนงวดที่ส่งมาให้เท่านั้น · ถ้าผู้เรียกส่งมาแค่
+   * รายการในงวด ค่านี้จะเป็น 0 ซึ่งไม่ใช่ยอดจริง และ `reconciled` ก็ยังเป็น true ได้
+   * เพราะด่านกระทบยอดตรวจแค่ **การเปลี่ยนแปลง** ไม่ได้ตรวจระดับยอด
+   */
+  openingCashSource: "provided" | "computed";
+  /** ยอดต้นงวดที่คำนวณได้จากรายการก่อนงวด — ไว้เทียบกับยอดธนาคารจริง */
+  computedOpeningCash: number;
+  /** `openingCash` + การเคลื่อนไหวเงินสดในงวด (บรรทัด 11xx ทั้งหมด) */
   closingCash: number;
   /** `netChange − (closingCash − openingCash)` · 0 = กระทบยอดลงตัว */
   difference: number;
@@ -304,6 +350,46 @@ function assertLine(raw: unknown, txnId: string, index: number): CashflowSourceL
   };
 }
 
+/**
+ * ใบเดียวกันส่งมาสองครั้ง → **ปฏิเสธ**
+ *
+ * ด่านกระทบยอดจับเคสนี้ไม่ได้เลย เพราะยอดถูกนับซ้ำทั้งสองข้างพร้อมกัน
+ * ส่วนต่างจึงเป็นศูนย์ และงบขึ้น `reconciled: true` ทั้งที่ยอดบวมเป็นสองเท่า
+ * (ผู้ตรวจพิสูจน์ด้วยการรันจริง 09/10) · `transactions.id` เป็น primary key
+ * ของ DB อยู่แล้ว ซ้ำได้แปลว่าผู้เรียกประกอบชุดข้อมูลผิด ไม่ใช่สมุดผิดปกติ
+ */
+function assertNoDuplicateTxn(seen: Set<string>, txnId: string): void {
+  if (seen.has(txnId)) {
+    fail(
+      `รายการ ${txnId} ส่งมาซ้ำ — ยอดจะถูกนับสองรอบทั้งในงบและในด่านกระทบยอด ` +
+        "ส่วนต่างจึงเป็นศูนย์โดยที่งบผิด (id ของรายการใน DB ซ้ำกันไม่ได้)"
+    );
+  }
+  seen.add(txnId);
+}
+
+/**
+ * Money Invariant 1 ของทุกใบที่ส่งมา — Σ เดบิต = Σ เครดิต
+ *
+ * **ปฏิเสธ ไม่ใช่ anomaly**: DB บังคับข้อนี้ด้วย trigger อยู่แล้ว ใบที่ไม่สมดุล
+ * จึงไม่ใช่ของที่อยู่ในสมุด แต่คือผู้เรียกประกอบข้อมูลผิด (เช่นอ่านบรรทัดมาไม่ครบ)
+ * ถ้าปล่อยผ่าน บรรทัดเงินสดที่ลอยอยู่จะเข้าทั้งงบและด่านกระทบยอดพร้อมกัน
+ * ส่วนต่างจึงเป็นศูนย์ และงบผิดโดยไม่มีอะไรเตือน
+ *
+ * ใช้ `assertBalanced()` จาก `guards.ts` เพื่อให้กฎอยู่ที่เดียวกับเส้นทางบันทึก
+ * แล้วห่อข้อความให้บอก `txnId` ด้วย (ด่านเดิมไม่รู้จักใบ)
+ */
+function assertTxnBalanced(txnId: string, lines: CashflowSourceLine[]): void {
+  try {
+    assertBalanced(lines as PostingLine[]);
+  } catch (e) {
+    fail(
+      `รายการ ${txnId} ไม่สมดุล (${e instanceof Error ? e.message : String(e)}) — ` +
+        "สิ่งที่ส่งมาไม่ใช่สิ่งที่อยู่ในสมุด เพราะ DB บังคับให้ทุกใบสมดุล"
+    );
+  }
+}
+
 function assertTxn(raw: unknown): CashflowTxn {
   if (typeof raw !== "object" || raw === null) fail("รายการในสมุดต้องเป็นข้อมูลรายการ");
   const o = raw as Record<string, unknown>;
@@ -343,6 +429,7 @@ function assertTxn(raw: unknown): CashflowTxn {
     fail(`รายการ ${txnId} ไม่มีบรรทัดบัญชี — รายการในสมุดต้องมีอย่างน้อยสองบรรทัด`);
   }
   const lines = (o.lines as unknown[]).map((l, i) => assertLine(l, txnId, i));
+  assertTxnBalanced(txnId, lines);
 
   return {
     txnId,
@@ -375,7 +462,23 @@ function assertOwnerIds(raw: unknown): string[] {
  * ถังยอดของแต่ละบรรทัด — เริ่มจากโครงงบทั้งใบ เพื่อให้บรรทัดที่ยอดเป็นศูนย์ยังแสดง
  * ------------------------------------------------------------------ */
 
-type Bucket = { line: string; subCodes: string[]; inLayout: boolean; satang: number };
+/**
+ * เงินเข้า-ออก **ขั้นต้น** เป็นจำนวนเต็มสตางค์ (บวกทั้งคู่)
+ *
+ * เก็บแยกสองทิศเพราะงบวิธีตรงต้องแสดงขั้นต้น ถ้าหักกลบเป็นสุทธิก่อน
+ * ใบที่รับและจ่ายในหมวดเดียวกันจะกลายเป็นศูนย์แล้วหายจากงบไปเลย
+ */
+type Flow = { inflow: number; outflow: number };
+
+const flowOf = (): Flow => ({ inflow: 0, outflow: 0 });
+const addFlow = (f: Flow, satang: number): void => {
+  if (satang > 0) f.inflow += satang;
+  else f.outflow += -satang;
+};
+const netOf = (f: Flow): number => f.inflow - f.outflow;
+const movedIn = (f: Flow): boolean => f.inflow !== 0 || f.outflow !== 0;
+
+type Bucket = { line: string; subCodes: string[]; inLayout: boolean; flow: Flow };
 
 /** คีย์ของบรรทัดที่งอกขึ้นเอง ต้องไม่ชนกับบรรทัดในโครงงบที่ชื่อเดียวกัน */
 const extraKey = (line: string) => `\u0000extra\u0000${line}`;
@@ -385,7 +488,7 @@ function seedBuckets(): Map<CfSectionKey, Map<string, Bucket>> {
   for (const sec of CF_LAYOUT) {
     const m = new Map<string, Bucket>();
     for (const l of sec.lines) {
-      m.set(l.line, { line: l.line, subCodes: [...l.subCodes], inLayout: true, satang: 0 });
+      m.set(l.line, { line: l.line, subCodes: [...l.subCodes], inLayout: true, flow: flowOf() });
     }
     out.set(sec.section, m);
   }
@@ -397,14 +500,15 @@ function addTo(
   section: CfSectionKey,
   line: string,
   inLayout: boolean,
-  satang: number
+  flow: Flow
 ): void {
   const m = buckets.get(section);
   if (!m) throw new Error(`โครงงบกระแสเงินสดไม่มีส่วน ${section}`);
   const key = inLayout ? line : extraKey(line);
-  const existing = m.get(key);
-  if (existing) existing.satang += satang;
-  else m.set(key, { line, subCodes: [], inLayout, satang });
+  const existing = m.get(key) ?? { line, subCodes: [], inLayout, flow: flowOf() };
+  existing.flow.inflow += flow.inflow;
+  existing.flow.outflow += flow.outflow;
+  m.set(key, existing);
 }
 
 type LineTarget = { section: CfSectionKey; line: string };
@@ -463,13 +567,21 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
   const ownerIds = assertOwnerIds(input.ownerIds);
   if (!Array.isArray(input.txns)) fail("รายการในสมุดต้องเป็นรายการ (array) — ถ้างวดว่างให้ส่ง []");
 
+  // ยอดธนาคารจริงติดลบได้ (เบิกเกินบัญชี) จึงใช้ด่านตัวเลขทั่วไป ไม่ใช่ด่าน "ห้ามติดลบ"
+  const hasProvidedOpening = input.openingCash !== undefined;
+  if (hasProvidedOpening && (typeof input.openingCash !== "number" || !Number.isFinite(input.openingCash))) {
+    fail(`เงินสดต้นงวดที่ส่งมาต้องเป็นตัวเลขที่ระบุได้ (ได้ ${JSON.stringify(input.openingCash)})`);
+  }
+  const providedOpeningSatang = hasProvidedOpening ? Math.round(round2(input.openingCash as number) * 100) : 0;
+
   const scope = new Set(ownerIds);
   const buckets = seedBuckets();
   const anomalies: CashflowAnomaly[] = [];
   const eliminated: EliminatedLeg[] = [];
+  const seenTxnIds = new Set<string>();
 
-  let openingSatang = 0;
-  let closingSatang = 0;
+  let computedOpeningSatang = 0;
+  let inPeriodSatang = 0;
   let eliminatedSatang = 0;
 
   const note = (
@@ -482,6 +594,7 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
 
   for (const rawTxn of input.txns) {
     const t = assertTxn(rawTxn);
+    assertNoDuplicateTxn(seenTxnIds, t.txnId);
 
     // นอกชุดผู้ถือที่กำลังดู → ไม่ใช่เงินของงบใบนี้
     if (!scope.has(t.ownerId)) continue;
@@ -498,8 +611,8 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
        ลงวันที่ด้วย `cashDate ?? docDate` = วันที่ยอดเงินสดในงบดุลขยับจริง
        จึงจับใบที่มีบรรทัดเงินสดแต่ลืม `cashDate` ได้ */
     const bookDate = t.cashDate ?? t.docDate;
-    if (bookDate < periodStart) openingSatang += cashSatang;
-    if (bookDate <= periodEnd) closingSatang += cashSatang;
+    if (bookDate < periodStart) computedOpeningSatang += cashSatang;
+    else if (bookDate <= periodEnd) inPeriodSatang += cashSatang;
 
     /* ---- เส้นทางงบ: ตัดสินด้วย `cashDate` เท่านั้น ---- */
     if (t.cashDate === null) {
@@ -541,13 +654,17 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       continue;
     }
 
-    // จัดกลุ่มตาม `cfCategory` ที่เก็บไว้ — **ไม่ใช่ตามบัญชีคู่** (เงินก้อนเดียวบรรทัดเดียว)
-    const byCategory = new Map<CashflowSection, number>();
+    /* จัดกลุ่มตาม `cfCategory` ที่เก็บไว้ — **ไม่ใช่ตามบัญชีคู่** (เงินก้อนเดียวบรรทัดเดียว)
+       แต่เก็บ **ขั้นต้นสองทิศ** ไม่ใช่สุทธิ เพราะงบวิธีตรงต้องเห็นว่าเข้าเท่าไหร่ ออกเท่าไหร่
+       และบรรทัดที่สุทธิเป็นศูนย์แต่มีเงินเคลื่อน **ต้องไม่หายจากงบ** */
+    const byCategory = new Map<CashflowSection, Flow>();
     for (const l of cashLines) {
       const d = Math.round(round2(l.debit) * 100) - Math.round(round2(l.credit) * 100);
-      byCategory.set(l.cfCategory, (byCategory.get(l.cfCategory) ?? 0) + d);
+      const f = byCategory.get(l.cfCategory) ?? flowOf();
+      addFlow(f, d);
+      byCategory.set(l.cfCategory, f);
     }
-    const moving = [...byCategory.entries()].filter(([, s]) => s !== 0);
+    const moving = [...byCategory.entries()].filter(([, f]) => movedIn(f));
 
     if (moving.length > 1) {
       note(
@@ -588,16 +705,20 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       unmappedWhy = `หมวด ${t.subCode} ไม่มีบรรทัดในโครงงบกระแสเงินสด`;
     }
 
-    for (const [category, satang] of moving) {
+    for (const [category, flow] of moving) {
+      const satang = netOf(flow);
       if (category === "none") {
-        note(
-          "cashOutsideStatement",
-          t.txnId,
-          t.subCode,
-          satang,
-          `รายการ ${t.txnId} มีเงินสดเคลื่อนสุทธิ ${toBaht(satang)} บาท ` +
-            'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ'
-        );
+        // โอนระหว่างบัญชีตัวเองมีเงินเคลื่อนขั้นต้นแต่สุทธิเป็นศูนย์ → ปกติ ไม่ต้องดัง
+        if (satang !== 0) {
+          note(
+            "cashOutsideStatement",
+            t.txnId,
+            t.subCode,
+            satang,
+            `รายการ ${t.txnId} มีเงินสดเคลื่อนสุทธิ ${toBaht(satang)} บาท ` +
+              'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ'
+          );
+        }
         continue;
       }
 
@@ -610,7 +731,7 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
           satang,
           `${unmappedWhy} — ยอดไปรวมที่ "${CF_UNMAPPED_LINE}" ของกิจกรรม${CF_SECTION_TH[category]}`
         );
-        addTo(buckets, category, CF_UNMAPPED_LINE, false, satang);
+        addTo(buckets, category, CF_UNMAPPED_LINE, false, flow);
         continue;
       }
       if (layout.section !== category) {
@@ -623,10 +744,10 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
             `แต่โครงงบจัดไว้ที่กิจกรรม${CF_SECTION_TH[layout.section]} — ` +
             "ยึดของที่เก็บไว้ (ประวัติเปลี่ยนไม่ได้) แต่ต้องตรวจว่าตารางกฎเปลี่ยนไปหรือลงผิด"
         );
-        addTo(buckets, category, layout.line, false, satang);
+        addTo(buckets, category, layout.line, false, flow);
         continue;
       }
-      addTo(buckets, category, layout.line, true, satang);
+      addTo(buckets, category, layout.line, true, flow);
     }
   }
 
@@ -642,27 +763,48 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
   }
 
   const sections: CashflowStatementSection[] = CF_LAYOUT.map((sec) => {
-    const m = buckets.get(sec.section)!;
-    const lines = [...m.values()].map((b) => ({
-      line: b.line,
-      subCodes: b.subCodes,
-      amount: toBaht(b.satang),
-      inLayout: b.inLayout,
-    }));
-    const totalSatang = [...m.values()].reduce((s, b) => s + b.satang, 0);
+    const all = [...buckets.get(sec.section)!.values()];
     return {
       section: sec.section,
       title: sec.title,
       sectionTh: CF_SECTION_TH[sec.section],
-      lines,
-      total: toBaht(totalSatang),
+      lines: all.map((b) => ({
+        line: b.line,
+        subCodes: b.subCodes,
+        inflow: toBaht(b.flow.inflow),
+        outflow: toBaht(b.flow.outflow),
+        amount: toBaht(netOf(b.flow)),
+        inLayout: b.inLayout,
+      })),
+      inflow: toBaht(all.reduce((s, b) => s + b.flow.inflow, 0)),
+      outflow: toBaht(all.reduce((s, b) => s + b.flow.outflow, 0)),
+      total: toBaht(all.reduce((s, b) => s + netOf(b.flow), 0)),
     };
   });
 
-  const netSatang = [...buckets.values()]
-    .flatMap((m) => [...m.values()])
-    .reduce((s, b) => s + b.satang, 0);
-  const differenceSatang = netSatang - (closingSatang - openingSatang);
+  const allBuckets = [...buckets.values()].flatMap((m) => [...m.values()]);
+  const inflowSatang = allBuckets.reduce((s, b) => s + b.flow.inflow, 0);
+  const outflowSatang = allBuckets.reduce((s, b) => s + b.flow.outflow, 0);
+  const netSatang = inflowSatang - outflowSatang;
+
+  /* ---- ยอดต้นงวด: ยอดธนาคารจริงชนะค่าที่คำนวณได้ แต่ส่วนต่างต้องดัง ----
+     นี่คือจุดเดียวที่เทียบกับแหล่งที่เป็นอิสระจากรายการที่ส่งมา */
+  if (hasProvidedOpening && providedOpeningSatang !== computedOpeningSatang) {
+    note(
+      "openingCashMismatch",
+      null,
+      null,
+      providedOpeningSatang - computedOpeningSatang,
+      `เงินสดต้นงวดจากยอดธนาคารจริง ${toBaht(providedOpeningSatang)} บาท ` +
+        `แต่คำนวณจากรายการก่อนงวดได้ ${toBaht(computedOpeningSatang)} บาท ` +
+        `(ต่างกัน ${toBaht(providedOpeningSatang - computedOpeningSatang)} บาท) — ` +
+        "งบใช้ยอดธนาคารเป็นฐาน แต่ส่วนต่างนี้แปลว่ารายการที่ส่งมาไม่ครบหรือสมุดไม่ตรงธนาคาร"
+    );
+  }
+  const openingSatang = hasProvidedOpening ? providedOpeningSatang : computedOpeningSatang;
+  const closingSatang = openingSatang + inPeriodSatang;
+
+  const differenceSatang = netSatang - inPeriodSatang;
   const reconciled = differenceSatang === 0;
 
   if (!reconciled) {
@@ -672,7 +814,7 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       null,
       differenceSatang,
       `งบกระแสเงินสดไม่กระทบยอด: ผลรวมสามส่วน ${toBaht(netSatang)} บาท ` +
-        `แต่เงินสดปลายงวดลบต้นงวด ${toBaht(closingSatang - openingSatang)} บาท ` +
+        `แต่เงินสดปลายงวดลบต้นงวด ${toBaht(inPeriodSatang)} บาท ` +
         `(ต่างกัน ${toBaht(differenceSatang)} บาท) — ตัวเลขในงบยังดูได้ แต่ห้ามส่งออกก่อนหาสาเหตุ`
     );
   }
@@ -684,7 +826,11 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
     consolidated: ownerIds.length > 1,
     sections,
     netChange: toBaht(netSatang),
+    totalInflow: toBaht(inflowSatang),
+    totalOutflow: toBaht(outflowSatang),
     openingCash: toBaht(openingSatang),
+    openingCashSource: hasProvidedOpening ? "provided" : "computed",
+    computedOpeningCash: toBaht(computedOpeningSatang),
     closingCash: toBaht(closingSatang),
     difference: toBaht(differenceSatang),
     reconciled,

@@ -568,6 +568,114 @@ describe("ข้อมูลขาด — ต้องชัดเจน ห้�
   });
 });
 
+describe("ด่านความถูกต้องของข้อมูลนำเข้า — ปฏิเสธ ไม่ใช่ anomaly", () => {
+  it("ส่งใบเดียวกันมาสองครั้ง → PostingError (ด่านกระทบยอดจับไม่ได้)", () => {
+    expect(() => run([rentIn(), rentIn()])).toThrow(PostingError);
+    expect(() => run([rentIn(), rentIn()])).toThrow(/ส่งมาซ้ำ/);
+    // ซ้ำแม้อยู่นอกชุดผู้ถือก็ต้องปฏิเสธ ไม่ใช่รอให้ตัวกรองกลืนไป
+    expect(() => run([rentIn({ ownerId: THANAKORN }), rentIn({ ownerId: THANAKORN })])).toThrow(
+      PostingError
+    );
+  });
+
+  it("ใบที่เดบิตไม่เท่าเครดิต → PostingError (บรรทัดเงินสดลอย)", () => {
+    expect(() =>
+      run([tx({ lines: [ln(CASH, 500, 0, "operating"), ln("4200", 0, 300, "operating")] })])
+    ).toThrow(/ไม่สมดุล/);
+    // บรรทัดเงินสดลอยอยู่ใบเดียวก็ไม่ผ่าน
+    expect(() => run([tx({ lines: [ln(CASH, 500, 0, "operating")] })])).toThrow(PostingError);
+  });
+});
+
+describe("เงินสดต้นงวด", () => {
+  const prev = () => rentIn({ txnId: "prev", docDate: "2025-12-10", cashDate: "2025-12-10" });
+
+  it("ไม่ส่งมา → บอกว่าเป็นค่าคำนวณ ไม่ใช่ยอดจริง", () => {
+    const st = run([rentIn()]);
+    expect(st.openingCashSource).toBe("computed");
+    expect(st.openingCash).toBe(0);
+    expect(st.computedOpeningCash).toBe(0);
+    // reconciled ตรวจแค่การเปลี่ยนแปลง ไม่ได้ยืนยันระดับยอดต้นงวด
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ส่งมาตรงกับที่คำนวณได้ → ไม่มี anomaly และใช้เป็นฐาน", () => {
+    const st = run([prev(), rentIn()], { openingCash: 50_000 });
+    expect(st.openingCashSource).toBe("provided");
+    expect(st.openingCash).toBe(50_000);
+    expect(st.computedOpeningCash).toBe(50_000);
+    expect(st.closingCash).toBe(100_000);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ส่งมาไม่ตรง → openingCashMismatch พร้อมส่วนต่าง และยึดยอดธนาคารเป็นฐาน", () => {
+    const st = run([prev(), rentIn()], { openingCash: 62_000 });
+    const a = st.anomalies.find((x) => x.kind === "openingCashMismatch");
+    expect(a).toBeDefined();
+    expect(a!.amount).toBe(12_000);
+    expect(st.openingCash).toBe(62_000);
+    expect(st.computedOpeningCash).toBe(50_000);
+    expect(st.closingCash).toBe(112_000);
+    // ด่านกระทบยอดตรวจ "การเปลี่ยนแปลง" จึงยังลงตัว — ความผิดอยู่ที่ระดับยอด
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ติดลบได้ (เบิกเกินบัญชี) แต่ไม่ใช่ตัวเลขไม่ได้", () => {
+    const st = run([], { openingCash: -1_500 });
+    expect(st.openingCash).toBe(-1_500);
+    expect(st.closingCash).toBe(-1_500);
+    expect(() => run([], { openingCash: Number.NaN })).toThrow(PostingError);
+  });
+});
+
+describe("วิธีตรงต้องแสดงขั้นต้น ไม่ใช่สุทธิ", () => {
+  it("ใบเดียวที่รับ 1,000 และจ่าย 1,000 หมวดเดียวกัน → บรรทัดยังอยู่ และเห็นขั้นต้น", () => {
+    const st = run([
+      tx({
+        subCode: "inc.rent",
+        lines: [ln(CASH, 1_000, 0, "operating"), ln(CASH, 0, 1_000, "operating")],
+      }),
+    ]);
+
+    const line = section(st, "operating").lines.find(
+      (l) => l.line === "เงินสดรับจากค่าเช่าและค่าเช่าซื้อ"
+    )!;
+    expect(line.inflow).toBe(1_000);
+    expect(line.outflow).toBe(1_000);
+    expect(line.amount).toBe(0);
+    expect(st.totalInflow).toBe(1_000);
+    expect(st.totalOutflow).toBe(1_000);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("สองใบที่หักกลบกันในบรรทัดเดียว (มัดจำรับแล้วคืน) → ขั้นต้นยังอยู่", () => {
+    const st = run([
+      tx({
+        txnId: "dep-in",
+        subCode: "fin.deposit_received",
+        lines: [ln(CASH, 1_000, 0, "operating"), ln("2200", 0, 1_000, "operating")],
+      }),
+      tx({
+        txnId: "dep-out",
+        subCode: "fin.deposit_refund",
+        cashDate: "2026-01-25",
+        docDate: "2026-01-25",
+        lines: [ln("2200", 1_000, 0, "operating"), ln(CASH, 0, 1_000, "operating")],
+      }),
+    ]);
+
+    const line = section(st, "operating").lines.find((l) => l.line === "เงินมัดจำผู้เช่า รับและคืน")!;
+    expect(line.inflow).toBe(1_000);
+    expect(line.outflow).toBe(1_000);
+    expect(line.amount).toBe(0);
+    expect(section(st, "operating").inflow).toBe(1_000);
+    expect(section(st, "operating").outflow).toBe(1_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
 describe("งวดว่าง", () => {
   it("ไม่มีรายการ → ทุกบรรทัดเป็น 0 · reconciled true · ไม่ throw", () => {
     const st = run([]);
@@ -575,7 +683,13 @@ describe("งวดว่าง", () => {
     expect(st.sections).toHaveLength(CF_LAYOUT.length);
     for (const sec of st.sections) {
       expect(sec.total).toBe(0);
-      for (const l of sec.lines) expect(l.amount).toBe(0);
+      expect(sec.inflow).toBe(0);
+      expect(sec.outflow).toBe(0);
+      for (const l of sec.lines) {
+        expect(l.amount).toBe(0);
+        expect(l.inflow).toBe(0);
+        expect(l.outflow).toBe(0);
+      }
     }
     // ทุกบรรทัดของโครงงบต้องมีอยู่ ไม่ใช่หายไปเพราะยอดเป็นศูนย์
     const names = st.sections.flatMap((s) => s.lines.map((l) => l.line));
@@ -583,6 +697,7 @@ describe("งวดว่าง", () => {
 
     expect(st.netChange).toBe(0);
     expect(st.openingCash).toBe(0);
+    expect(st.openingCashSource).toBe("computed");
     expect(st.closingCash).toBe(0);
     expect(st.reconciled).toBe(true);
     expect(st.difference).toBe(0);
