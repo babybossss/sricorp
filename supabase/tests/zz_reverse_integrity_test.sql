@@ -142,10 +142,21 @@ create or replace function pg_temp.try_rev(p_id uuid, p_owner text, p_reverses u
                                            p_type text default 'inc.other') returns void
 language plpgsql as $fn$
 declare r jsonb;
+        v_has_cash boolean;
 begin
-  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, memo,
+  -- cash_date ต้องมีเมื่อใบมีขาเงินสด และต้องเป็น null เมื่อไม่มี
+  -- (20261009000001_cash_date_invariant) · helper สร้างใบที่ **ถูกต้อง** เสมอ
+  -- เคสที่พิสูจน์การปฏิเสธเรื่อง cash_date อยู่ใน zz_cash_date_invariant_test.sql
+  -- ซึ่งมี fixture ของตัวเอง ไม่ได้เรียก helper นี้
+  select exists (select 1 from jsonb_array_elements(p_lines) x
+                  where (x ->> 'coa') ~ '^11[0-9][0-9]$')
+    into v_has_cash;
+
+  insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
                                   source, reverses_id, attachments)
-  select p_id, o.id, p_type, current_date, 'RV ใบกลับรายการ (memo ไม่ต้องตรงกับต้นฉบับ)',
+  select p_id, o.id, p_type, current_date,
+         case when v_has_cash then current_date else null end,
+         'RV ใบกลับรายการ (memo ไม่ต้องตรงกับต้นฉบับ)',
          'reverse', p_reverses, p_att
     from sri_os.owners o where o.code = p_owner;
   for r in select * from jsonb_array_elements(p_lines) loop

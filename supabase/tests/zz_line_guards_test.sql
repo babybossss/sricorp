@@ -98,15 +98,19 @@ exception when others then
 end $fn$;
 
 -- หัวรายการเปล่าในธุรกรรมนี้ (บรรทัดจึงเขียนได้ตามเส้นทาง post ปกติ)
+-- `p_cash_date` ต้องเป็น null สำหรับใบที่ **ไม่มีขาเงินสด** (ค้างรับ-ค้างจ่าย)
+-- ไม่งั้น 20261009000001_cash_date_invariant ปฏิเสธว่าเป็น "เงินสดผี"
+-- ค่าตั้งต้นเป็นวันที่ เพราะใบส่วนใหญ่ในไฟล์นี้มีขาเงินสด
 create or replace function pg_temp.mk_txn(p_id uuid, p_type text, p_owner text,
                                           p_nature text default null,
-                                          p_counter text default null) returns uuid
+                                          p_counter text default null,
+                                          p_cash_date date default '2026-09-01') returns uuid
 language plpgsql as $fn$
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
                                   attachments, contact_id,
                                   is_intercompany, counter_owner_id, intercompany_nature)
-  select p_id, o.id, p_type, '2026-09-01', '2026-09-01', 'LG',
+  select p_id, o.id, p_type, '2026-09-01', p_cash_date, 'LG',
          array['หลักฐาน.pdf'], '00000000-0000-0000-0000-00000001c001',
          p_nature is not null,
          (select x.id from sri_os.owners x where x.code = p_counter),
@@ -298,7 +302,8 @@ do $$
 declare v_a uuid := '00000000-0000-0000-0000-00000001e005';
         v_b uuid := '00000000-0000-0000-0000-00000001e006';
 begin
-  perform pg_temp.mk_txn(v_a, 'inc.rent', 'THANAKORN');
+  -- ใบนี้ไม่มีขาเงินสด → cash_date ต้องเป็น null (ไม่งั้นถูกปฏิเสธว่าเงินสดผี)
+  perform pg_temp.mk_txn(v_a, 'inc.rent', 'THANAKORN', null, null, null);
   -- ใบที่ถูกต้อง: ค้างรับค่าเช่า Dr 1200 / Cr 4200 (ไม่มีขาเงินสด)
   perform pg_temp.good_lines(v_a, '1200', '4200', 100, null);
 
