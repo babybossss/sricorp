@@ -27,7 +27,7 @@ import {
   type PostingResult,
 } from "@/lib/ledger/types";
 import { coa, isCashAccount } from "@/lib/rules/coa";
-import { accrualCheck, clearingSubsFor, findSub } from "@/lib/rules/tx-rules";
+import { accrualCheck, clearingSubsFor, findSub, type CashDirection } from "@/lib/rules/tx-rules";
 import { parseAmountOrNull } from "@/lib/format";
 import type { PendingCashRow } from "@/lib/mock/ledger";
 
@@ -97,10 +97,32 @@ export function clearingInputOf(row: PendingCashRow, draft: RowDraft, posted: Po
   };
 }
 
-/** รับหรือจ่าย — อ่านจากตารางกฎ (`cash`) ไม่ใช่จากเครื่องหมายของยอดหรือรหัสหมวด */
-export function directionOf(row: Pick<PendingCashRow, "subCode">): "in" | "out" | null {
-  const cash = findSub(row.subCode)?.sub.cash;
-  return cash === "in" || cash === "out" ? cash : null;
+/**
+ * รับหรือจ่าย — อ่านจากตารางกฎ (`cash`) ไม่ใช่จากเครื่องหมายของยอดหรือรหัสหมวด
+ *
+ * เขียนเป็น `switch` ครบเคสโดยตั้งใจ (แพทเทิร์นเดียวกับ `bankDirectionLabel` /
+ * `movesCash`) · ของเดิมเป็น ternary ที่ **ยุบ `both` กับ `none` เป็น `null`**
+ * ซึ่งทำให้ "โอนระหว่างบัญชี" "ไม่มีเงินเคลื่อน" และ "ไม่รู้จักหมวดนี้"
+ * กลายเป็นคำตอบเดียวกัน แล้วหน้าจอแสดงยอด/ป้ายบัญชีของกรณีที่ไม่ใช่
+ *
+ * วันนี้หมวด `none` ยังมาไม่ถึงเพราะ `accrualCheck` ตัดก่อน — **แต่พึ่งลำดับ
+ * การตรวจไม่ได้** (D-102: ค่าใหม่ใน union ตกไปทาง fallback เงียบๆ)
+ *
+ * `null` สงวนไว้สำหรับ **หมวดที่ไม่มีในตารางกฎ** เท่านั้น
+ */
+export function directionOf(row: Pick<PendingCashRow, "subCode">): CashDirection | null {
+  const sub = findSub(row.subCode)?.sub;
+  if (!sub) return null;
+  switch (sub.cash) {
+    case "in":
+      return "in";
+    case "out":
+      return "out";
+    case "both":
+      return "both";
+    case "none":
+      return "none";
+  }
 }
 
 /**

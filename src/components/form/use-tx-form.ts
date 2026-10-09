@@ -7,7 +7,6 @@ import {
   isValidPair,
   canAccrueFromForm,
   accrualCheck,
-  movesCash,
   type TxTypeKey,
   type SubCategory,
 } from "@/lib/rules/tx-rules";
@@ -20,7 +19,8 @@ import { buildPosting } from "@/lib/ledger/posting";
 // resolver ของผู้ถือ/บัญชี ส่งเข้า engine จากชั้นนี้ — engine ไม่ import ข้อมูลเองแล้ว
 // ต่อ Supabase จริงให้สลับ resolver ตรงบรรทัดนี้ ไม่ต้องแตะ lib/ledger
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
-import { PostingError, type IntercompanyNature, type PostingInput } from "@/lib/ledger/types";
+import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { EMPTY_CASH_FIELDS, cashFieldsFor, type CashFields } from "./cash-fields";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
 import {
   EMPTY_DISPOSAL,
@@ -31,14 +31,17 @@ import {
   type RepaymentValue,
 } from "./disposal-panel";
 
-export type TxDraft = {
+/**
+ * ช่องฝั่งเงินสด (`bankId` · `cashDate` · `transferToBankId` · `intercompanyNature`)
+ * มาจาก `CashFields` ใน `cash-fields.ts` — ที่เดียวกับกฎที่ล้างมันตอนเปลี่ยนหมวด
+ * ประกาศซ้ำที่นี่แล้วลืมเพิ่มในกฎล้าง = ค่าที่มองไม่เห็นหลุดลง DB
+ */
+export type TxDraft = CashFields & {
   typeKey: TxTypeKey | null;
   subCode: string;
   holderId: string;
-  bankId: string;
   amount: string;
   docDate: string;
-  cashDate: string;
   notYetPaid: boolean;
   assetId: string;
   contactId: string;
@@ -46,10 +49,6 @@ export type TxDraft = {
   skipApproval: boolean;
   /** ชื่อไฟล์หลักฐานที่แนบ — นิติบุคคลต้องมีอย่างน้อยหนึ่งไฟล์ */
   attachments: string[];
-  /** โอนระหว่างบัญชี — บัญชีปลายทาง */
-  transferToBankId: string;
-  /** ลักษณะของรายการข้ามผู้ถือ บังคับเมื่อบัญชีปลายทางเป็นของคนอื่น */
-  intercompanyNature: IntercompanyNature | "";
   /** Backlog ข้อ 2 — เงื่อนไขสัญญา + ตารางงวด (เมื่อหมวดย่อยบังคับ loanTerms) */
   loanTerms: LoanTermsValue;
   /** Backlog ข้อ 4 — กำไร/ขาดทุนจากการขาย (เมื่อบังคับ capitalGain) */
@@ -58,14 +57,17 @@ export type TxDraft = {
   repayment: RepaymentValue;
 };
 
+/**
+ * ค่าตั้งต้นของฟอร์ม — export เพื่อให้เทสต์เทียบ "คืนค่าตั้งต้น" ได้จริง
+ * (เทสต์ที่เขียนค่าตั้งต้นซ้ำเอง จะยังเขียวต่อไปเมื่อค่าตั้งต้นในโค้ดเปลี่ยน)
+ */
 const EMPTY: TxDraft = {
+  ...EMPTY_CASH_FIELDS,
   typeKey: null,
   subCode: "",
   holderId: HOLDERS[0].id,
-  bankId: "",
   amount: "",
   docDate: "01/09/2026",
-  cashDate: "03/09/2026",
   // ตั้งต้นเป็น "ยังไม่ได้รับ-จ่าย" ตามที่ลูกพี่สั่ง 06/10 — ต้องติ๊กยืนยันถึงจะเป็นเงินสด
   // สอดคล้องกับ D-068: เงินเข้าบัญชีต่อเมื่อมีคนยืนยันว่าเงินเคลื่อนจริง
   notYetPaid: true,
@@ -74,8 +76,6 @@ const EMPTY: TxDraft = {
   note: "",
   skipApproval: false,
   attachments: [],
-  transferToBankId: "",
-  intercompanyNature: "",
   loanTerms: EMPTY_LOAN_TERMS,
   disposal: EMPTY_DISPOSAL,
   repayment: EMPTY_REPAYMENT,
@@ -100,21 +100,6 @@ const EMPTY: TxDraft = {
  * ไม่งั้นแค่แวะหมวดที่ตั้งค้างไม่ได้ครั้งเดียว รายการที่เหลือทั้งวันจะกลายเป็น
  * "รับเงินแล้ว" เงียบๆ ทั้งที่ผู้ใช้ไม่เคยติ๊กอะไรเลย
  */
-/**
- * บัญชีธนาคารที่ยังควรค้างอยู่ในฟอร์มหลังเปลี่ยนหมวดย่อย
- *
- * หมวดที่ไม่มีเงินเคลื่อน (`cash: "none"`) → **ล้างทิ้ง** เพราะฟอร์มไม่แสดงช่องนั้นแล้ว
- * ถ้าปล่อยค้าง ค่าที่มองไม่เห็นจะถูกส่งเข้า engine ซึ่งปฏิเสธ (บัญชีบนรายการที่ไม่มี
- * ขาเงินสด) แล้วปุ่มบันทึกจะดับตลอดกาลโดยไม่มีช่องไหนให้ผู้ใช้แก้ — กันแน่นเกินจนใช้ไม่ได้
- *
- * อ่านจากตารางกฎ (`movesCash`) ไม่ได้ไล่ชื่อหมวด
- */
-function bankIdFor(nextSub: string, currentBankId: string): string {
-  const s = findSub(nextSub)?.sub;
-  if (s && !movesCash(s)) return "";
-  return currentBankId;
-}
-
 function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
   const accruable = (code: string) => {
     const s = findSub(code)?.sub;
@@ -135,7 +120,7 @@ export function useTxForm() {
     setDraft((d) => ({
       ...d,
       subCode,
-      bankId: bankIdFor(subCode, d.bankId),
+      ...cashFieldsFor(subCode, d),
       notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
     }));
   }, []);
@@ -149,7 +134,7 @@ export function useTxForm() {
         ...d,
         typeKey,
         subCode,
-        bankId: bankIdFor(subCode, d.bankId),
+        ...cashFieldsFor(subCode, d),
         notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
       };
     });

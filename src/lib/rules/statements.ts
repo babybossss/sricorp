@@ -144,6 +144,10 @@ export const PL_LAYOUT: PlSection[] = [
       { line: "รายได้ค่าเช่า", codes: ["4200", "4210"] },
       { line: "รายได้ดอกเบี้ย", codes: ["4100", "4110", "4120"] },
       { line: "กำไรจากการขายทรัพย์", codes: ["4300"] },
+      // แยกบรรทัดจาก "รายได้อื่น" โดยตั้งใจ — ตัวนี้เป็นคู่ตรงข้ามของบรรทัด
+      // "หนี้สงสัยจะสูญ" ฝั่งค่าใช้จ่าย (ประมาณการที่ตั้งไว้แล้วกลับมาได้จริง)
+      // ปนกับรายได้อื่นแล้วอ่านงบไม่ออกว่าหนี้ที่ตัดทิ้งไปเก็บคืนได้เท่าไร
+      { line: "หนี้สูญได้รับคืน", codes: ["4320"] },
       { line: "รายได้อื่น", codes: ["4310", "4400", "4410", "4900"] },
     ],
   },
@@ -303,6 +307,9 @@ export const CF_LAYOUT: CfSection[] = [
       { line: "เงินสดรับจากดอกเบี้ย", subCodes: ["inc.interest_srr", "inc.interest_mortgage", "inc.interest_loan", "inv.collect_interest"] },
       { line: "เงินสดรับจากเงินปันผล", subCodes: ["inc.dividend"] },
       { line: "เงินสดรับอื่น", subCodes: ["inc.key_money", "inc.fee", "inc.other"] },
+      // แยกบรรทัดเพราะเป็นเงินที่ "ไม่ควรได้แล้ว" แต่ได้ — ปนกับเงินสดรับอื่น
+      // แล้วอ่านงบกระแสเงินสดไม่ออกว่าการตามหนี้ที่ตัดทิ้งไปได้ผลเท่าไร
+      { line: "เงินสดรับจากหนี้สูญที่เก็บคืนได้", subCodes: ["inc.bad_debt_recovered"] },
       { line: "เงินสดจ่ายค่าใช้จ่ายเกี่ยวกับทรัพย์สิน", subCodes: ["exp.common", "exp.utilities", "exp.repair", "exp.furnishing", "exp.cleaning"] },
       { line: "เงินสดจ่ายค่าใช้จ่ายในการขาย", subCodes: ["exp.commission", "exp.referral", "exp.marketing"] },
       { line: "เงินสดจ่ายค่าใช้จ่ายบริหาร", subCodes: ["exp.land_office", "exp.tax", "exp.legal", "exp.bank_charge", "exp.salary", "exp.travel", "exp.office", "exp.other"] },

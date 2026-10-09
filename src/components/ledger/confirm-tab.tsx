@@ -13,7 +13,8 @@ import { money, signedMoney, baht } from "@/lib/format";
 import { CASH_GROUPS, UNASSIGNED_CASH_ROWS, type PendingCashRow } from "@/lib/mock/ledger";
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { useApp, useOrderedBanks } from "@/lib/store";
-import { bankChoices } from "@/components/form/bank-field";
+import { bankChoices, bankDirectionLabel } from "@/components/form/bank-field";
+import { findSub } from "@/lib/rules/tx-rules";
 import { ClearingPreview } from "./clearing-preview";
 import {
   checkRow,
@@ -138,7 +139,9 @@ export function ConfirmTab({ posted, onPostedChange }: { posted: PostedMap; onPo
         </Td>
         {pickBank ? (
           <Td className="p-[12px_14px]">
-            <Field label={dir === "out" ? "จ่ายเงินออกจากบัญชี" : "รับเงินเข้าบัญชี"} required>
+            {/* ป้ายช่องบัญชีมาจากที่เดียวกับฟอร์มบันทึกรายการ — กฎเดียวกันห้ามเขียนสองที่
+                (`dir` ตอบได้ครบทั้งสี่ค่าของ CashDirection แล้ว ไม่ใช่ in/out เท่านั้น) */}
+            <Field label={bankDirectionLabel(findSub(r.subCode)?.sub)} required>
               <Select value={draft.bankAccountId} onChange={(e) => patch(r, { bankAccountId: e.target.value })}>
                 <option value="">— เลือกบัญชี —</option>
                 {bankChoices(orderedBanks, (id) => !!bankOff[id], r.ownerId).map((b) => (
