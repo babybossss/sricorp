@@ -103,12 +103,21 @@ const rows: string[] = [];
 for (const t of TX_TYPES) {
   for (const [i, s] of t.subs.entries()) {
     const { pl } = effectsOf(s);
+    /**
+     * `direction` ฝั่ง DB เป็น smallint ที่มี check `in (-1, 0, 1)` มาตั้งแต่ไฟล์แรก
+     * → แทน `none` (ไม่มีเงินเคลื่อน) **ไม่ได้** · มันถูกยุบรวมกับ `both` เป็น 0
+     *
+     * เพราะงั้นคอลัมน์ `cash_direction` (20261009000003_txn_types_cash_direction.sql)
+     * จึงเป็นตัวที่ถือความจริง และมี check constraint ผูกสองคอลัมน์ให้ตรงกัน
+     * **ห้ามใช้ `direction` ตัดสินว่ามีเงินเคลื่อนไหม** — 0 ตอบคำถามนั้นไม่ได้
+     */
     const direction = s.cash === "in" ? 1 : s.cash === "out" ? -1 : 0;
     // `none` ใน TypeScript ตรงกับ enum `transfer` ฝั่ง DB (โอนภายใน ตัดออกจากงบรวม)
     const cf = s.cashflow === "none" ? "transfer" : s.cashflow;
 
     rows.push(
       `  (${esc(s.code)}, ${esc(t.key)}, ${esc(s.label)}, ${esc(s.en)}, ${esc(cf)}::sri_os.cf_group, ${direction}, ` +
+        `${esc(s.cash)}, ` +
         `${esc(s.dr)}, ${esc(s.cr)}, ${bool(affectsPL(s))}, ${esc(pl?.line ?? effectsOf(s).conditionalPl?.line)}, ` +
         `${bool(s.requires?.includes("asset"))}, ${bool(s.requires?.includes("contact"))}, ` +
         `${bool(s.requires?.includes("loanTerms"))}, ${bool(s.requires?.includes("capitalGain"))}, ` +
@@ -179,7 +188,9 @@ const sql = `-- ============================================================
 --
 -- ผังบัญชีต้องมาก่อน txn_types เสมอ — dr/cr/gain/loss/interest/accrual_coa_code
 -- เป็น FK เข้า chart_of_accounts · ถ้าบัญชีที่กฎอ้างยังไม่มี ทั้งชุดจะ rollback
--- และต้องรันหลัง migration ที่เพิ่มคอลัมน์ can_accrue ด้วย
+-- และต้องรันหลัง migration ที่เพิ่มคอลัมน์ can_accrue และ cash_direction ด้วย
+--   (cash_direction อยู่ใน 20261009000003_txn_types_cash_direction.sql ซึ่งชื่อไฟล์
+--    เรียงมาก่อนไฟล์นี้เสมอ เพราะไฟล์นี้ตั้งชื่อจากเวลาที่รัน sync:rules)
 --
 -- **ไม่ลบรหัสบัญชีที่หายไปจาก coa.ts** — บัญชีที่มีรายการอ้างอยู่ลบไม่ได้
 -- และการลบเงียบๆ จะทำให้ยอดในรายงานเก่าหาย → รายงานเป็น warning ให้คนตัดสิน
@@ -219,7 +230,7 @@ end $do$;
 -- 2 · ประเภทรายการ (src/lib/rules/tx-rules.ts)
 -- ------------------------------------------------------------
 insert into sri_os.txn_types (
-  code, group_code, name_th, name_en, cf_group, direction,
+  code, group_code, name_th, name_en, cf_group, direction, cash_direction,
   dr_coa_code, cr_coa_code, affects_pl, pl_line,
   requires_asset, requires_contact, requires_loan_terms,
   requires_capital_gain, requires_principal_split, requires_transfer_target,
@@ -233,6 +244,7 @@ on conflict (code) do update set
   name_en    = excluded.name_en,
   cf_group   = excluded.cf_group,
   direction  = excluded.direction,
+  cash_direction = excluded.cash_direction,
   dr_coa_code = excluded.dr_coa_code,
   cr_coa_code = excluded.cr_coa_code,
   affects_pl = excluded.affects_pl,

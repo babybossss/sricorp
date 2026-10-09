@@ -11,7 +11,7 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { accrualCheck, type SubCategory } from "@/lib/rules/tx-rules";
+import { accrualCheck, movesCash, type SubCategory } from "@/lib/rules/tx-rules";
 import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
@@ -126,6 +126,24 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
   // รวมเส้นทางค้างรับ-ค้างจ่ายที่ไม่ได้ใช้บัญชี เพราะบัญชีผิดคนที่ติดมากับรายการ
   // จะถูกใช้ตอนยืนยันเงินเข้า-ออกภายหลัง แล้วเงินไปโผล่ในงบของคนอื่น (บทเรียนข้อ 2)
   if (bankAccountId) assertBankBelongsTo(resolve, bankAccountId, input.ownerId);
+
+  /**
+   * หมวดที่ **ไม่มีเงินเคลื่อน** ส่งบัญชีมา = ปฏิเสธ ไม่ใช่เมินทิ้ง
+   *
+   * เมินทิ้งคือทางที่แพงที่สุด: บัญชีจะไม่ปรากฏในบรรทัดใดเลย (ไม่มีขาเงินสดให้ติด)
+   * แต่ค่านั้นยังอยู่ในฟอร์ม/ใน draft แล้วถูกหยิบไปใช้ตอนขั้นยืนยันรับ-จ่ายหรือ
+   * ตอนกระทบยอด → รายการที่ไม่เคยมีเงินเคลื่อนจะไปโผล่เป็นความเคลื่อนไหวของบัญชีนั้น
+   * (รูปแบบเดียวกับข้อ 7 ของผู้ตรวจ: bank_account_id ติดบรรทัดที่ไม่ใช่เงินสด)
+   *
+   * อ่านจาก `movesCash()` ในตารางกฎ ไม่ได้ไล่ชื่อหมวด — หมวด `none` ตัวถัดไปจึงไม่หลุด
+   */
+  if (!movesCash(sub) && bankAccountId) {
+    throw new PostingError(
+      `หมวด "${sub.label}" เป็นรายการปรับปรุงทางบัญชี ไม่มีเงินเข้าหรือออกบัญชีเลย ` +
+        "จึงต้องไม่ระบุบัญชีธนาคาร — บัญชีที่ติดมากับรายการที่ไม่มีขาเงินสดจะถูกนับเป็น" +
+        "ความเคลื่อนไหวของบัญชีนั้นตอนกระทบยอด ทั้งที่เงินไม่ได้เข้าออก"
+    );
+  }
 
   assertRequirements(sub, input);
 

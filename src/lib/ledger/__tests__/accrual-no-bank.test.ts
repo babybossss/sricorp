@@ -28,7 +28,7 @@ import {
 import { previewPosting } from "../preview";
 import { PostingError, type PostingInput } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
-import { TX_TYPES, canAccrueFromForm } from "@/lib/rules/tx-rules";
+import { TX_TYPES, canAccrueFromForm, movesCash } from "@/lib/rules/tx-rules";
 import { TEST_RESOLVER } from "./fixture-resolver";
 
 /** fixture ของ engine เท่านั้น — ไม่ผูกกับข้อมูลจำลองของแอป */
@@ -57,6 +57,15 @@ const inputFor = (
 
 const ALL = TX_TYPES.flatMap((t) => t.subs.map((s) => ({ t, s })));
 const ACCRUABLE = ALL.filter(({ s }) => canAccrueFromForm(s));
+/**
+ * หมวดที่ **มีขาเงินสดจริง** — ชุดเดียวที่ "ไม่ส่งบัญชี = ต้องล้ม" ใช้ได้
+ *
+ * หมวด `cash: "none"` (รายการปรับปรุงทางบัญชี) ไม่มีขาเงินสดเลย บัญชีธนาคารจึงไม่ใช่
+ * ข้อมูลที่ขาด — มันเป็นข้อมูลที่ **ต้องไม่มี** และมีเทสต์ของมันเองใน
+ * `adjustment-posting.test.ts` (ส่งบัญชีมาต้องถูกปฏิเสธ ไม่ใช่ถูกเมิน)
+ * ถ้าไม่แยกชุด เทสต์นี้จะเรียกร้องให้ engine ขอบัญชีกับรายการที่ไม่มีเงินเคลื่อน
+ */
+const CASH_MOVING = ALL.filter(({ s }) => movesCash(s));
 
 /** ทั้งสองรูปแบบของ "ไม่ส่ง" — ฟอร์มส่ง `""` · โค้ดที่ประกอบ input เองส่ง `undefined` */
 const BLANKS: { label: string; value: string | undefined }[] = [
@@ -124,9 +133,14 @@ describe("ตั้งค้างรับ-ค้างจ่ายโดยไ
 });
 
 describe("มีขาเงินสดแต่ไม่ส่งบัญชี — ต้องล้มทุกหมวด ทุกสาขา", () => {
+  it("ชุดที่ทดสอบต้องไม่ว่าง และต้องเล็กกว่าทั้งตารางกฎจริงๆ (การยกเว้นต้องเห็น)", () => {
+    expect(CASH_MOVING.length).toBeGreaterThan(0);
+    expect(CASH_MOVING.length).toBeLessThan(ALL.length);
+  });
+
   for (const { label, value } of BLANKS) {
     it(`ทุกหมวดย่อย เงินเคลื่อนจริง + บัญชีเป็น ${label} → PostingError ที่ชี้ไปที่บัญชี`, () => {
-      for (const { t, s } of ALL) {
+      for (const { t, s } of CASH_MOVING) {
         const input = inputFor(t.key, s.code, s.requires, { bankAccountId: value });
         let message = "";
         try {

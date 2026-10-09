@@ -10,6 +10,7 @@ import {
   effectsOf,
   impactLines,
   affectsPL,
+  movesCash,
   type TxTypeKey,
 } from "../tx-rules";
 import { COA, coa, isCashAccount } from "../coa";
@@ -30,10 +31,23 @@ describe("ผังบัญชี", () => {
     }
   });
 
-  it("ทุกหมวดย่อยมีขาเงินสดอย่างน้อยหนึ่งฝั่ง — ไม่มีเงินลอย (Money Invariant 2)", () => {
+  /**
+   * เดิมเทสต์นี้บังคับว่า **ทุก** หมวดต้องมีขาเงินสด ซึ่งเป็นจริงตอนที่ `CashDirection`
+   * มีแค่ `in | out | both` · ตั้งแต่เปิด `none` (รายการปรับปรุงทางบัญชี) กฎที่ถูกคือ
+   * **ขาเงินสดต้องตรงกับธง `cash` ของหมวด** ไม่ใช่ "ต้องมีทุกหมวด"
+   *
+   * Money Invariant 2 พูดว่า "ทุกการเคลื่อนไหวเงินสดต้องผูกบัญชี" — รายการที่ไม่มี
+   * การเคลื่อนไหวเงินสดจึงไม่มีอะไรให้ผูก · ที่ยังห้ามเด็ดขาดคือ **ธงกับบัญชีไม่ตรงกัน**
+   * (ธง in/out แต่ไม่มีขาเงินสด = เงินหายไปจากยอดธนาคาร · ธง none แต่มีขาเงินสด =
+   *  เงินเคลื่อนโดยไม่มีบัญชีและไม่มี cash_date)
+   */
+  it("ขาเงินสดต้องตรงกับธงทิศทางเงินของหมวด ทั้งสองทิศ (Money Invariant 2)", () => {
     for (const s of allSubs) {
-      expect(isCashAccount(s.dr) || isCashAccount(s.cr), s.code).toBe(true);
+      expect(isCashAccount(s.dr) || isCashAccount(s.cr), `${s.code} (cash: ${s.cash})`).toBe(movesCash(s));
     }
+    // กันลูปว่าง และกันการเผลอตั้ง none ทั้งระบบ
+    expect(allSubs.filter(movesCash).length).toBeGreaterThan(0);
+    expect(allSubs.filter((s) => !movesCash(s)).length).toBeGreaterThan(0);
   });
 });
 

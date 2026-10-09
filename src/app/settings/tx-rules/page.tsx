@@ -9,6 +9,7 @@ import {
   CASHFLOW_LABEL,
   SIDE_LABEL,
   effectsOf,
+  cashDirectionLabel,
 } from "@/lib/rules/tx-rules";
 import { coa } from "@/lib/rules/coa";
 import { gateRoute } from "@/lib/auth/gate";
@@ -41,7 +42,9 @@ export default async function TxRulesPage() {
               <Pill size="md" className={TYPE_PILL[t.tone]}>{t.label}</Pill>
               <span className="text-sm text-ink-600">{t.desc}</span>
               <span className="text-sm text-ink-400">
-                เงิน{t.cash === "in" ? "เข้า" : t.cash === "out" ? "ออก" : "เข้า/ออก"} · {t.subs.length} หมวดย่อย
+                {/* คำมาจาก cashDirectionLabel() ที่เดียว — ternary ที่มี fallback เคยทำให้
+                    ประเภทที่ไม่มีเงินเคลื่อนโชว์ว่า "เงินเข้า/ออก" ซึ่งตรงข้ามกับความจริง */}
+                {cashDirectionLabel(t.cash)} · {t.subs.length} หมวดย่อย
               </span>
             </div>
 
@@ -126,8 +129,12 @@ export default async function TxRulesPage() {
                         <Td className="whitespace-nowrap text-sm">
                           {CASHFLOW_LABEL[s.cashflow]}
                           <br />
-                          <span className={s.cash === "out" ? "text-neg" : "text-pos"}>
-                            เงิน{s.cash === "in" ? "เข้า" : s.cash === "out" ? "ออก" : "ย้ายบัญชี"}
+                          <span
+                            className={
+                              s.cash === "out" ? "text-neg" : s.cash === "none" ? "text-ink-600" : "text-pos"
+                            }
+                          >
+                            {cashDirectionLabel(s.cash)}
                           </span>
                         </Td>
 

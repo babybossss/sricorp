@@ -7,6 +7,7 @@ import {
   isValidPair,
   canAccrueFromForm,
   accrualCheck,
+  movesCash,
   type TxTypeKey,
   type SubCategory,
 } from "@/lib/rules/tx-rules";
@@ -99,6 +100,21 @@ const EMPTY: TxDraft = {
  * ไม่งั้นแค่แวะหมวดที่ตั้งค้างไม่ได้ครั้งเดียว รายการที่เหลือทั้งวันจะกลายเป็น
  * "รับเงินแล้ว" เงียบๆ ทั้งที่ผู้ใช้ไม่เคยติ๊กอะไรเลย
  */
+/**
+ * บัญชีธนาคารที่ยังควรค้างอยู่ในฟอร์มหลังเปลี่ยนหมวดย่อย
+ *
+ * หมวดที่ไม่มีเงินเคลื่อน (`cash: "none"`) → **ล้างทิ้ง** เพราะฟอร์มไม่แสดงช่องนั้นแล้ว
+ * ถ้าปล่อยค้าง ค่าที่มองไม่เห็นจะถูกส่งเข้า engine ซึ่งปฏิเสธ (บัญชีบนรายการที่ไม่มี
+ * ขาเงินสด) แล้วปุ่มบันทึกจะดับตลอดกาลโดยไม่มีช่องไหนให้ผู้ใช้แก้ — กันแน่นเกินจนใช้ไม่ได้
+ *
+ * อ่านจากตารางกฎ (`movesCash`) ไม่ได้ไล่ชื่อหมวด
+ */
+function bankIdFor(nextSub: string, currentBankId: string): string {
+  const s = findSub(nextSub)?.sub;
+  if (s && !movesCash(s)) return "";
+  return currentBankId;
+}
+
 function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
   const accruable = (code: string) => {
     const s = findSub(code)?.sub;
@@ -119,6 +135,7 @@ export function useTxForm() {
     setDraft((d) => ({
       ...d,
       subCode,
+      bankId: bankIdFor(subCode, d.bankId),
       notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
     }));
   }, []);
@@ -132,6 +149,7 @@ export function useTxForm() {
         ...d,
         typeKey,
         subCode,
+        bankId: bankIdFor(subCode, d.bankId),
         notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
       };
     });

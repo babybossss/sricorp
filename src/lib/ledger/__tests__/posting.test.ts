@@ -17,7 +17,7 @@ import { TEST_RESOLVER } from "./fixture-resolver";
 const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 const buildPostingDraft = (input: PostingInput) => buildPostingDraftWith(input, TEST_RESOLVER);
 import { isCashAccount } from "@/lib/rules/coa";
-import { TX_TYPES, findSub, canAccrueFromForm } from "@/lib/rules/tx-rules";
+import { TX_TYPES, findSub, canAccrueFromForm, movesCash } from "@/lib/rules/tx-rules";
 
 const base = {
   amount: 12000,
@@ -25,12 +25,23 @@ const base = {
   bankAccountId: "b4",
 };
 
+/**
+ * บัญชีธนาคารของหมวดนี้ตอนไล่ทั้งตารางกฎ — **ต้องไม่ส่งให้หมวดที่ไม่มีเงินเคลื่อน**
+ *
+ * engine ปฏิเสธบัญชีบนรายการ `cash: "none"` โดยตั้งใจ (บัญชีที่ติดมากับรายการ
+ * ที่ไม่มีขาเงินสดจะถูกนับเป็นความเคลื่อนไหวของบัญชีนั้นตอนกระทบยอด)
+ * fixture ที่ยัดบัญชีให้ทุกหมวดจึงไม่ใช่ "ข้อมูลครบ" แต่เป็นข้อมูลที่ขัดกับหมวด
+ */
+const bankFor = (s: { cash: string; dr: string; cr: string }) =>
+  movesCash(s as Parameters<typeof movesCash>[0]) ? "b4" : undefined;
+
 describe("Money Invariant 1 — ทุกรายการต้องสมดุล", () => {
   it("ทุกหมวดย่อยในตารางกฎ สร้างบรรทัดที่สมดุลได้", () => {
     for (const t of TX_TYPES) {
       for (const s of t.subs) {
         const input = {
           ...base,
+          bankAccountId: bankFor(s),
           typeKey: t.key,
           subCode: s.code,
           assetId: "rent1",
@@ -58,6 +69,7 @@ describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
       for (const s of t.subs) {
         const r = buildPosting({
           ...base,
+          bankAccountId: bankFor(s),
           typeKey: t.key,
           subCode: s.code,
           assetId: "rent1",

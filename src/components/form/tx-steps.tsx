@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { TYPE_PILL } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import { ContactPicker } from "./contact-picker";
-import { bankChoices, bankDirectionLabel } from "./bank-field";
+import { bankChoices, bankDirectionLabel, showsBankField } from "./bank-field";
 import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
 import { JournalPreview } from "./journal-preview";
@@ -94,8 +94,15 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
   const { draft, sub, subs, requires, patch } = api;
   const orderedBanks = useOrderedBanks(false);
   const bankOff = useApp((st) => st.bankOff);
+  /**
+   * หมวดนี้มีเงินเคลื่อนเลยไหม — ถามตารางกฎผ่าน `showsBankField()`
+   *
+   * `false` = รายการปรับปรุงทางบัญชี → **ไม่โชว์ทั้งช่องบัญชีและช่องติ๊กยืนยันเงินเข้า-ออก**
+   * (ไม่ใช่โชว์แล้วปล่อยว่าง) เพราะทั้งสองช่องนั้นถามคำถามที่ไม่มีคำตอบสำหรับรายการนี้
+   */
+  const usesBank = showsBankField(sub);
   // เงินเคลื่อนจริงเมื่อติ๊กยืนยันแล้ว หรือหมวดนี้ตั้งค้างไม่ได้ (ต้องเป็นเงินสดเสมอ)
-  const moneyMoved = !(draft.notYetPaid && api.canAccrue);
+  const moneyMoved = usesBank && !(draft.notYetPaid && api.canAccrue);
   const banks = bankChoices(orderedBanks, (id) => !!bankOff[id], draft.holderId, draft.bankId);
   const needsContact = requires("contact");
   const needsAsset = requires("asset");
@@ -122,9 +129,21 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         <Field label="วันที่เอกสาร">
           <Input value={draft.docDate} onChange={(e) => patch({ docDate: e.target.value })} />
         </Field>
-        <Field label={draft.notYetPaid ? "วันที่ครบกำหนด" : "วันที่เงินเข้า/ออกจริง"}>
-          <Input value={draft.cashDate} onChange={(e) => patch({ cashDate: e.target.value })} />
-        </Field>
+        {/*
+          วันที่เงินเข้า-ออก **ไม่มีสำหรับรายการที่ไม่มีเงินเคลื่อน**
+          `cash_date` ของรายการแบบนี้ต้องเป็น null (ด่าน trg_txn_cash_date_matches_lines
+          ปฏิเสธถ้าไม่มีบรรทัด 11xx แต่มี cash_date) → ถ้ายังโชว์ช่องนี้ ผู้ใช้จะกรอก
+          วันที่ที่ระบบจะทิ้งทันที ซึ่งทำให้คนอ่านงบคิดว่ามีเงินเคลื่อนวันนั้น
+        */}
+        {usesBank ? (
+          <Field label={draft.notYetPaid ? "วันที่ครบกำหนด" : "วันที่เงินเข้า/ออกจริง"}>
+            <Input value={draft.cashDate} onChange={(e) => patch({ cashDate: e.target.value })} />
+          </Field>
+        ) : (
+          <Field label="วันที่เงินเข้า/ออกจริง" hint="ไม่มี — รายการปรับปรุงทางบัญชีไม่มีเงินเคลื่อน">
+            <div className="flex min-h-control items-center text-base text-ink-600">ไม่ใช้ช่องนี้</div>
+          </Field>
+        )}
       </div>
 
       {/*
@@ -133,6 +152,21 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         ทิศทางนี้สำคัญ: ค่าตั้งต้นที่ปลอดภัยคือยังไม่แตะเงินสด เพราะถ้าตั้งต้นว่ารับเงินแล้ว
         คนที่กดผ่านโดยไม่อ่านจะทำให้ยอดธนาคารมีเงินที่ยังไม่เข้า แล้วกระทบยอดไม่ได้
       */}
+      {/*
+        ช่องติ๊ก "เงินเข้า/ออกจริงแล้ว" กับช่องบัญชี เป็นเรื่องของรายการที่มีเงินเคลื่อน
+        หมวด cash: "none" ไม่มีทั้งสองเรื่อง → แสดงคำอธิบายแทน ไม่ใช่ช่องเทาๆ ที่กดไม่ได้
+        (ช่องเทาที่กดไม่ได้ทำให้คนคิดว่าตัวเองทำอะไรผิด)
+      */}
+      {!usesBank ? (
+        <div className="rounded border border-line bg-canvas p-4 text-base text-ink-600">
+          <div className="font-semibold text-ink-900">รายการนี้ไม่มีเงินเข้าหรือออกบัญชี</div>
+          <div className="mt-1">
+            ไม่ต้องเลือกบัญชีธนาคารและไม่ต้องระบุวันที่เงินเคลื่อน · ยอดธนาคารและงบกระแสเงินสดไม่ขยับ
+          </div>
+        </div>
+      ) : null}
+
+      {usesBank ? (
       <label className="flex min-h-control items-start gap-2.5 text-base">
         <Checkbox
           className="mt-0.5"
@@ -158,12 +192,15 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           )}
         </span>
       </label>
+      ) : null}
 
       {/*
         บัญชีธนาคาร — จำเป็นเมื่อเงินเคลื่อนจริง (ติ๊กแล้ว) · ไม่จำเป็นเมื่อยังค้างรับ-ค้างจ่าย
+        **ไม่แสดงเลย** เมื่อหมวดนี้ไม่มีเงินเคลื่อน (engine ปฏิเสธถ้าส่งบัญชีมา)
         ไม่เลือกให้เอง: บัญชีที่ระบบเดาให้ = ยอดธนาคารที่กระทบยอดไม่ได้ทันทีที่เดาผิด
         ว่าพอไหม engine เป็นคนตัดสินตอนกดบันทึก (ปุ่มไม่ได้ถามช่องนี้)
       */}
+      {usesBank ? (
       <Field
         label={bankDirectionLabel(sub)}
         required={moneyMoved}
@@ -184,6 +221,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           ))}
         </Select>
       </Field>
+      ) : null}
 
       {/* Backlog ข้อ 1 — หมวดย่อยมาจากตารางกฎของประเภทที่เลือก ไม่ใช่ dropdown อิสระ */}
       <Field
@@ -457,10 +495,18 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
     { k: "ถือในชื่อ", v: holder?.name ?? "—" },
     {
       k: bankDirectionLabel(sub),
-      v: bank?.name ?? (draft.notYetPaid && api.canAccrue ? "ยังไม่ระบุ (ค้างรับ-ค้างจ่าย)" : "ยังไม่ได้เลือก"),
+      // หมวดที่ไม่มีเงินเคลื่อนต้องอ่านว่า "ไม่ใช้" ไม่ใช่ "ยังไม่ได้เลือก" ซึ่งอ่านเหมือนกรอกไม่ครบ
+      v: !showsBankField(sub)
+        ? "ไม่ใช้ — รายการนี้ไม่มีเงินเข้าออกบัญชี"
+        : bank?.name ?? (draft.notYetPaid && api.canAccrue ? "ยังไม่ระบุ (ค้างรับ-ค้างจ่าย)" : "ยังไม่ได้เลือก"),
     },
     { k: "จำนวนเงิน", v: draft.amount ? `฿ ${draft.amount}` : "—" },
-    { k: "วันที่เอกสาร / เงินจริง", v: `${draft.docDate} · ${draft.notYetPaid ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}` },
+    {
+      k: "วันที่เอกสาร / เงินจริง",
+      v: !showsBankField(sub)
+        ? `${draft.docDate} · ไม่มีวันที่เงินเคลื่อน`
+        : `${draft.docDate} · ${draft.notYetPaid ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}`,
+    },
     { k: "โปรเจค (ทรัพย์)", v: asset?.name ?? "—" },
   ];
 
