@@ -8,6 +8,13 @@
 --
 -- รันในฐานะ superuser ของ cluster = ข้าม RLS แต่ **trigger ยังทำงานทุกเส้นทาง**
 -- นั่นคือประเด็น: RLS เป็นชั้นที่ policy ในอนาคตเขียนทับได้ trigger ไม่ได้
+--
+-- **คู่บัญชีของ fixture (10/10 · D-107)**: ใช้ `exp.other` · Dr 5900 ค่าใช้จ่ายอื่น /
+--   Cr 2100 เจ้าหนี้ค้างจ่าย = ใบ "ตั้งค้างจ่าย" ที่ **ไม่มีขาเงินสด** (เลี่ยงกติกา
+--   cash_date/bank ซึ่งไม่ใช่เรื่องที่ไฟล์นี้วัด) และเป็นหมวดที่ `can_accrue = true`
+--   ของเดิมใช้ `inc.other` · Dr 1220 / Cr 4900 ซึ่ง **ตารางกฎไม่เคยอนุญาต**
+--   (หมวดนั้นตั้งค้างไม่ได้) · 20261010000003 ปิดช่องนั้นแล้ว → fixture ต้องเป็น
+--   ใบที่ลงได้จริง ไม่ใช่ใบที่ผ่านได้เพราะด่านยังไม่อ่านธง `can_accrue`
 -- ============================================================
 
 \set ON_ERROR_STOP 1
@@ -17,13 +24,13 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0001',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['evidence.pdf']);
+        'exp.other', current_date, array['evidence.pdf']);
 
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0001', c.id,
        case when c.rn = 1 then 500 else 0 end,
        case when c.rn = 2 then 500 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -44,7 +51,7 @@ begin
     select '00000000-0000-0000-0000-0000000f0001', c.id,
            case when c.rn = 1 then 300 else 0 end,
            case when c.rn = 2 then 300 else 0 end
-      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
     raise exception 'FAIL: ยัดบรรทัดเพิ่มเข้ารายการที่ post แล้วได้';
   exception when raise_exception then
     v_err := sqlerrm;
@@ -119,7 +126,7 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0002',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['evidence.pdf']);
+        'exp.other', current_date, array['evidence.pdf']);
 commit;
 \set ON_ERROR_STOP 1
 
@@ -138,10 +145,10 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0003',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['evidence.pdf']);
+        'exp.other', current_date, array['evidence.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit)
 select '00000000-0000-0000-0000-0000000f0003', id, 100
-  from sri_os.chart_of_accounts where code = '1220';
+  from sri_os.chart_of_accounts where code = '5900';
 commit;
 \set ON_ERROR_STOP 1
 
@@ -164,7 +171,7 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
     values ('00000000-0000-0000-0000-0000000f0004',
             (select id from sri_os.owners where code = 'SRI_HOLDING'),
-            'inc.other', current_date, array['e.pdf']);
+            'exp.other', current_date, array['e.pdf']);
 
     update sri_os.transaction_lines
        set transaction_id = '00000000-0000-0000-0000-0000000f0004'
@@ -190,7 +197,7 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
     values ('00000000-0000-0000-0000-0000000f0005',
             (select id from sri_os.owners where code = 'SRI_HOLDING'),
-            'inc.other', current_date, array['e.pdf']);
+            'exp.other', current_date, array['e.pdf']);
 
     update sri_os.transaction_lines
        set transaction_id = '00000000-0000-0000-0000-0000000f0005'
@@ -213,13 +220,13 @@ begin;
 -- (ถ้าไม่ใส่ trg_corporate_evidence จะบล็อกก่อน แล้วเทสต์นี้จะผ่านทั้งที่ยังไม่มีกฎ owner)
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0006',
-        (select id from sri_os.owners where code = 'SUTEE'), 'inc.other', current_date,
+        (select id from sri_os.owners where code = 'SUTEE'), 'exp.other', current_date,
         array['personal.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0006', c.id,
        case when c.rn = 1 then 2000 else 0 end,
        case when c.rn = 2 then 2000 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -287,12 +294,12 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
     values ('00000000-0000-0000-0000-0000000f0007',
             (select id from sri_os.owners where code = 'SRI_HOLDING'),
-            'inc.other', current_date, array['e.pdf']);
+            'exp.other', current_date, array['e.pdf']);
     insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
     select '00000000-0000-0000-0000-0000000f0007', c.id,
            case when c.rn = 1 then 777 else 0 end,
            case when c.rn = 2 then 777 else 0 end
-      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+      from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
   exception when others then
     raise exception 'FAIL: post ในบล็อกที่มี exception handler (subtransaction) ถูกปฏิเสธ: %', sqlerrm;
   end;
@@ -314,13 +321,13 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, created_at)
 values ('00000000-0000-0000-0000-0000000f0014',
         (select id from sri_os.owners where code = 'SUTEE'),
-        'inc.other', current_date, array['e.pdf'], '2001-01-01 00:00:00+00');
+        'exp.other', current_date, array['e.pdf'], '2001-01-01 00:00:00+00');
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, created_at)
 select '00000000-0000-0000-0000-0000000f0014', c.id,
        case when c.rn = 1 then 140 else 0 end,
        case when c.rn = 2 then 140 else 0 end,
        '2001-01-01 00:00:00+00'
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -369,7 +376,7 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, status)
 values ('00000000-0000-0000-0000-0000000f0016',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['e.pdf'], 'void');
+        'exp.other', current_date, array['e.pdf'], 'void');
 commit;
 \set ON_ERROR_STOP 1
 
@@ -458,12 +465,12 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0018',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['e.pdf']);
+        'exp.other', current_date, array['e.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0018', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 do $$
@@ -483,19 +490,19 @@ begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
 values ('00000000-0000-0000-0000-0000000f0019',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, array['invoice.pdf']);
+        'exp.other', current_date, array['invoice.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f0019', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 
 begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
 values ('00000000-0000-0000-0000-0000000f001a',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'inc.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0019', '{}');
+        'exp.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0019', '{}');
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000f001a', l.coa_id, l.credit, l.debit
   from sri_os.transaction_lines l where l.transaction_id = '00000000-0000-0000-0000-0000000f0019';
@@ -524,7 +531,7 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, attachments)
     values ('00000000-0000-0000-0000-0000000f0020',
             (select id from sri_os.owners where code = 'SRI_CORP'),
-            'inc.other', current_date, 'reverse', '{}');
+            'exp.other', current_date, 'reverse', '{}');
     raise exception 'FAIL: source=reverse ที่ไม่ชี้รายการไหนเลย ลงได้ = ข้ามหลักฐานด้วยการอ้างคำว่า reverse';
   exception when raise_exception then
     if sqlerrm like 'FAIL:%' then raise; end if;
@@ -542,7 +549,7 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
     values ('00000000-0000-0000-0000-0000000f0021',
             (select id from sri_os.owners where code = 'SRI_CORP'),
-            'inc.other', current_date, 'reverse',
+            'exp.other', current_date, 'reverse',
             '00000000-0000-0000-0000-0000000f0006',   -- รายการของ SUTEE
             '{}');
     raise exception 'FAIL: กลับรายการข้ามสมุดผู้ถือได้ = ยอดของอีกคนหายไปโดยไม่มีใครรู้';
@@ -559,7 +566,7 @@ begin
     insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
     values ('00000000-0000-0000-0000-0000000f0022',
             (select id from sri_os.owners where code = 'SRI_HOLDING'),
-            'inc.other', current_date, 'reverse',
+            'exp.other', current_date, 'reverse',
             '00000000-0000-0000-0000-0000000f0019',   -- ถูกกลับรายการด้วย f001a แล้ว
             '{}');
     raise exception 'FAIL: กลับรายการเดิมได้สองรอบ = เครดิตซ้ำ';
@@ -583,18 +590,18 @@ begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
   values ('00000000-0000-0000-0000-0000000f0023',
           (select id from sri_os.owners where code = 'SRI_HOLDING'),
-          'inc.other', current_date, array['invoice.pdf']);
+          'exp.other', current_date, array['invoice.pdf']);
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select '00000000-0000-0000-0000-0000000f0023', c.id,
          case when c.rn = 1 then 230 else 0 end,
          case when c.rn = 2 then 230 else 0 end
-    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
   -- ขากลับรายการ: ไม่มีไฟล์แนบ · ผ่านได้เพราะชี้ต้นฉบับจริง (ต้องเรียก fn_reverse_link_ok ได้)
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
   values ('00000000-0000-0000-0000-0000000f0024',
           (select id from sri_os.owners where code = 'SRI_HOLDING'),
-          'inc.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0023', '{}');
+          'exp.other', current_date, 'reverse', '00000000-0000-0000-0000-0000000f0023', '{}');
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select '00000000-0000-0000-0000-0000000f0024', l.coa_id, l.credit, l.debit
     from sri_os.transaction_lines l

@@ -350,9 +350,9 @@ do $$
 declare v uuid := '00000000-0000-0000-0000-0000000c0003';
 begin
   perform pg_temp.must_fail_like('C2 ค้างรับแต่ใส่ cash_date (เงินสดผี)', format(
-    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'inc.other', current_date,
-          '[{"coa":"1220","dr":4000,"cr":0,"cf":"none"},
-             {"coa":"4900","dr":0,"cr":4000,"cf":"none"}]'::jsonb) $q$, v),
+    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'exp.other', current_date,
+          '[{"coa":"5900","dr":4000,"cr":0,"cf":"none"},
+             {"coa":"2100","dr":0,"cr":4000,"cf":"none"}]'::jsonb) $q$, v),
     'ไม่มีบรรทัดเงินสดเลย');
   if exists (select 1 from sri_os.transactions where id = v) then
     raise exception 'FAIL: C2 ใบที่ถูกปฏิเสธยังค้างอยู่ในสมุด';
@@ -383,9 +383,9 @@ do $$
 declare v uuid := '00000000-0000-0000-0000-0000000c0005';
 begin
   perform pg_temp.must_pass('C4 ค้างรับ cash_date null', format(
-    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'inc.other', null,
-          '[{"coa":"1220","dr":4000,"cr":0,"cf":"none"},
-             {"coa":"4900","dr":0,"cr":4000,"cf":"none"}]'::jsonb) $q$, v));
+    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'exp.other', null,
+          '[{"coa":"5900","dr":4000,"cr":0,"cf":"none"},
+             {"coa":"2100","dr":0,"cr":4000,"cf":"none"}]'::jsonb) $q$, v));
   if pg_temp.cf_cash(array[v]) <> 0 then
     raise exception 'FAIL: C4 ใบค้างรับไม่ควรโผล่ในงบกระแสเงินสด (เห็น %)', pg_temp.cf_cash(array[v]);
   end if;
@@ -449,17 +449,17 @@ declare
   v_o uuid := '00000000-0000-0000-0000-0000000c0012';
   v_r uuid := '00000000-0000-0000-0000-0000000c0013';
 begin
-  perform pg_temp.mk_txn(v_o, 'SRI_CORP', 'inc.other', null,
-    '[{"coa":"1220","dr":3000,"cr":0,"cf":"none"},
-       {"coa":"4900","dr":0,"cr":3000,"cf":"none"}]'::jsonb);
+  perform pg_temp.mk_txn(v_o, 'SRI_CORP', 'exp.other', null,
+    '[{"coa":"5900","dr":3000,"cr":0,"cf":"none"},
+       {"coa":"2100","dr":0,"cr":3000,"cf":"none"}]'::jsonb);
 
   perform pg_temp.must_fail_like('C5d ใบกลับรายการของใบค้างรับแต่ใส่ cash_date', format(
-    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'inc.other', current_date, %L, '{}', 'reverse', %L) $q$,
+    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'exp.other', current_date, %L, '{}', 'reverse', %L) $q$,
     v_r, pg_temp.mirror_of(v_o)::text, v_o),
     'ไม่มีบรรทัดเงินสดเลย');
 
   perform pg_temp.must_pass('C5d2 ใบกลับรายการของใบค้างรับ cash_date null', format(
-    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'inc.other', null, %L, '{}', 'reverse', %L) $q$,
+    $q$ select pg_temp.mk_txn(%L, 'SRI_CORP', 'exp.other', null, %L, '{}', 'reverse', %L) $q$,
     v_r, pg_temp.mirror_of(v_o)::text, v_o));
 
   raise notice 'ok C5d · ใบกลับรายการของรายการค้างรับใส่ cash_date ไม่ได้ (เงินสดผี) · ปล่อย null แล้วผ่าน';
@@ -511,13 +511,13 @@ declare
   v_link uuid;
   v_src  text;
 begin
-  perform pg_temp.mk_txn(v_o1, 'THANAKORN', 'inc.other', null,
-    '[{"coa":"1220","dr":1500,"cr":0,"cf":"none"},
-       {"coa":"4900","dr":0,"cr":1500,"cf":"none"}]'::jsonb);
-  perform pg_temp.mk_txn(v_o2, 'THANAKORN', 'inc.other', null,
-    '[{"coa":"1220","dr":1500,"cr":0,"cf":"none"},
-       {"coa":"4900","dr":0,"cr":1500,"cf":"none"}]'::jsonb);
-  perform pg_temp.mk_txn(v_r, 'THANAKORN', 'inc.other', null,
+  perform pg_temp.mk_txn(v_o1, 'THANAKORN', 'exp.other', null,
+    '[{"coa":"5900","dr":1500,"cr":0,"cf":"none"},
+       {"coa":"2100","dr":0,"cr":1500,"cf":"none"}]'::jsonb);
+  perform pg_temp.mk_txn(v_o2, 'THANAKORN', 'exp.other', null,
+    '[{"coa":"5900","dr":1500,"cr":0,"cf":"none"},
+       {"coa":"2100","dr":0,"cr":1500,"cf":"none"}]'::jsonb);
+  perform pg_temp.mk_txn(v_r, 'THANAKORN', 'exp.other', null,
     pg_temp.mirror_of(v_o1), '{}', 'reverse', v_o1);
 
   -- C7 · ย้ายลิงก์ไปชี้ใบอื่น (ต้นฉบับเดิมกลับเป็น "ยังไม่ถูกกลับรายการ" แล้วกลับซ้ำได้)
@@ -553,7 +553,7 @@ begin
   --        ทั้ง fn_reverse_link_ok (ต้นฉบับมีจริง ผู้ถือเดียวกัน ยังไม่ถูกกลับรายการ)
   --        และ trg_reverse_mirrors_original (บรรทัดต้องสะท้อนตรงตัว)
   --        → ปิดทางนี้ด้วยคือกันแน่นเกิน: ใบที่ลงถูกแล้วแต่ลืมใส่ลิงก์จะซ่อมไม่ได้เลย
-  perform pg_temp.mk_txn(v_x, 'THANAKORN', 'inc.other', null, pg_temp.mirror_of(v_o2));
+  perform pg_temp.mk_txn(v_x, 'THANAKORN', 'exp.other', null, pg_temp.mirror_of(v_o2));
   perform pg_temp.must_pass('C8c ตั้ง reverses_id จาก null เป็นค่าที่สะท้อนบรรทัดจริง', format(
     $q$ select pg_temp.upd(%L) $q$,
     format($u$ update sri_os.transactions set reverses_id = %L, source = 'reverse' where id = %L $u$,

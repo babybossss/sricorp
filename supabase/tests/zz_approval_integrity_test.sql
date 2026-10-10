@@ -172,7 +172,7 @@ returns void language plpgsql as $fn$
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date,
                                   contact_id, attachments, created_by, source, reverses_id)
-  select p_txn, o.id, 'inc.other', current_date, current_date,
+  select p_txn, o.id, 'exp.other', current_date, current_date,
          '00000000-0000-0000-0000-0000000f9a01', array['หลักฐาน-INT.pdf'],
          pg_temp.iuid('i_mgmt'),
          case when p_reverses is null then 'manual' else 'reverse' end::sri_os.txn_source,
@@ -184,14 +184,14 @@ begin
   select p_txn, c.id,
          case when (c.rn = 1) <> (p_reverses is not null) then p_amount else 0 end,
          case when (c.rn = 2) <> (p_reverses is not null) then p_amount else 0 end
-    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 end $fn$;
 
 select pg_temp.ipost('00000000-0000-0000-0000-0000000ff001', 200000);
 
 insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status,
                                  posted_txn_id, created_by, reviewed_by, reviewed_at)
-select '00000000-0000-0000-0000-0000000fe001', o.id, 'inc.other', current_date, 200000,
+select '00000000-0000-0000-0000-0000000fe001', o.id, 'exp.other', current_date, 200000,
        'approved', '00000000-0000-0000-0000-0000000ff001',
        pg_temp.iuid('i_staff'), pg_temp.iuid('i_mgmt'), now()
   from sri_os.owners o where o.code = 'SRI_CORP';
@@ -675,7 +675,7 @@ begin
   perform pg_temp.ipost('00000000-0000-0000-0000-0000000ff002', 200000);
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status,
                                    posted_txn_id, created_by, reviewed_by, reviewed_at)
-  select '00000000-0000-0000-0000-0000000fe002', o.id, 'inc.other', current_date, 200000,
+  select '00000000-0000-0000-0000-0000000fe002', o.id, 'exp.other', current_date, 200000,
          'approved', '00000000-0000-0000-0000-0000000ff002',
          pg_temp.iuid('i_staff'), pg_temp.iuid('i_mgmt'), now()
     from sri_os.owners o where o.code = 'SRI_CORP';
@@ -745,7 +745,7 @@ begin
 
   -- ร่างใบใหม่ที่ยังรออนุมัติ (ไม่มี posted_txn_id) — สลับเข้ามาใต้แถว received ไม่ได้
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status, created_by)
-  select '00000000-0000-0000-0000-0000000fe003', o.id, 'inc.other', current_date, 200000,
+  select '00000000-0000-0000-0000-0000000fe003', o.id, 'exp.other', current_date, 200000,
          'pending', pg_temp.iuid('i_staff')
     from sri_os.owners o where o.code = 'SRI_CORP';
 
@@ -806,7 +806,7 @@ begin
   -- ---------- txn_types (fn_audit_keyed · PK = code) · เส้นทาง sync:rules ----------
   -- คัดลอกแถวจริงแล้วเปลี่ยน code → ไม่ต้องรู้ทุกคอลัมน์/ทุก constraint ของตารางกฎ
   -- (เทสต์ที่ไปรู้โครงตารางกฎเองจะพังทุกครั้งที่ตารางกฎเพิ่มช่อง)
-  create temporary table zz_tt as select * from sri_os.txn_types where code = 'inc.other';
+  create temporary table zz_tt as select * from sri_os.txn_types where code = 'exp.other';
   update zz_tt set code = 'zz.audit_probe';
   insert into sri_os.txn_types select * from zz_tt
   on conflict (code) do nothing;
@@ -905,10 +905,10 @@ begin
 
   -- post รายการใหม่ (หัวรายการ + บรรทัดในธุรกรรมเดียว)
   perform pg_temp.ipass('Management ลงรายการใหม่', format(
-    'insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, contact_id, attachments, created_by) values (%L, %L, ''inc.other'', current_date, current_date, %L, array[''หลักฐาน.pdf''], %L)',
+    'insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, contact_id, attachments, created_by) values (%L, %L, ''exp.other'', current_date, current_date, %L, array[''หลักฐาน.pdf''], %L)',
     v_txn, v_own, '00000000-0000-0000-0000-0000000f9a01', pg_temp.iuid('i_mgmt')));
   perform pg_temp.ipass('ลงบรรทัดบัญชีสองด้าน', format(
-    'insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit) select %L, c.id, case when c.rn = 1 then 500 else 0 end, case when c.rn = 2 then 500 else 0 end from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values (''1220'', 1), (''4900'', 2)) as v(code, rn) on v.code = c2.code) c',
+    'insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit) select %L, c.id, case when c.rn = 1 then 500 else 0 end, case when c.rn = 2 then 500 else 0 end from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values (''5900'', 1), (''2100'', 2)) as v(code, rn) on v.code = c2.code) c',
     v_txn));
 
   -- void (txn.void = Management มี)

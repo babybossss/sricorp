@@ -102,14 +102,14 @@ insert into sri_os.asset_valuations(asset_id, as_of, method, value) values
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, asset_id, attachments, created_by)
 select '00000000-0000-0000-0000-00000000e9f1',
        (select id from sri_os.owners where code = 'SRI_CORP'),
-       'inc.other', current_date, '00000000-0000-0000-0000-00000000e001', array['smoke.pdf'],
+       'exp.other', current_date, '00000000-0000-0000-0000-00000000e001', array['smoke.pdf'],
        pg_temp.uid('mgmt');
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, asset_id)
 select '00000000-0000-0000-0000-00000000e9f1', c.id,
        case when c.rn = 1 then 700 else 0 end,
        case when c.rn = 2 then 700 else 0 end,
        '00000000-0000-0000-0000-00000000e001'
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
 insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
 select '00000000-0000-0000-0000-00000000eb01', id, 'KBANK', 'smoke', 'smoke'

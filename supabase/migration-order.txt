@@ -45,3 +45,4 @@
 20261009000004_allowance_fixes.sql
 20261010000001_recovery_cap_and_delta.sql
 20261010000002_recovery_no_accrual.sql
+20261010000003_accrual_requires_can_accrue.sql

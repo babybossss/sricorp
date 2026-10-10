@@ -207,7 +207,7 @@ select '00000000-0000-0000-0000-0000000000b1', id, 'KBANK', 'ทดสอบ', '
   from sri_os.owners where code = 'SRI_CORP';
 
 insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
-select '00000000-0000-0000-0000-0000000000d1', o.id, 'inc.other', current_date, 1000, pg_temp.uid('staff')
+select '00000000-0000-0000-0000-0000000000d1', o.id, 'exp.other', current_date, 1000, pg_temp.uid('staff')
   from sri_os.owners o where o.code = 'SRI_CORP';
 
 insert into sri_os.period_closes(owner_id, period, closed_by)
@@ -252,7 +252,7 @@ declare n int;
 begin
   perform pg_temp.login('staff');
   insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, created_by)
-  select o.id, 'inc.other', current_date, 500, pg_temp.uid('staff')
+  select o.id, 'exp.other', current_date, 500, pg_temp.uid('staff')
     from sri_os.owners o where o.code = 'SRI_CORP';
 
   update sri_os.draft_entries set status = 'approved'
@@ -276,7 +276,7 @@ begin
   perform pg_temp.login('staff');
   begin
     insert into sri_os.transactions(owner_id, txn_type_code, doc_date)
-    values (v_owner, 'inc.other', current_date);
+    values (v_owner, 'exp.other', current_date);
     raise exception 'FAIL: Staff post เข้า ledger ได้';
   exception when insufficient_privilege then null;
   end;
@@ -284,7 +284,7 @@ begin
   -- ขาบวก: ถ้า Manager ก็ post ไม่ได้ เทสต์ข้างบนจะผ่านทั้งที่ policy ปิดทุกคน
   perform pg_temp.login('mgr');
   insert into sri_os.transactions(owner_id, txn_type_code, doc_date)
-  values (v_owner, 'inc.other', current_date);
+  values (v_owner, 'exp.other', current_date);
   raise notice 'ok 7.3 · Staff post เข้า ledger ไม่ได้ · Manager ได้';
 end $$;
 
@@ -308,7 +308,7 @@ begin
   perform pg_temp.login('mgr');
   begin
     insert into sri_os.transactions(owner_id, txn_type_code, doc_date, attachments)
-    values (v_owner, 'inc.other', current_date, array['slip.pdf']);
+    values (v_owner, 'exp.other', current_date, array['slip.pdf']);
     raise exception 'FAIL: ลงรายการในงวดที่ปิดแล้วของ corporate_strict ได้ = การล็อกงวดหลุด';
   exception when raise_exception then
     if sqlerrm not like '%ปิดแล้ว%' then raise; end if;
@@ -552,7 +552,7 @@ values ('00000000-0000-0000-0000-00000000a001', current_date, 'manual', 1000000)
 -- รายการเงิน 4 แบบ · ทุกอันลงโดย Management (ยกเว้น T4 ที่ mgr ลงเอง)
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, asset_id, attachments, created_by)
 select x.id, (select id from sri_os.owners where code = 'SUTEE'),
-       'inc.other', current_date, x.asset_id, array['e.pdf'], x.creator
+       'exp.other', current_date, x.asset_id, array['e.pdf'], x.creator
   from (values
     ('00000000-0000-0000-0000-00000000c001'::uuid, '00000000-0000-0000-0000-00000000a001'::uuid, pg_temp.uid('mgmt')),
     ('00000000-0000-0000-0000-00000000c002'::uuid, '00000000-0000-0000-0000-00000000a002'::uuid, pg_temp.uid('mgmt')),
@@ -571,7 +571,7 @@ select t.id, c.id,
     ('00000000-0000-0000-0000-00000000c003'::uuid,  10),
     ('00000000-0000-0000-0000-00000000c004'::uuid,   7)
   ) as t(id, amt)
-  cross join (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  cross join (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
 -- ใบยืนยันรับ-จ่ายเงิน = ยอดเงินเข้า-ออกจริง · ผูกกับรายการของทรัพย์คนละตัว
 insert into sri_os.cash_confirmations(transaction_id, bank_account_id, expected_amount, actual_amount)
@@ -733,13 +733,13 @@ declare v uuid;
 begin
   perform pg_temp.login('mgr');
   insert into sri_os.transactions(owner_id, txn_type_code, doc_date)
-  select id, 'inc.other', current_date from sri_os.owners where code = 'SUTEE'
+  select id, 'exp.other', current_date from sri_os.owners where code = 'SUTEE'
   returning id into v;
   if v is null then raise exception 'FAIL: Manager อ่านรายการที่ตัวเองเพิ่งลงไม่ได้'; end if;
 
   -- เส้นทาง post จริงเขียนบรรทัดบัญชีต่อท้ายและอ่านกลับด้วย ต้องไม่ติด policy
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit)
-  select v, id, 50 from sri_os.chart_of_accounts where code = '1220'
+  select v, id, 50 from sri_os.chart_of_accounts where code = '5900'
   returning id into v;
   if v is null then raise exception 'FAIL: Manager อ่านบรรทัดบัญชีที่ตัวเองเพิ่งลงไม่ได้'; end if;
   raise notice 'ok 9.6 · created_by default auth.uid() ทำให้ insert ... returning (หัวรายการ + บรรทัด) ใช้ได้';

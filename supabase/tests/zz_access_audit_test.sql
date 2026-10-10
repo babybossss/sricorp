@@ -160,14 +160,14 @@ select '00000000-0000-0000-0000-0000000000c3', 'AA-C1', o.id,
 
 -- รายการที่ผูกคู่ค้า a1 · และ x_poster เป็นคนลง (ใช้ตรึงเคส FK ของ app_users ที่ X8)
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, contact_id, attachments, created_by)
-select '00000000-0000-0000-0000-0000000000d1', o.id, 'inc.other', current_date,
+select '00000000-0000-0000-0000-0000000000d1', o.id, 'exp.other', current_date,
        '00000000-0000-0000-0000-0000000000a1', array['หลักฐาน-AA.pdf'], pg_temp.xuid('x_poster')
   from sri_os.owners o where o.code = 'SRI_CORP';
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '00000000-0000-0000-0000-0000000000d1', c.id,
        case when c.rn = 1 then 250 else 0 end,
        case when c.rn = 2 then 250 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
 -- ============================================================
 -- X0 · โครงสร้าง: ไล่จาก pg_trigger / pg_proc จริง ไม่ใช่ไล่ไฟล์
@@ -641,7 +641,7 @@ begin
   insert into sri_os.assets(id, code, name, class_id, category_id, owner_id)
   values (v_a, 'AA-X10', 'ทรัพย์เทสต์ X10', v_cls, v_cat, v_o);
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status, created_by)
-  values (v_d, v_o, 'inc.other', current_date, 100, 'pending', pg_temp.xuid('x_staff'));
+  values (v_d, v_o, 'exp.other', current_date, 100, 'pending', pg_temp.xuid('x_staff'));
   insert into sri_os.asset_drafts(id, kind, owner_id, name, class_id, category_id, created_by)
   values (v_ad, 'create', v_o, 'ร่างเทสต์ X10', v_cls, v_cat, pg_temp.xuid('x_staff'));
 
@@ -812,15 +812,15 @@ begin
   execute 'set local role authenticated';
 
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
-  values ('00000000-0000-0000-0000-0000000000e1', v_o, 'inc.other', current_date, array['หลักฐาน-X12.pdf']);
+  values ('00000000-0000-0000-0000-0000000000e1', v_o, 'exp.other', current_date, array['หลักฐาน-X12.pdf']);
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select '00000000-0000-0000-0000-0000000000e1', c.id,
          case when c.rn = 1 then 120 else 0 end,
          case when c.rn = 2 then 120 else 0 end
-    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
-  values ('00000000-0000-0000-0000-0000000000e2', v_o, 'inc.other', current_date,
+  values ('00000000-0000-0000-0000-0000000000e2', v_o, 'exp.other', current_date,
           'reverse', '00000000-0000-0000-0000-0000000000e1', '{}');
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select '00000000-0000-0000-0000-0000000000e2', l.coa_id, l.credit, l.debit

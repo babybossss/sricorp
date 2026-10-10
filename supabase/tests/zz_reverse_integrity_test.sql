@@ -101,7 +101,8 @@ begin
   set constraints all deferred;
 end $fn$;
 
--- ต้นฉบับ: inc.other · Dr 1220 (ลูกหนี้อื่น) / Cr 4900 — ไม่มีขาเงินสด
+-- ต้นฉบับ: exp.other · Dr 5900 (ค่าใช้จ่ายอื่น) / Cr 2100 (เจ้าหนี้ค้างจ่าย) — ไม่มีขาเงินสด
+--   หมวดนี้ **ตั้งค้างจ่ายได้จริง** (can_accrue = true) จึงลงบรรทัด 2100 ได้ตามด่าน D-107
 create or replace function pg_temp.mk_orig(p_id uuid, p_owner text, p_amt numeric,
                                            p_doc date default current_date,
                                            p_cf text default 'none',
@@ -109,11 +110,11 @@ create or replace function pg_temp.mk_orig(p_id uuid, p_owner text, p_amt numeri
 language plpgsql as $fn$
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, memo, attachments)
-  select p_id, o.id, 'inc.other', p_doc, 'RV ต้นฉบับ', array['หลักฐาน-RV.pdf']
+  select p_id, o.id, 'exp.other', p_doc, 'RV ต้นฉบับ', array['หลักฐาน-RV.pdf']
     from sri_os.owners o where o.code = p_owner;
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit, cf_category, asset_id, memo)
-  values (p_id, pg_temp.coa('1220'), p_amt, 0, p_cf::sri_os.cf_group, p_asset, 'ขาลูกหนี้'),
-         (p_id, pg_temp.coa('4900'), 0, p_amt, p_cf::sri_os.cf_group, p_asset, 'ขารายได้');
+  values (p_id, pg_temp.coa('5900'), p_amt, 0, p_cf::sri_os.cf_group, p_asset, 'ขาค่าใช้จ่าย'),
+         (p_id, pg_temp.coa('2100'), 0, p_amt, p_cf::sri_os.cf_group, p_asset, 'ขาเจ้าหนี้');
   perform pg_temp.fire();
   return p_id;
 end $fn$;
@@ -135,11 +136,11 @@ begin
 end $fn$;
 
 -- ใบกลับรายการ: บรรทัดมาจาก jsonb เพื่อให้เคสปฏิเสธเขียนบรรทัด "ที่ไม่สะท้อน" ได้ตรงๆ
---   [{"coa":"1220","dr":700,"cr":0,"cf":"none","asset":null,"bank":null,"memo":"..."}]
+--   [{"coa":"5900","dr":700,"cr":0,"cf":"none","asset":null,"bank":null,"memo":"..."}]
 create or replace function pg_temp.try_rev(p_id uuid, p_owner text, p_reverses uuid,
                                            p_lines jsonb,
                                            p_att text[] default '{}',
-                                           p_type text default 'inc.other') returns void
+                                           p_type text default 'exp.other') returns void
 language plpgsql as $fn$
 declare r jsonb;
         v_has_cash boolean;
@@ -320,33 +321,33 @@ begin
   -- R2 · ยอดมากกว่าต้นฉบับ (รูของ D-097 ข้อ 1 ตรงๆ: ลงเงินเท่าไหร่ก็ได้)
   perform pg_temp.must_fail_like('R2 ยอดมากกว่าต้นฉบับ', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b002', 'SUTEE', %L,
-          '[{"coa":"4900","dr":5000000,"cr":0},{"coa":"1220","dr":0,"cr":5000000}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":5000000,"cr":0},{"coa":"5900","dr":0,"cr":5000000}]'::jsonb) $q$,
     v_orig), 'สะท้อน');
 
   -- R3 · ยอดน้อยกว่าต้นฉบับ
   perform pg_temp.must_fail_like('R3 ยอดน้อยกว่าต้นฉบับ', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b003', 'SUTEE', %L,
-          '[{"coa":"4900","dr":1,"cr":0},{"coa":"1220","dr":0,"cr":1}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":1,"cr":0},{"coa":"5900","dr":0,"cr":1}]'::jsonb) $q$,
     v_orig), 'ยอดต้นฉบับ');
 
   -- R4 · ยอดเท่าแต่ไม่สลับ dr/cr (= ลงซ้ำอีกใบ ไม่ใช่กลับรายการ · สมุดผิดสองเท่า)
   perform pg_temp.must_fail_like('R4 ยอดเท่าแต่ไม่สลับด้าน', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b004', 'SUTEE', %L,
-          '[{"coa":"1220","dr":1000,"cr":0},{"coa":"4900","dr":0,"cr":1000}]'::jsonb) $q$,
+          '[{"coa":"5900","dr":1000,"cr":0},{"coa":"2100","dr":0,"cr":1000}]'::jsonb) $q$,
     v_orig), 'สะท้อน');
 
-  -- R5 · รหัสบัญชีไม่ตรง (4900 → 1100) · ข้อความต้องชี้รหัสที่ไม่ตรงให้คนแก้เองได้
+  -- R5 · รหัสบัญชีไม่ตรง (2100 → 1100) · ข้อความต้องชี้รหัสที่ไม่ตรงให้คนแก้เองได้
   perform pg_temp.must_fail_like('R5 รหัสบัญชีไม่ตรง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b005', 'SUTEE', %L,
           '[{"coa":"1100","dr":1000,"cr":0,"bank":"00000000-0000-0000-0000-00000000bf03"},
-            {"coa":"1220","dr":0,"cr":1000}]'::jsonb) $q$,
-    v_orig), '4900');
+            {"coa":"5900","dr":0,"cr":1000}]'::jsonb) $q$,
+    v_orig), '2100');
 
   -- R9 · บรรทัดเกินมาหนึ่งคู่ที่สมดุลในตัวเอง — ทิศเดียวของ except all จับไม่ได้
   perform pg_temp.must_fail_like('R9 บรรทัดเกินที่สมดุลในตัวเอง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b009', 'SUTEE', %L,
           pg_temp.mirror_of(%L) ||
-          '[{"coa":"1220","dr":250,"cr":0},{"coa":"4900","dr":0,"cr":250}]'::jsonb) $q$,
+          '[{"coa":"5900","dr":250,"cr":0},{"coa":"2100","dr":0,"cr":250}]'::jsonb) $q$,
     v_orig, v_orig), 'เกิน');
 
   raise notice 'ok R2-R5 R9 · ยอดมากกว่า/น้อยกว่า · ไม่สลับด้าน · รหัสบัญชีไม่ตรง · บรรทัดเกินที่สมดุลในตัวเอง = ปฏิเสธทุกเคส';
@@ -359,8 +360,8 @@ begin
   perform pg_temp.mk_orig(v_orig, 'SUTEE', 900, current_date, 'operating');
   perform pg_temp.must_fail_like('R6 cf_category ไม่ตรง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b016', 'SUTEE', %L,
-          '[{"coa":"4900","dr":900,"cr":0,"cf":"investing"},
-            {"coa":"1220","dr":0,"cr":900,"cf":"investing"}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":900,"cr":0,"cf":"investing"},
+            {"coa":"5900","dr":0,"cr":900,"cf":"investing"}]'::jsonb) $q$,
     v_orig), 'สะท้อน');
   raise notice 'ok R6 · cf_category ไม่ตรงกับต้นฉบับ = ปฏิเสธ (งบกระแสเงินสดจะเพี้ยน)';
 end $$;
@@ -374,7 +375,7 @@ begin
   perform pg_temp.mk_orig(v_orig, 'SUTEE', 800, current_date, 'none', v_asset);
   perform pg_temp.must_fail_like('R7 asset_id ไม่ตรง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b017', 'SUTEE', %L,
-          '[{"coa":"4900","dr":800,"cr":0},{"coa":"1220","dr":0,"cr":800}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":800,"cr":0},{"coa":"5900","dr":0,"cr":800}]'::jsonb) $q$,
     v_orig), 'สะท้อน');
   raise notice 'ok R7 · asset_id ไม่ตรงกับต้นฉบับ = ปฏิเสธ (งบรายทรัพย์จะเพี้ยน)';
 end $$;
@@ -387,12 +388,15 @@ begin
   perform pg_temp.must_fail_like('R8 bank_account_id ไม่ตรง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b018', 'SRI_HOLDING', %L,
           '[{"coa":"4900","dr":600,"cr":0,"cf":"operating"},
-            {"coa":"1100","dr":0,"cr":600,"cf":"operating","bank":"00000000-0000-0000-0000-00000000bf02"}]'::jsonb) $q$,
+            {"coa":"1100","dr":0,"cr":600,"cf":"operating","bank":"00000000-0000-0000-0000-00000000bf02"}]'::jsonb,
+          '{}', 'inc.other') $q$,
     v_orig), 'สะท้อน');
   -- ขาบวกคู่กัน: บัญชีเดิมถูกต้อง → ผ่าน (ไม่ได้กันขาเงินสดทั้งหมด)
+  -- **ต้นฉบับของ R8 เป็นใบเงินสดของหมวด inc.other** (ไม่ใช่ใบค้างรับเหมือนเคสอื่น)
+  -- → ใบกลับรายการต้องระบุหมวดเดิมเอง ไม่ใช้ค่าตั้งต้น exp.other ของ try_rev
   perform pg_temp.must_pass('R8b bank_account_id ตรง', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000b028', 'SRI_HOLDING', %L,
-          pg_temp.mirror_of(%L)) $q$, v_orig, v_orig));
+          pg_temp.mirror_of(%L), '{}', 'inc.other') $q$, v_orig, v_orig));
   raise notice 'ok R8 · bank_account_id ไม่ตรง = ปฏิเสธ · ตรงแล้วผ่าน';
 end $$;
 
@@ -408,7 +412,7 @@ begin
   perform pg_temp.mk_orig(v_orig, 'SRI_CORP', 100);     -- ใบจริงใบเล็ก 100 บาท
   perform pg_temp.must_fail_like('R10 corporate ไม่แนบหลักฐาน + บรรทัดไม่สะท้อน', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000c002', 'SRI_CORP', %L,
-          '[{"coa":"4900","dr":5000000,"cr":0},{"coa":"1220","dr":0,"cr":5000000}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":5000000,"cr":0},{"coa":"5900","dr":0,"cr":5000000}]'::jsonb) $q$,
     v_orig), 'สะท้อน');
 
   select count(*), coalesce(sum(l.debit), 0) into n, v_sum
@@ -469,13 +473,13 @@ begin
   perform pg_temp.must_fail_like('R16a reverses_id ชี้ไป id ที่ไม่มีจริง',
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000e001', 'SUTEE',
           '00000000-0000-0000-0000-0000000deadb'::uuid,
-          '[{"coa":"4900","dr":10,"cr":0},{"coa":"1220","dr":0,"cr":10}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":10,"cr":0},{"coa":"5900","dr":0,"cr":10}]'::jsonb) $q$,
     'กลับรายการ');
   -- ชี้ไปตัวเอง
   perform pg_temp.must_fail_like('R16b reverses_id ชี้ไปตัวเอง',
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000e002', 'SUTEE',
           '00000000-0000-0000-0000-00000000e002'::uuid,
-          '[{"coa":"4900","dr":10,"cr":0},{"coa":"1220","dr":0,"cr":10}]'::jsonb) $q$,
+          '[{"coa":"2100","dr":10,"cr":0},{"coa":"5900","dr":0,"cr":10}]'::jsonb) $q$,
     'กลับรายการ');
   raise notice 'ok R16 · reverses_id ที่ชี้ id ไม่มีจริง/ชี้ตัวเอง = ปฏิเสธ (ไม่ตกไปเส้นทางปกติ)';
 end $$;

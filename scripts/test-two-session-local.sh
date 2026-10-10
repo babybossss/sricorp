@@ -19,8 +19,12 @@
 #
 # ทุกเคสต้องล้ม และสมุดต้องไม่มีตัวเลขของผู้โจมตีเหลืออยู่
 #
-# fixture ของไฟล์นี้ใช้ **คู่บัญชีจริงจากตารางกฎ** (inc.other = Dr 1220 ลูกหนี้อื่น /
-#   Cr 4900 รายได้อื่น · ข้ามผู้ถือ = 1310/2310 จาก intercompany.ts)
+# fixture ของไฟล์นี้ใช้ **คู่บัญชีจริงจากตารางกฎ** (exp.other ตั้งค้างจ่าย =
+#   Dr 5900 ค่าใช้จ่ายอื่น / Cr 2100 ค่าใช้จ่ายค้างจ่าย · ข้ามผู้ถือ = 1310/2310)
+#   **เคยใช้ `inc.other` = Dr 1220 / Cr 4900 ซึ่งตารางกฎไม่เคยอนุญาต** (ของจริงคือ
+#   Dr 1100 / Cr 4900 และหมวดนี้ `can_accrue = false` จึงลง 1220 ไม่ได้)
+#   ผิดมาตั้งแต่ต้นแต่ไม่มีอะไรจับได้ จน 20261010000003 เริ่มบังคับให้ด่านอ่าน can_accrue
+#   → fixture ที่ใช้คู่บัญชีที่เป็นไปไม่ได้ จะพิสูจน์อะไรเกี่ยวกับของจริงไม่ได้
 #   ของเดิมหยิบ "สองรหัสแรกที่ไม่ใช่ 11xx" มาเป็นคู่บัญชี ซึ่งของจริงเป็นไปไม่ได้
 #   และทำให้ยกด่านคู่บัญชีขึ้นเป็น trigger ไม่ได้ (20261008000012)
 #
@@ -88,7 +92,7 @@ select pg_current_xact_id();
 select pg_sleep(6);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '$txn', c.id, case when c.rn=1 then 777777 else 0 end, case when c.rn=2 then 777777 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 update sri_os.transactions set status='posted' where id='$txn';
 commit;
 SQL
@@ -107,12 +111,12 @@ SQL
     echo "set local role authenticated;"
     echo "set local \"test.uid\" = '$MGMT';"
     echo "insert into sri_os.transactions(id,owner_id,txn_type_code,doc_date,attachments,status,created_at)"
-    echo "values ('$txn',(select id from sri_os.owners where code='SUTEE'),'inc.other',current_date,array['e.pdf'],'void','$T0'::timestamptz);"
+    echo "values ('$txn',(select id from sri_os.owners where code='SUTEE'),'exp.other',current_date,array['e.pdf'],'void','$T0'::timestamptz);"
     if [ "$plant_lines" = "yes" ]; then
       echo "insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)"
       echo "select '$txn', c.id, case when c.rn=1 then 100 else 0 end, case when c.rn=2 then 100 else 0 end"
       echo "  from (select c2.id, v.rn from sri_os.chart_of_accounts c2"
-      echo "          join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;"
+      echo "          join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;"
     fi
     echo "commit;"
   } > "$WORK/b_$tag.sql"
@@ -255,7 +259,7 @@ select pg_sleep(6);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '$V4TXN', c.id, case when c.rn=1 then 777777 else 0 end, case when c.rn=2 then 777777 else 0 end
   from (select c2.id, v.rn from sri_os.chart_of_accounts c2
-          join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+          join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 SQL
 pg < "$WORK/a_V4.sql" > "$WORK/outA_V4" 2>&1 &
@@ -272,12 +276,12 @@ begin;
 set local role authenticated;
 set local "test.uid" = '$MGMT';
 insert into sri_os.transactions(id,owner_id,txn_type_code,doc_date,attachments,write_txn_id)
-values ('$V4TXN',(select id from sri_os.owners where code='SUTEE'),'inc.other',current_date,
+values ('$V4TXN',(select id from sri_os.owners where code='SUTEE'),'exp.other',current_date,
         array['e.pdf'], '$AXID'::xid8);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '$V4TXN', c.id, case when c.rn=1 then 100 else 0 end, case when c.rn=2 then 100 else 0 end
   from (select c2.id, v.rn from sri_os.chart_of_accounts c2
-          join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+          join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 SQL
   wait $apid4
@@ -301,10 +305,10 @@ begin;
 set local role authenticated;
 set local "test.uid" = '$MGMT';
 insert into sri_os.transactions(id,owner_id,txn_type_code,doc_date,attachments)
-values ('$OKTXN',(select id from sri_os.owners where code='SUTEE'),'inc.other',current_date,array['e.pdf']);
+values ('$OKTXN',(select id from sri_os.owners where code='SUTEE'),'exp.other',current_date,array['e.pdf']);
 insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
 select '$OKTXN', c.id, case when c.rn=1 then 321 else 0 end, case when c.rn=2 then 321 else 0 end
-  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+  from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 commit;
 SQL
 okdr=$(pg -tAc "\"select coalesce((select sum(debit) from sri_os.transaction_lines where transaction_id='$OKTXN'),0)\"" | tr -d ' ')

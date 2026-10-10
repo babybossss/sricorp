@@ -485,7 +485,17 @@ begin
     $q$ select pg_temp.mk_writeoff('00000000-0000-0000-0000-0000000a7022', 'THANAKORN', 30000) $q$));
 
   -- ตารางกฎถอยกลับ: ด่านระดับบรรทัดจะยอมให้ลงบรรทัด 1220 ของหมวดรับคืนอีกครั้ง
-  update sri_os.txn_types set accrual_coa_code = '1220' where code = 'inc.bad_debt_recovered';
+  --
+  -- **ถอยกลับให้ครบทุกช่องโดยตั้งใจ** (D-107): ตั้งแต่ 20261010000003 มีด่าน
+  --   `trg_lines_rule_coa_accrual` ที่ปฏิเสธบรรทัด `accrual_coa_code` ของหมวดที่
+  --   `can_accrue = false` ตั้งแต่ชั้นแรก · ถ้าถอยกลับแค่ช่อง accrual ด่านนั้นจะเป็น
+  --   คนปฏิเสธ แล้วเคสนี้จะ **ไม่ได้ทดสอบชั้นที่ 2 อีกเลย** (เขียวด้วยเหตุผลผิด)
+  --   → ใส่ 1220 ไว้ในช่อง gain ด้วย ซึ่งเป็นช่องที่ด่านชั้นแรกยอมตามตารางกฎเสมอ
+  --     (ด่านชั้นแรกต้องไม่กันแน่นเกินกับ gain/loss/interest) · ชั้นที่ 2 จึงเป็น
+  --     คนพูด และข้อความที่เคสนี้ตรวจยังเป็นของด่านที่ **ไม่พึ่งตารางกฎเลย**
+  update sri_os.txn_types
+     set accrual_coa_code = '1220', gain_coa_code = '1220', loss_coa_code = '5910'
+   where code = 'inc.bad_debt_recovered';
   perform pg_temp.fire();
 
   for i in 1..4 loop
@@ -524,7 +534,9 @@ begin
   end if;
 
   -- คืนตารางกฎเอง ไม่พึ่ง rollback อย่างเดียว (เคสที่เหลือต้องเห็นกฎจริงของรีโป)
-  update sri_os.txn_types set accrual_coa_code = null where code = 'inc.bad_debt_recovered';
+  update sri_os.txn_types
+     set accrual_coa_code = null, gain_coa_code = null, loss_coa_code = null
+   where code = 'inc.bad_debt_recovered';
   perform pg_temp.fire();
 
   raise notice 'ok N3 · ตารางกฎถอยกลับแล้ววงปั๊มยังพังทุกรอบด้วยด่านที่ไม่พึ่งตารางกฎ · 4 รอบได้ 0 ไม่ใช่ 150000';

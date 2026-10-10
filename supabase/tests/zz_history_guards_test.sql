@@ -709,7 +709,7 @@ begin
   -- (ง) ข้อความที่ผู้ใช้เห็นตอนถูกปฏิเสธก็ต้องไม่ชี้ไปทางที่ไม่มีจริง
   --     ต้องมีแถวจริงก่อน ไม่งั้น "ลบ 0 แถว" ไม่ยิง trigger แล้วข้อนี้ผ่านฟรีๆ
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
-  select '00000000-0000-0000-0000-00000000ce11', o.id, 'inc.other', current_date, 4000,
+  select '00000000-0000-0000-0000-00000000ce11', o.id, 'exp.other', current_date, 4000,
          pg_temp.huid('h_staff')
     from sri_os.owners o where o.code = 'SRI_CORP';
   insert into sri_os.cash_confirmations(id, draft_entry_id, bank_account_id, expected_amount)
@@ -773,7 +773,7 @@ declare v_draft uuid; v_conf uuid;
 begin
   -- (ข) ยืนยันเงินเข้า-ออก: สร้างใบ + กรอกยอดจริง (UPDATE คือทางออกที่มีจริง)
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
-  select '00000000-0000-0000-0000-00000000ce02', o.id, 'inc.other', current_date, 7000,
+  select '00000000-0000-0000-0000-00000000ce02', o.id, 'exp.other', current_date, 7000,
          pg_temp.huid('h_staff')
     from sri_os.owners o where o.code = 'SRI_CORP'
   returning id into v_draft;
@@ -800,17 +800,17 @@ begin
   execute 'set local role authenticated';
 
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, contract_id)
-  select '00000000-0000-0000-0000-00000000cf01', o.id, 'inc.other', current_date,
+  select '00000000-0000-0000-0000-00000000cf01', o.id, 'exp.other', current_date,
          array['หลักฐาน-HG.pdf'], '00000000-0000-0000-0000-00000000cc01'
     from sri_os.owners o where o.code = 'SRI_CORP';
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
   select '00000000-0000-0000-0000-00000000cf01', c.id,
          case when c.rn = 1 then 410 else 0 end,
          case when c.rn = 2 then 410 else 0 end
-    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('1220', 1), ('4900', 2)) as v(code, rn) on v.code = c2.code) c;
+    from (select c2.id, v.rn from sri_os.chart_of_accounts c2 join (values ('5900', 1), ('2100', 2)) as v(code, rn) on v.code = c2.code) c;
 
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, source, reverses_id, attachments)
-  select '00000000-0000-0000-0000-00000000cf02', o.id, 'inc.other', current_date,
+  select '00000000-0000-0000-0000-00000000cf02', o.id, 'exp.other', current_date,
          'reverse', '00000000-0000-0000-0000-00000000cf01', '{}'
     from sri_os.owners o where o.code = 'SRI_CORP';
   insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)
