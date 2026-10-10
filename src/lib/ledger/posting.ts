@@ -50,6 +50,36 @@ import {
 export { assertBalanced, totalDebit, totalCredit };
 
 /**
+ * ทิศของหมวด "เงินต้น + ดอกเบี้ย" — **ครบเคสของ `CashDirection` ไม่มี fallback**
+ *
+ * ของเดิมเป็น `const isInflow = sub.cash === "in"` → `"both"` และ `"none"`
+ * **ตกไปทางเส้นทางเงินออกเงียบๆ** แล้วเงินต้นจะไปลดหนี้สินและดอกเบี้ยจะกลายเป็น
+ * ค่าใช้จ่าย ทั้งที่หมวดนั้นไม่ใช่รายการจ่าย
+ *
+ * วันนี้ยังไม่ถึงเพราะทุกหมวดที่ `requires: principalInterestSplit` เป็น in/out
+ * **แต่พึ่งลำดับการตรวจและพึ่งข้อมูลวันนี้ไม่ได้** (D-102: ค่าใหม่ใน union
+ * ตกไปทาง fallback เงียบๆ และ TypeScript ไม่ฟ้องเพราะไม่มี map ครบเคส)
+ *
+ * ข้อมูลไม่เข้าเงื่อนไข = **ปฏิเสธ ห้ามเดา** — เดาผิดที่นี่แปลว่าดอกเบี้ยกับเงินต้น
+ * สลับฝั่งกันเงียบๆ ซึ่งเป็นข้อผิดที่ผู้ตรวจจับได้มาแล้วหนึ่งรอบ
+ */
+export function repaymentDirection(sub: SubCategory): "in" | "out" {
+  switch (sub.cash) {
+    case "in":
+      return "in";
+    case "out":
+      return "out";
+    case "both":
+    case "none":
+      throw new PostingError(
+        `หมวด "${sub.label}" แยกเงินต้นกับดอกเบี้ย แต่ตารางกฎบอกทิศเงินว่า "${sub.cash}" ` +
+          `ซึ่งไม่ใช่รับหรือจ่าย — เส้นทางนี้ต้องรู้ว่าเงินต้นไปลดลูกหนี้ (รับคืน) หรือลดหนี้สิน (จ่ายคืน) ` +
+          `ถ้าต้องการหมวดแบบนี้จริง ต้องออกแบบคู่บัญชีของมันในตารางกฎก่อน`
+      );
+  }
+}
+
+/**
  * ตรวจว่ากรอกครบตามที่หมวดย่อยบังคับ ก่อนจะลงบัญชี
  *
  * ทรัพย์/คู่ค้าใช้ด่านร่วมที่ `guards.ts` (`assertRequiredDimensions`) เพราะเส้นทาง
@@ -280,8 +310,8 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     }
     if (!sub.interestCoa) throw new PostingError(`หมวด "${sub.label}" ไม่ได้ระบุบัญชีดอกเบี้ยในตารางกฎ`);
 
-    // เงินเข้า = รับคืนเงินต้น · เงินออก = ชำระคืนเงินกู้
-    const isInflow = sub.cash === "in";
+    // เงินเข้า = รับคืนเงินต้น · เงินออก = ชำระคืนเงินกู้ (ค่าอื่นถูกปฏิเสธ ไม่ใช่เดา)
+    const isInflow = repaymentDirection(sub) === "in";
     const lines: PostingLine[] = [];
 
     if (isInflow) {

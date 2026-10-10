@@ -70,6 +70,15 @@ on conflict do nothing;
 -- ------------------------------------------------------------
 -- ตัวช่วย (แพทเทิร์นเดียวกับ zz_cash_date_invariant_test)
 -- ------------------------------------------------------------
+/**
+ * p_needle ต้องเป็นคำที่มีอยู่ใน **ข้อความของสาขาเดียว** เท่านั้น
+ *
+ * needle 'ติดลบ' ของไฟล์นี้เคยกว้างเกิน: มันตรงกับข้อความของด่านค่าเผื่อติดลบ
+ *   **ทั้งสองสาขา** และของด่านลูกหนี้ติดลบด้วย → เคสที่ด่านเลือกสาขาผิด
+ *   (หรือยิงผิดด่าน) ก็ยังเขียว · 10/10 เปลี่ยนเป็นประโยคที่มีในสาขานั้นเท่านั้น:
+ *     เอาค่าเผื่อออกเกิน (ตัดหนี้สูญ/กลับค่าเผื่อ) → 'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ'
+ *     ยกเลิกใบตั้งค่าเผื่อที่ถูกใช้แล้ว           → 'ใบตั้งค่าเผื่อถูกเอาออก'
+ */
 create or replace function pg_temp.must_fail_like(p_label text, p_sql text, p_needle text) returns void
 language plpgsql as $fn$
 declare v text;
@@ -363,7 +372,7 @@ declare v uuid := '00000000-0000-0000-0000-0000000a0020';
 begin
   perform pg_temp.must_fail_like('A4 ตัดหนี้สูญ 30,001 ขณะที่ค่าเผื่อมี 30,000', format(
     $q$ select pg_temp.mk_writeoff(%L, 'THANAKORN', 30001) $q$, v),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
   if exists (select 1 from sri_os.transactions where id = v) then
     raise exception 'FAIL: A4 ใบที่ถูกปฏิเสธยังค้างอยู่ในสมุด';
   end if;
@@ -420,7 +429,7 @@ do $$
 begin
   perform pg_temp.must_fail_like('A5c ตัดหนี้สูญอีก 1 บาทตอนค่าเผื่อเหลือ 0', format(
     $q$ select pg_temp.mk_writeoff('00000000-0000-0000-0000-0000000a0022', 'THANAKORN', 1) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
   raise notice 'ok A5c · ค่าเผื่อหมดแล้วตัดต่อไม่ได้';
 end $$;
 
@@ -443,7 +452,7 @@ begin
 
   perform pg_temp.must_fail_like('A7 กลับค่าเผื่อ 5,001 ขณะที่ตั้งไว้ 5,000', format(
     $q$ select pg_temp.mk_release('00000000-0000-0000-0000-0000000a0032', 'SUTEE', 5001) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
 
   perform pg_temp.must_pass('A8 กลับค่าเผื่อ 5,000 พอดี', format(
     $q$ select pg_temp.mk_release('00000000-0000-0000-0000-0000000a0033', 'SUTEE', 5000) $q$));
@@ -456,7 +465,7 @@ begin
 
   perform pg_temp.must_fail_like('A7b กลับค่าเผื่ออีก 1 บาทตอนเหลือ 0', format(
     $q$ select pg_temp.mk_release('00000000-0000-0000-0000-0000000a0034', 'SUTEE', 1) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
 
   raise notice 'ok A7/A8 · กลับค่าเผื่อเกินที่ตั้งไว้ถูกปฏิเสธ · กลับพอดีผ่านและ P&L กลับที่เดิม (ไม่สร้างรายได้จากอากาศ)';
 end $$;
@@ -476,7 +485,7 @@ begin
   -- สุธีมีลูกหนี้ 8,000 แต่ค่าเผื่อเหลือ 0 (กลับไปแล้วใน A8) → ตัดไม่ได้
   perform pg_temp.must_fail_like('A9 สุธีตัดหนี้สูญโดยอาศัยค่าเผื่อของ SRI Holding', format(
     $q$ select pg_temp.mk_writeoff('00000000-0000-0000-0000-0000000a0042', 'SUTEE', 8000) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
   raise notice 'ok A9 · ด่านตรวจต่อผู้ถือ ค่าเผื่อข้ามผู้ถือไม่ได้';
 end $$;
 
@@ -496,7 +505,7 @@ begin
 
   perform pg_temp.must_fail_like('A10 ตัดหนี้สูญโดยอาศัยค่าเผื่อของใบที่ void แล้ว', format(
     $q$ select pg_temp.mk_writeoff('00000000-0000-0000-0000-0000000a0043', 'SRI_HOLDING', 9000) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
   raise notice 'ok A10 · ค่าเผื่อของใบที่ void แล้วไม่ค้ำการตัดหนี้สูญ';
 end $$;
 
@@ -532,7 +541,7 @@ begin
   perform pg_temp.must_fail_like('A11 void ใบตั้งค่าเผื่อ ขณะที่ใบตัดหนี้สูญยังอยู่',
     $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
             where id = '00000000-0000-0000-0000-0000000a0036' $i$) $q$,
-    'ติดลบ');
+    'ใบตั้งค่าเผื่อถูกเอาออก');
   if pg_temp.allowance('SUTEE') <> 0 then
     raise exception 'FAIL: A11 ใบที่ถูกปฏิเสธยังมีผลต่อยอดค่าเผื่อ: %', pg_temp.allowance('SUTEE');
   end if;
@@ -560,7 +569,7 @@ begin
   -- สุธีตอนนี้: ค่าเผื่อ 8,000 · ลูกหนี้ 8,000 → ตัด 8,001 คือเกินค่าเผื่อไป 1 บาท
   perform pg_temp.must_fail_like('A12 ตัดหนี้สูญเกินค่าเผื่อ 1 บาท (authenticated)', format(
     $q$ select pg_temp.mk_writeoff('00000000-0000-0000-0000-0000000a0050', 'SUTEE', 8001) $q$),
-    'ติดลบ');
+    'เอาค่าเผื่อออกมากกว่าค่าเผื่อคงเหลือ');
 
   execute 'reset role';
   raise notice 'ok A12 · ด่านเดียวกันทำงานกับ role authenticated ด้วย (ไม่ได้ผ่านเพราะรันเป็น superuser)';

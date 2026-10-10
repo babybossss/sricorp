@@ -28,7 +28,7 @@ import {
 } from "@/lib/ledger/types";
 import { coa, isCashAccount } from "@/lib/rules/coa";
 import { accrualCheck, clearingSubsFor, findSub, type CashDirection } from "@/lib/rules/tx-rules";
-import { parseAmountOrNull } from "@/lib/format";
+import { money, parseAmountOrNull, signedMoney } from "@/lib/format";
 import type { PendingCashRow } from "@/lib/mock/ledger";
 
 /** สิ่งที่ผู้ใช้กรอกต่อแถว — ทุกช่องเป็นข้อความดิบ ให้ engine เป็นคนตัดสินว่าใช้ได้ไหม */
@@ -122,6 +122,39 @@ export function directionOf(row: Pick<PendingCashRow, "subCode">): CashDirection
       return "both";
     case "none":
       return "none";
+  }
+}
+
+/**
+ * ข้อความของช่อง "ยอดค้าง" — **ครบทั้งห้าคำตอบของ `directionOf`**
+ *
+ * ของเดิมอยู่ใน JSX ของ `confirm-tab.tsx` เป็น ternary สองชั้น
+ *   `dir === "in" ? signedMoney(+) : dir === "out" ? money(−) : money(+)`
+ * → `"none"` · `"both"` · `null` ตกทาง else แล้ว **แสดงเป็นยอดบวก** คือ
+ *   อ่านว่า "เงินจะเข้า" ทั้งที่ไม่มีเงินเคลื่อน / เข้าออกพร้อมกัน / ไม่รู้จักหมวดนี้
+ *   (ขัดกับคอมเมนต์ข้างๆ ที่บอกว่า `dir` ตอบครบทั้งสี่ค่าแล้ว)
+ *
+ * ย้ายมาเป็นฟังก์ชันที่เทสต์เรียกได้โดยตั้งใจ: ตรรกะที่ฝังใน JSX
+ * ไม่มีเทสต์ไหนแตะได้ (vitest ของโปรเจกต์นี้รันแต่ `.test.ts` บน environment node)
+ * → mutation ที่คืน ternary กลับไปจะไม่มีใครจับได้
+ *
+ * ตัวเลขติดลบใช้วงเล็บ · เงินเข้าใส่เครื่องหมายบวก (กติกา UI ของโปรเจกต์)
+ * `both` / `none` / `null` **ห้ามแสดงเป็นยอดบวกเฉยๆ** เพราะทั้งสามไม่ใช่เงินเข้า
+ * และแถวพวกนี้ยืนยันไม่ได้อยู่แล้ว — ข้อความต้องบอกเหตุเป็นคำ ไม่ใช่ปล่อยให้เดาจากตัวเลข
+ */
+export function accruedAmountText(dir: CashDirection | null, amount: number): string {
+  switch (dir) {
+    case "in":
+      return signedMoney(amount);
+    case "out":
+      return money(-amount);
+    case "both":
+      // โอนระหว่างบัญชีตัวเอง — เข้าหนึ่งออกหนึ่ง ไม่มีทิศเดียวให้ใส่เครื่องหมาย
+      return `± ${money(amount)}`;
+    case "none":
+      return `${money(amount)} (ไม่มีเงินเคลื่อน)`;
+    case null:
+      return `${money(amount)} (หมวดนี้ไม่อยู่ในตารางกฎ)`;
   }
 }
 

@@ -574,7 +574,7 @@ begin
         'lines', jsonb_build_array(
           jsonb_build_object('coa_code','1200','debit',-100,'credit',0),
           jsonb_build_object('coa_code','4200','debit',0,'credit',-100))))))
-  $q$, v_own), 'ติดลบ');
+  $q$, v_own), 'มียอดติดลบ (เดบิต');  -- needle ของด่านยอดติดลบเท่านั้น ('ติดลบ' เฉยๆ ตรงกับด่านลูกหนี้/ค่าเผื่อด้วย)
   perform pg_temp.must_fail_like('T10g coa_code ไม่มีในผังบัญชี', format($q$
     select sri_os.fn_post_entry(jsonb_build_object('txn_type_code','inc.rent','doc_date','2026-09-01',
       'transactions', jsonb_build_array(jsonb_build_object('owner_id', %L,

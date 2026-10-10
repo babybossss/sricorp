@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
-import { money, signedMoney, baht } from "@/lib/format";
+import { baht } from "@/lib/format";
 import { CASH_GROUPS, UNASSIGNED_CASH_ROWS, type PendingCashRow } from "@/lib/mock/ledger";
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { useApp, useOrderedBanks } from "@/lib/store";
@@ -17,6 +17,7 @@ import { bankChoices, bankDirectionLabel } from "@/components/form/bank-field";
 import { findSub } from "@/lib/rules/tx-rules";
 import { ClearingPreview } from "./clearing-preview";
 import {
+  accruedAmountText,
   checkRow,
   clearingChoicesOf,
   confirmRows,
@@ -123,7 +124,9 @@ export function ConfirmTab({ posted, onPostedChange }: { posted: PostedMap; onPo
         </Td>
         <Td className="whitespace-nowrap p-[12px_14px] text-ink-600">{r.due}</Td>
         <Td align="right" className="whitespace-nowrap p-[12px_14px]">
-          {dir === "in" ? signedMoney(r.accruedAmount) : dir === "out" ? money(-r.accruedAmount) : money(r.accruedAmount)}
+          {/* ทิศของยอดค้างคิดที่ `accruedAmountText` (switch ครบเคส) — ของเดิมเป็น
+              ternary ที่ทำให้ "none" / "both" / null ตกทาง else แล้วแสดงเป็นยอดบวก */}
+          {accruedAmountText(dir, r.accruedAmount)}
         </Td>
         <Td align="right" className="p-[12px_14px]">
           <Input
