@@ -34,11 +34,35 @@ describe("ทุกหมวดที่เงินเคลื่อนจร�
    */
   const SELF_CLEARING = ["inv.collect_rent", "inv.collect_interest", "fin.pay_payable"];
 
-  it("หมวดที่ cash in/out ต้องมี accrualCoa ยกเว้นสามหมวดที่ล้างยอดในตัวเอง", () => {
-    const missing = movingSubs
-      .filter((s) => !SELF_CLEARING.includes(s.code) && !s.accrualCoa)
-      .map((s) => s.code);
+  /**
+   * หมวดที่ **ตั้งค้างไม่มีความหมายทางบัญชี** จึงต้องไม่มีบัญชีพักเลย (D-106)
+   *
+   * `inc.bad_debt_recovered`: ลูกหนี้ก้อนนั้นถูกตัดออกจากสมุดไปแล้ว สิ่งที่รับรู้ได้
+   * คือ **เงินที่เข้ามาจริง** ไม่ใช่สิทธิ์ที่จะได้รับ · และบัญชีพักของหมวดนี้ไม่ได้
+   * เป็นแค่เรื่องของฟอร์ม: `accrual_coa_code` คือชุดบัญชีที่ด่านระดับบรรทัดฝั่ง DB
+   * ยอมให้หมวดนี้ลงได้ → มีไว้เท่ากับเปิดใบ **Dr 1220 / Cr 4320** ซึ่งปลุกลูกหนี้
+   * ที่ตัดทิ้งแล้วกลับมาเป็นฐานให้ตั้งค่าเผื่อ+ตัดหนี้สูญรอบใหม่ = **ปั๊มเพดานของ
+   * "รับคืนไม่เกินยอดที่ตัด" ขึ้นเองได้เป็นวง** (ผู้ตรวจรันแล้ว 4 รอบ = 150,000)
+   *
+   * เขียนชื่อตรงๆ เหมือน `SELF_CLEARING` โดยตั้งใจ — การเพิ่ม/ถอดต้องเห็นใน diff
+   */
+  const NO_ACCRUAL_MEANING = ["inc.bad_debt_recovered"];
+
+  it("หมวดที่ cash in/out ต้องมี accrualCoa ยกเว้นหมวดที่ตั้งค้างไม่ได้โดยตั้งใจ", () => {
+    const exempt = [...SELF_CLEARING, ...NO_ACCRUAL_MEANING];
+    const missing = movingSubs.filter((s) => !exempt.includes(s.code) && !s.accrualCoa).map((s) => s.code);
     expect(missing, "หมวดที่เงินเคลื่อนจริงแต่ยังไม่มีบัญชีพัก").toEqual([]);
+  });
+
+  it("หมวดที่ตั้งค้างไม่มีความหมายทางบัญชี ต้องไม่มี accrualCoa", () => {
+    for (const code of NO_ACCRUAL_MEANING) {
+      const found = findSub(code);
+      expect(found, `ไม่พบหมวด ${code} ในตารางกฎ`).toBeTruthy();
+      expect(
+        found!.sub.accrualCoa,
+        `${code} มีบัญชีพัก = ด่านฝั่ง DB ยอมให้ลงบรรทัดลูกหนี้ของหมวดนี้ (ช่องปั๊มรายได้ D-106)`
+      ).toBeUndefined();
+    }
   });
 
   it("สามหมวดที่ล้างยอดในตัวเองต้องไม่มี accrualCoa", () => {

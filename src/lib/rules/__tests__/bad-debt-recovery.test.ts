@@ -3,6 +3,7 @@ import {
   TX_TYPES,
   affectsPL,
   allowedSubs,
+  canAccrueFromForm,
   effectsOf,
   findSub,
   impactLines,
@@ -10,6 +11,9 @@ import {
   movesCash,
   type SubCategory,
 } from "../tx-rules";
+import { buildPosting as buildPostingWith } from "@/lib/ledger/posting";
+import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
 import { COA, coa, isCashAccount } from "../coa";
 import {
   PL_LAYOUT,
@@ -100,6 +104,80 @@ describe("มีทางกลับของการตัดหนี้ส�
       (s) => s.cash === "in" && movesCash(s) && coa(s.cr).type === "income" && affectsPL(s) && s.cr === "4320"
     );
     expect(recovery.map((s) => s.code), "ไม่มีหมวดรับคืนหนี้สูญ").toEqual([RECOVERED]);
+  });
+});
+
+/* ================================================================== *
+ * D-106 · **ช่องปั๊มรายได้ไม่จำกัด** ที่ผู้ตรวจรันพิสูจน์แล้ว
+ *
+ * หมวดนี้เคยมี `accrualCoa: "1220"` ซึ่งทำให้ด่านระดับบรรทัดฝั่ง DB
+ * (`fn_assert_line_coa_in_rules` อ่านชุดบัญชีจาก `txn_types` รวม `accrual_coa_code`)
+ * ยอมให้ลงใบ **Dr 1220 / Cr 4320** = ปลุกลูกหนี้ของหนี้ที่ตัดออกจากสมุดไปแล้ว
+ * ขึ้นมาใหม่ **โดยไม่มีเงินเข้าเลย** แล้ววนเป็นวงได้:
+ *   ลูกหนี้ปลอม → ดัน cap ของค่าเผื่อขึ้น → ตั้งค่าเผื่อ → ตัดหนี้สูญ
+ *   → **ยอดตัดหนี้สูญสะสมสูงขึ้น** → cap ของ 4320 สูงขึ้น → รับคืนได้อีก
+ * ผลที่วัดได้: 4 รอบ → `4320` = 150,000 จากหนี้จริง 30,000 · ผ่านทุกด่าน งบดุลสะอาด
+ *
+ * "ตั้งค้างรับของการรับคืนหนี้สูญ" **ไม่มีความหมายทางบัญชี**: ลูกหนี้ก้อนนั้น
+ * ออกจากสมุดไปแล้ว สิ่งที่รับรู้ได้คือ **เงินที่เข้ามาจริง** ไม่ใช่สิทธิ์ที่จะได้รับ
+ * → ถอด `accrualCoa` ออกจากหมวดนี้ (= ด่านฝั่ง DB ไม่ยอมบรรทัด 1220 ของหมวดนี้อีก)
+ *   คู่กับด่านใหม่ใน `20261010000002_recovery_no_accrual.sql` ที่ไม่พึ่งตารางกฎ
+ * ================================================================== */
+describe("รับคืนหนี้สูญสร้างลูกหนี้ไม่ได้ (ปิดช่องปั๊มรายได้ · D-106)", () => {
+  const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
+  const base = {
+    amount: 30000,
+    ownerId: "thanakorn",
+    bankAccountId: "b4",
+    contactId: "c1",
+    typeKey: "income" as const,
+    subCode: RECOVERED,
+  };
+
+  /** **เคสของ mutation S1** — ใส่ `accrualCoa: "1220"` กลับให้หมวดนี้ ต้องแดงที่นี่ */
+  it("ไม่มีบัญชีพักในตารางกฎ — ตารางกฎคือสิ่งที่เปิดบรรทัด 1220 ให้หมวดนี้ที่ฝั่ง DB", () => {
+    const s = sub(RECOVERED);
+    expect(
+      s.accrualCoa,
+      "มีบัญชีพัก = ด่านระดับบรรทัดฝั่ง DB ยอมให้ลง Dr 1220 / Cr 4320 = ปลุกลูกหนี้ที่ตัดไปแล้ว"
+    ).toBeUndefined();
+  });
+
+  it("ติ๊ก “ยังไม่ได้รับเงิน” → ปฏิเสธ พร้อมเหตุผลว่าตั้งค้างไม่มีความหมายทางบัญชี", () => {
+    expect(canAccrueFromForm(sub(RECOVERED))).toBe(false);
+    let message = "";
+    try {
+      buildPosting({ ...base, notYetPaid: true });
+    } catch (e) {
+      expect(e).toBeInstanceOf(PostingError);
+      message = (e as Error).message;
+    }
+    expect(message, "ต้องปฏิเสธ ไม่ใช่ลงเงินสดเงียบๆ").toMatch(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+    // เหตุผลต้องไม่อ่านเหมือน "ช่องที่ยังทำไม่เสร็จ รอคนมาเติม" — มันคือการตัดสินใจ
+    expect(message).toMatch(/ไม่มีความหมายทางบัญชี/);
+  });
+
+  it("รับคืนด้วยเงินเข้าจริงยังลงได้ตามปกติ — Dr เงินสด / Cr 4320 ไม่มีบรรทัดลูกหนี้", () => {
+    const { transactions } = buildPosting(base);
+    const lines = transactions.flatMap((t) => t.lines);
+    expect(lines.map((l) => l.coaCode).sort()).toEqual(["1100", "4320"]);
+    expect(lines.some((l) => RECEIVABLES.includes(l.coaCode)), "ห้ามมีบรรทัดลูกหนี้").toBe(false);
+  });
+
+  /**
+   * กฎทั่วไป ไม่ใช่เคสเดียว: **บัญชีรายได้ที่เป็นทางกลับของการตัดหนี้สูญ**
+   * ห้ามมีหมวดไหนเลยที่พักยอดไว้เป็นลูกหนี้ได้ · หมวดตัวที่สองในอนาคต
+   * (เช่น "หนี้สูญได้รับคืน — ดอกเบี้ย") จะแดงที่นี่ ไม่ใช่ไปเจอตอนมีคนปั๊มรายได้
+   */
+  it("ไม่มีหมวดใดที่แตะ 4320 แล้วมีบัญชีพักเป็นลูกหนี้", () => {
+    const touching = allSubs.filter((s) => s.dr === "4320" || s.cr === "4320");
+    expect(touching.map((s) => s.code), "ต้องมีหมวดให้ทดสอบ").toEqual([RECOVERED]);
+    for (const s of touching) {
+      expect(
+        s.accrualCoa && RECEIVABLES.includes(s.accrualCoa) ? s.code : null,
+        `${s.code} พักยอดเป็นลูกหนี้ได้ = ปั๊มเพดานของ 4320 ขึ้นเองได้`
+      ).toBeNull();
+    }
   });
 });
 
