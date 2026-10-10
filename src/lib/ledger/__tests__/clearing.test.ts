@@ -16,7 +16,7 @@ import { allLines, assertBalanced } from "../posting";
 import { PostingError, type ClearingInput } from "../types";
 import { isCashAccount, coa } from "@/lib/rules/coa";
 import { TX_TYPES, canAccrueFromForm, clearingSubsFor, findSub } from "@/lib/rules/tx-rules";
-import { CLOSED, TEST_RESOLVER } from "./fixture-resolver";
+import { CLOSED, EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 /** ค่าเช่าค้างรับ 12,000 ของธนากร ที่ยังไม่เคยยืนยัน */
 const receivable: ClearingInput = {
@@ -333,13 +333,13 @@ describe("กติกาเอกสารของนิติบุคคล"
   });
 
   it("แนบแล้วผ่าน และได้บรรทัดเดิม", () => {
-    const r = clear({ ...corp, attachments: ["สลิปโอน.pdf"] });
+    const r = clear({ ...corp, attachments: EVIDENCE });
     expect(allLines(r).find((l) => isCashAccount(l.coaCode))?.credit).toBe(8_600);
   });
 
   it("นิติบุคคลต้องมีคู่ค้า", () => {
     const noContact = without(corp, "contactId");
-    expect(message(() => clear({ ...noContact, attachments: ["สลิปโอน.pdf"] }))).toMatch(/คู่ค้า/);
+    expect(message(() => clear({ ...noContact, attachments: EVIDENCE }))).toMatch(/คู่ค้า/);
   });
 
   it("draft ยังไม่บังคับหลักฐาน (ไฟล์แนบไม่เปลี่ยนคู่บัญชี) แต่บังคับบัญชีและยอด", () => {

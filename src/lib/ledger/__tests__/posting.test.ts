@@ -8,7 +8,7 @@ import {
   allLines,
 } from "../posting";
 import { PostingError, type PostingInput } from "../types";
-import { TEST_RESOLVER } from "./fixture-resolver";
+import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 /**
  * engine รับ resolver เป็นพารามิเตอร์ (ไม่มี default ที่ชี้ไปข้อมูลจำลอง)
@@ -438,7 +438,7 @@ describe("โอนข้าม owner ต้องระบุลักษณะ
       transferToBankAccountId: "b1",
       intercompanyNature: "loan",
       // ปลายทางเป็นนิติบุคคล ขาของฝ่ายนั้นจึงต้องมีหลักฐานและคู่ค้าด้วย
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
       contactId: "c1",
     });
     expect(r.transactions).toHaveLength(2);
@@ -486,7 +486,7 @@ describe("โอนข้าม owner ต้องระบุลักษณะ
       amount: 100_000,
       transferToBankAccountId: "b4",
       intercompanyNature: "dividend",
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
       contactId: "c1",
     });
     const payer = r.transactions.find((t) => t.ownerId === "corp")!;
@@ -523,7 +523,7 @@ describe("Corporate strict — ดักก่อนให้ผู้ใช้�
       subCode: "inc.rent",
       assetId: "rent1",
       contactId: "c1",
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
     });
     assertBalanced(allLines(r));
   });
@@ -552,7 +552,7 @@ describe("หมวดกระแสเงินสดของรายกา�
       amount: 500_000,
       transferToBankAccountId: "b4",
       intercompanyNature: "loan",
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
       contactId: "c1",
     });
 
@@ -581,7 +581,7 @@ describe("หมวดกระแสเงินสดของรายกา�
       amount: 1_000_000,
       transferToBankAccountId: "b1",
       intercompanyNature: "capital",
-      attachments: ["doc.pdf"],
+      attachments: EVIDENCE,
       contactId: "c1",
     });
     const payer = r.transactions.find((t) => t.ownerId === "thanakorn")!;
@@ -599,7 +599,7 @@ describe("หมวดกระแสเงินสดของรายกา�
       amount: 100_000,
       transferToBankAccountId: "b4",
       intercompanyNature: "dividend",
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
       contactId: "c1",
     });
     const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
@@ -616,7 +616,7 @@ describe("รับคืนเงินต้นพร้อมดอกเบ�
       subCode: "inv.srr_redeem",
       assetId: "th_b",
       contactId: "c4",
-      attachments: ["slip.pdf"],
+      attachments: EVIDENCE,
       amount: 1_100_000,
       repayment: { principal: 1_000_000, interest: 100_000 },
     });
@@ -645,7 +645,7 @@ describe("รับคืนเงินต้นพร้อมดอกเบ�
         subCode: "inv.srr_redeem",
         assetId: "th_b",
         contactId: "c4",
-        attachments: ["slip.pdf"],
+        attachments: EVIDENCE,
         amount: 100_000,
         repayment: { principal: 0, interest: 100_000 },
       })
@@ -681,12 +681,12 @@ describe("พรีวิวผ่อนได้ แต่ทางที่บ
 
   it("นิติบุคคลยังไม่แนบไฟล์: บันทึกจริงไม่ได้", () => {
     expect(() => buildPosting(corpSale)).toThrow(/ต้องแนบหลักฐาน/);
-    expect(() => buildPosting({ ...corpSale, attachments: ["deed.pdf"] })).not.toThrow();
+    expect(() => buildPosting({ ...corpSale, attachments: EVIDENCE })).not.toThrow();
   });
 
   it("นิติบุคคลไม่ระบุคู่ค้า: บันทึกจริงไม่ได้แม้แนบไฟล์แล้ว", () => {
     expect(() =>
-      buildPosting({ ...corpSale, contactId: undefined, attachments: ["deed.pdf"] })
+      buildPosting({ ...corpSale, contactId: undefined, attachments: EVIDENCE })
     ).toThrow(/ต้องระบุคู่ค้า/);
   });
 
@@ -702,7 +702,7 @@ describe("พรีวิวผ่อนได้ แต่ทางที่บ
     expect(buildPostingDraft(crossToCorp).transactions).toHaveLength(2);
     expect(() => buildPosting(crossToCorp)).toThrow(/ต้องแนบหลักฐาน/);
     expect(() =>
-      buildPosting({ ...crossToCorp, attachments: ["contract.pdf"], contactId: "c3" })
+      buildPosting({ ...crossToCorp, attachments: EVIDENCE, contactId: "c3" })
     ).not.toThrow();
   });
 

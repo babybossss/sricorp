@@ -20,6 +20,8 @@ import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
 import { JournalPreview } from "./journal-preview";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { coa } from "@/lib/rules/coa";
+import { hasRealEvidence } from "@/lib/storage/evidence";
+import { isAttachmentRef, safeDisplayName } from "@/lib/storage/path";
 import { money, parseAmount } from "@/lib/format";
 import type { TxDraft, TxFormApi } from "./use-tx-form";
 
@@ -510,7 +512,10 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
     { k: "โปรเจค (ทรัพย์)", v: asset?.name ?? "—" },
   ];
 
-  // รอบนี้ยังไม่มีที่เก็บไฟล์จริง — จำลองการแนบเพื่อให้เห็นว่ากติกานิติบุคคลทำงานจริง
+  // รอบนี้ฟอร์มยังไม่ได้ต่อ Supabase Storage — ปุ่มนี้แค่จำลองการ "เลือกไฟล์"
+  // **ไม่ได้อัปโหลดจริง** จึงยังไม่ใช่หลักฐานตามกติกา (D-095) และนิติบุคคลยังบันทึกไม่ได้
+  // ห้าม "สร้าง path หน้าตาเหมือนของจริง" ให้ผ่านด่าน — นั่นคือการทำให้สิ่งที่ผู้ใช้เห็น
+  // ต่างจากสิ่งที่ DB ยอมรับ (ซึ่งจะไปล้มตอน post แทนที่จะรู้ตัวที่นี่)
   const addMockFile = () =>
     patch({ attachments: [...draft.attachments, `หลักฐาน-${draft.attachments.length + 1}.pdf`] });
   const removeFile = (i: number) =>
@@ -546,14 +551,18 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
                 onClick={() => removeFile(i)}
                 className="flex min-h-[44px] items-center gap-2 rounded border border-line bg-surface px-3 text-sm"
               >
-                📎 {f} <span className="text-ink-400">เอาออก</span>
+                📎 {isAttachmentRef(f) ? `ไฟล์หลักฐาน ${i + 1}` : safeDisplayName(f)}{" "}
+                <span className="text-ink-400">เอาออก</span>
               </button>
             ))}
           </div>
         ) : null}
-        {isCorp && draft.attachments.length === 0 ? (
+        {/* ถามกฎชุดเดียวกับ engine (hasRealEvidence) ไม่ใช่นับความยาวอาร์เรย์ —
+            ไม่งั้นคำเตือนจะหายไปหลังกด "เลือกไฟล์" ทั้งที่ปุ่มบันทึกยังถูกกั้นอยู่ */}
+        {isCorp && !hasRealEvidence(draft.attachments, { ownerId: draft.holderId }) ? (
           <div className="mt-3 text-sm leading-6 text-warn-fg">
-            {holder?.name} เป็นนิติบุคคล — ต้องมีไฟล์หลักฐานอย่างน้อยหนึ่งไฟล์ก่อนบันทึก
+            {holder?.name} เป็นนิติบุคคล — ต้องมี <b>ไฟล์ที่อัปโหลดขึ้นระบบจริง</b> อย่างน้อยหนึ่งไฟล์ก่อนบันทึก
+            {draft.attachments.length ? " (ไฟล์ที่เลือกไว้ยังเป็นการจำลอง ยังไม่ได้อัปโหลด)" : null}
           </div>
         ) : null}
       </div>

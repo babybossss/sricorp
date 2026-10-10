@@ -361,10 +361,12 @@ begin
   if n <> 0 then raise exception 'FAIL: V13 แปะ path ของ SUTEE ในร่าง SRI_CORP แล้วอ่านได้'; end if;
 
   -- V14 รายการที่ created_by ไม่ใช่ผู้อัปโหลด และไม่มีร่างต้นทาง → ลิงก์ไม่มีผลกับ mgmt
+  --     อัปโหลดไฟล์ก่อนลงรายการ: SRI_CORP เป็น corporate_strict ซึ่งตั้งแต่ 20261010000000
+  --     ต้องมีไฟล์จริงอยู่แล้วตอนลงรายการ (D-095) · ลำดับนี้ไม่เปลี่ยนสิ่งที่ V14 ทดสอบ
+  perform pg_temp.put('staff2', 'attachments', pg_temp.pth('SRI_CORP', 'staff2', 'f_forged'));
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, created_by)
   values ('00000000-0000-0000-0000-0000000057e3', pg_temp.own('SRI_CORP'), 'inc.other', current_date,
           array[pg_temp.pth('SRI_CORP', 'staff2', 'f_forged')], pg_temp.su('mgr'));
-  perform pg_temp.put('staff2', 'attachments', pg_temp.pth('SRI_CORP', 'staff2', 'f_forged'));
   perform pg_temp.expect('V14a ผู้อัปโหลดเห็นไฟล์ตัวเอง', pg_temp.sees('staff2', pg_temp.pth('SRI_CORP', 'staff2', 'f_forged'))::text, 'true');
   perform pg_temp.expect('V14b รายการที่ created_by ≠ ผู้อัปโหลด ไม่ใช่ทางเปิดไฟล์ (mgmt)',
     pg_temp.sees('mgmt', pg_temp.pth('SRI_CORP', 'staff2', 'f_forged'))::text, 'false');

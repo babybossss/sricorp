@@ -10,11 +10,16 @@
 --
 -- ไล่ "ถอดการแก้ออกแล้วต้องแดง" (mutation ที่ต้องถูกจับได้):
 --   Q1 ถอดการเช็ค storage.objects (เหลือแค่รูปแบบ path)   → A4 · A5b · X3
---   Q2 ถอดการเช็ค owner ใน path = new.owner_id            → A5 · F3 · X4
+--   Q2 ถอดการเช็ค owner ใน path = new.owner_id            → A5 · S3 · X4
 --   Q3 "ไม่มีสคีมา storage" = ผ่าน                          → Z1  (ทดสอบด้วยการ drop schema จริง)
---   Q4 กลับไปนับ cardinality(attachments) (บั๊ก D-095)     → A3 · A4 · A5 · S1
---   Q5 ข้อยกเว้นใบกลับรายการครอบทุกใบ ไม่ใช่แค่ที่พิสูจน์ได้  → R3 (ปิด trg_assert_reverse_link
---      เพื่อแยกด่านออกจากกัน — ข้อยกเว้นต้องแน่นด้วยตัวเอง ไม่พึ่งลำดับ trigger)
+--   Q4 กลับไปนับ cardinality(attachments) (บั๊ก D-095)     → A3 · A4 · A5 · S1 · X5
+--
+-- หมายเหตุลำดับ migration ของ harness: scripts/test-storage-local.sh รัน UNDER_TEST
+--   (ซึ่งมี 20261007000000 ที่ create or replace fn_corporate_requires_evidence ตัวเก่า)
+--   **ทับ** 20261010000000 ทีหลัง · ด่านที่ยืนยันกติกาตรงนี้จึงเป็น
+--   trg_corporate_evidence_real_files ที่ไฟล์เก่าไม่รู้จัก (X6) — ดูหัวไฟล์ migration
+--   Q5 ข้อยกเว้นใบกลับรายการครอบทุกใบ ไม่ใช่แค่ที่พิสูจน์ได้  → R3 · R3b · R3c · R5
+--      (ถามฟังก์ชันตัดสินตรงๆ — ข้อยกเว้นต้องแน่นด้วยตัวเอง ไม่พึ่งว่า trigger อีกตัวดักให้)
 --
 -- เคส "ข้อมูลขาด" (บทเรียนข้อ 3): attachments ว่าง · มี null · สตริงว่าง · ' ' · path ที่มี '..' ·
 --   owner ใน path เป็น uuid ที่ไม่มีผู้ถือ · ไฟล์อยู่ bucket อื่น · uuid ตัวพิมพ์ใหญ่ · นามสกุลนอกรายการ
@@ -179,13 +184,22 @@ end $$;
 do $$
 declare
   real1 text := pg_temp.pth('SRI_CORP', 'maker', 'real1');
+  corp  uuid := pg_temp.own('SRI_CORP');
   v_orig uuid;
+  v_orig2 uuid;
   v_other uuid;
 begin
-  -- ต้นฉบับ: มีหลักฐานจริงตามกติกา
+  -- ต้นฉบับสองใบ: มีหลักฐานจริงตามกติกา (ใบที่สองไว้ทดสอบระดับฟังก์ชัน
+  -- เพราะ fn_reverse_link_ok ยอมให้ต้นฉบับหนึ่งใบมีใบกลับรายการที่ยังไม่ void ได้ใบเดียว)
   insert into sri_os.transactions(owner_id, txn_type_code, doc_date, attachments, created_by)
-  values (pg_temp.own('SRI_CORP'), 'inc.other', current_date, array[real1], pg_temp.su('maker'))
+  values (corp, 'inc.other', current_date, array[real1], pg_temp.su('maker'))
   returning id into v_orig;
+  insert into sri_os.transactions(owner_id, txn_type_code, doc_date, attachments, created_by)
+  values (corp, 'inc.other', current_date, array[real1], pg_temp.su('maker'))
+  returning id into v_orig2;
+  insert into sri_os.transactions(owner_id, txn_type_code, doc_date, created_by)
+  values (pg_temp.own('SUTEE'), 'inc.other', current_date, pg_temp.su('maker'))
+  returning id into v_other;
 
   -- R1 ใบกลับรายการที่พิสูจน์ได้ + ไม่มีไฟล์แนบ → ยังผ่าน (หลักฐานของมันคือใบต้นฉบับ)
   perform pg_temp.expect('R1 reverse ที่พิสูจน์ได้ + ไม่มีไฟล์แนบ',
@@ -195,18 +209,20 @@ begin
   perform pg_temp.expect('R2 reverse ที่ไม่มี reverses_id ถูกปฏิเสธที่ด่านลิงก์',
     left(pg_temp.ins('SRI_CORP', '{}', 'reverse', null), 7), 'error ·');
 
-  -- R3 แยกด่านออกจากกัน: ปิด trg_assert_reverse_link แล้วลองอีกครั้ง
-  --    ข้อยกเว้นหลักฐานต้องเรียก fn_reverse_link_ok เองเสมอ ไม่ใช่เชื่อคำว่า 'reverse'
-  --    (ถ้ายกเว้นทุกใบที่เขียนว่า reverse = ทางลัดข้ามกติกานิติบุคคล)
-  alter table sri_os.transactions disable trigger trg_assert_reverse_link;
-  perform pg_temp.expect('R3 reverse ที่พิสูจน์ไม่ได้ + ไม่มีไฟล์แนบ → ปฏิเสธเพราะหลักฐาน',
-    pg_temp.ins('SRI_CORP', '{}', 'reverse', null), 'denied');
-  insert into sri_os.transactions(owner_id, txn_type_code, doc_date, created_by)
-  values (pg_temp.own('SUTEE'), 'inc.other', current_date, pg_temp.su('maker'))
-  returning id into v_other;
-  perform pg_temp.expect('R3b reverse ชี้ไปรายการของผู้ถืออื่น (พิสูจน์ไม่ได้)',
-    pg_temp.ins('SRI_CORP', '{}', 'reverse', v_other), 'denied');
-  alter table sri_os.transactions enable trigger trg_assert_reverse_link;
+  -- R3-R5 ข้อยกเว้นต้องแน่น **ด้วยตัวเอง** ไม่ใช่เพราะ trigger อีกตัวดักให้
+  --   (ถ้ายกเว้นทุกใบที่เขียนว่า 'reverse' = ทางลัดข้ามกติกานิติบุคคล — mutation Q5)
+  --   ทดสอบที่ฟังก์ชันตัดสินตรงๆ เพราะปิด trg_assert_reverse_link กลางธุรกรรมไม่ได้
+  --   (ALTER TABLE ติด pending trigger events ของ constraint trigger ที่เลื่อนไว้)
+  perform pg_temp.expect('R3 reverse ที่ไม่มี reverses_id → ไม่ยกเว้น',
+    sri_os.fn_corporate_evidence_ok(gen_random_uuid(), corp, 'reverse', null, '{}')::text, 'false');
+  perform pg_temp.expect('R3b reverse ชี้ไปรายการของผู้ถืออื่น → ไม่ยกเว้น',
+    sri_os.fn_corporate_evidence_ok(gen_random_uuid(), corp, 'reverse', v_other, '{}')::text, 'false');
+  perform pg_temp.expect('R3c reverse ชี้ไปรายการที่ไม่มีอยู่ → ไม่ยกเว้น',
+    sri_os.fn_corporate_evidence_ok(gen_random_uuid(), corp, 'reverse', gen_random_uuid(), '{}')::text, 'false');
+  perform pg_temp.expect('R4 reverse ที่พิสูจน์ได้ → ยกเว้น (ข้อยกเว้นเดิมต้องไม่หาย)',
+    sri_os.fn_corporate_evidence_ok(gen_random_uuid(), corp, 'reverse', v_orig2, '{}')::text, 'true');
+  perform pg_temp.expect('R5 ลิงก์ถูกแต่ source ไม่ใช่ reverse → ไม่ยกเว้น',
+    sri_os.fn_corporate_evidence_ok(gen_random_uuid(), corp, 'manual', v_orig2, '{}')::text, 'false');
 
   raise notice 'ok R · ข้อยกเว้นเดิมของใบกลับรายการยังอยู่ · และครอบแค่ใบที่พิสูจน์ได้';
 end $$;
@@ -247,6 +263,7 @@ do $$
 declare
   v_re text := sri_os.fn_attachment_path_re();
   v_pol text;
+  n int;
 begin
   select coalesce(with_check, '') into v_pol from pg_policies
    where schemaname = 'storage' and tablename = 'objects' and policyname = 'attachments_insert';
@@ -258,16 +275,31 @@ begin
       v_re, left(v_pol, 300);
   end if;
 
-  -- X3/X4 โครงสร้างของกติกา: ต้องถาม storage.objects และต้องเทียบ owner — ไม่ใช่นับความยาวอาร์เรย์
+  -- X2b bucket ที่ถามหาไฟล์ ต้องเป็น bucket เดียวกับที่ policy คุม
+  if position('''attachments''' in v_pol) = 0 then
+    raise exception 'FAIL: X2b policy ไม่ได้คุม bucket attachments — ชื่อ bucket อาจเพี้ยนจากกติกาหลักฐาน';
+  end if;
+
+  -- X3/X4 โครงสร้างของกติกา: ต้องถาม storage.objects และต้องเทียบ owner ใน path
   if (select prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
        where n.nspname = 'sri_os' and p.proname = 'fn_real_evidence_refs') not like '%storage.objects%' then
     raise exception 'FAIL: X3 กติกาหลักฐานไม่ได้ถาม storage.objects (D-095 กลับมา)';
   end if;
   if (select prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'sri_os' and p.proname = 'fn_corporate_requires_evidence') like '%cardinality(new.attachments)%' then
-    raise exception 'FAIL: X4 ด่าน corporate_strict กลับไปนับ cardinality(attachments) (บั๊กเดิมของ D-095)';
+       where n.nspname = 'sri_os' and p.proname = 'fn_real_evidence_refs') not like '%p_owner%' then
+    raise exception 'FAIL: X4 กติกาหลักฐานไม่ได้เทียบ owner ใน path กับผู้ถือของรายการ';
   end if;
-  raise notice 'ok X · กฎรูปแบบ path ชุดเดียวกับ policy · ด่านถาม storage.objects จริง';
+  -- X5 การตัดสินต้องอยู่ที่ฟังก์ชันเดียว และต้องไปจบที่การนับไฟล์จริง
+  if (select prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'sri_os' and p.proname = 'fn_corporate_evidence_ok') not like '%fn_real_evidence_count%' then
+    raise exception 'FAIL: X5 fn_corporate_evidence_ok ไม่ได้นับไฟล์จริง (บั๊กเดิมของ D-095)';
+  end if;
+  -- X6 ด่านที่ไฟล์เก่า replay ทับไม่ได้ ต้องยังอยู่ — harness รัน 20261007000000 ทับทีหลังจริง
+  select count(*) into n from pg_trigger t
+   where t.tgrelid = 'sri_os.transactions'::regclass and not t.tgisinternal
+     and t.tgname = 'trg_corporate_evidence_real_files';
+  if n <> 1 then raise exception 'FAIL: X6 ไม่พบ trigger trg_corporate_evidence_real_files (พบ %)', n; end if;
+  raise notice 'ok X · กฎรูปแบบ path ชุดเดียวกับ policy · ด่านถาม storage.objects จริง · ด่านที่ replay ทับไม่ได้ยังอยู่';
 end $$;
 
 -- ---------- Z · ตรวจไม่ได้ = ปฏิเสธ (ห้ามผ่านเงียบๆ) ----------

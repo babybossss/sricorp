@@ -29,7 +29,7 @@ import { previewPosting } from "../preview";
 import { PostingError, type PostingInput } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
 import { TX_TYPES, canAccrueFromForm, movesCash } from "@/lib/rules/tx-rules";
-import { TEST_RESOLVER } from "./fixture-resolver";
+import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 /** fixture ของ engine เท่านั้น — ไม่ผูกกับข้อมูลจำลองของแอป */
 const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
@@ -127,7 +127,7 @@ describe("ตั้งค้างรับ-ค้างจ่ายโดยไ
       notYetPaid: true,
     });
     expect(() => buildPosting(corp)).toThrow(/ต้องแนบหลักฐาน/);
-    const ok = buildPosting({ ...corp, attachments: ["บิลค่าน้ำไฟ.pdf"] });
+    const ok = buildPosting({ ...corp, attachments: EVIDENCE });
     expect(allLines(ok).some((l) => isCashAccount(l.coaCode))).toBe(false);
   });
 });

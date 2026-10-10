@@ -16,6 +16,23 @@
 
 import type { BankInfo, LedgerResolver, OwnerInfo } from "../types";
 
+/**
+ * ไฟล์หลักฐานที่ "อัปโหลดจริงแล้ว" สำหรับเคสที่ต้องผ่านด่าน corporate_strict (D-095)
+ *
+ * ด่านนับเฉพาะ **path ของไฟล์ใน Storage** (`<owner_id>/<uploader_id>/<uuid>.<ext>`)
+ * ชื่อไฟล์อย่าง `"slip.pdf"` ใช้ไม่ได้อีก — เคสที่ตั้งใจให้ "แนบของปลอม" ใช้ `FAKE_EVIDENCE`
+ *
+ * owner ใน path ไม่ตรงกับ `"corp"` ของ fixture ชุดนี้โดยตั้งใจไม่ได้ (รหัสสั้นไม่ใช่ uuid)
+ * ด่านจึงเทียบ owner ไม่ได้ตรงนี้ — เคสที่ทดสอบการเทียบ owner อยู่ใน
+ * `evidence-real-files.test.ts` ซึ่งใช้ resolver ที่ผู้ถือเป็น uuid เหมือนใน DB
+ */
+export const EVIDENCE = [
+  "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/cccccccc-3333-4333-8333-cccccccccccc/dddddddd-4444-4444-8444-dddddddddddd.pdf",
+];
+
+/** ชื่อไฟล์ที่ผู้ใช้พิมพ์เอง — ไม่ใช่หลักฐานตามกติกา (D-095) */
+export const FAKE_EVIDENCE = ["สลิป.jpg"];
+
 const OWNERS: OwnerInfo[] = [
   { id: "family", name: "SRI Family (รวมทุกชื่อ)", policy: "corporate_strict", selectableAsHolder: false },
   { id: "corp", name: "SRI Corporation", policy: "corporate_strict", selectableAsHolder: true },

@@ -25,6 +25,7 @@ import { buildPosting, buildPostingDraft } from "@/lib/ledger/posting";
 import { previewPosting } from "@/lib/ledger/preview";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { MOCK_RESOLVER } from "../resolver";
+import { mockEvidenceRef } from "../ledger";
 import { BANKS } from "../banks";
 import { useApp } from "@/lib/store";
 
@@ -48,7 +49,7 @@ const corpExpense: PostingInput = {
   bankAccountId: "b2",
   assetId: "rent2",
   contactId: "c2",
-  attachments: ["ใบเสร็จ.pdf"],
+  attachments: [mockEvidenceRef(1)],
 };
 
 /** store เป็นสถานะระดับโมดูล — คืนค่าเดิมทุกเคส ไม่ให้เคสหนึ่งรบกวนอีกเคส */

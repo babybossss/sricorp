@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { APPROVALS, type Approval } from "@/lib/mock/ledger";
+import { APPROVALS, mockEvidenceRef, type Approval } from "@/lib/mock/ledger";
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { buildPostingDraft } from "@/lib/ledger/posting";
 import { previewApproval, planBulkApproval, approvalInput } from "../approval-preview";
@@ -105,13 +105,13 @@ describe("previewApproval — ปุ่มอนุมัติกั้นด�
   });
 
   it("นิติบุคคลมีหลักฐาน → อนุมัติได้", () => {
-    const r = previewApproval({ ...a4, attachments: ["ใบเสร็จ.pdf"] }, MOCK_RESOLVER);
+    const r = previewApproval({ ...a4, attachments: [mockEvidenceRef(9)] }, MOCK_RESOLVER);
     expect(r.canApprove).toBe(true);
     expect(r.blockedReason).toBeNull();
   });
 
   it("นิติบุคคลมีหลักฐานแต่ไม่มีคู่ค้า → อนุมัติไม่ได้", () => {
-    const r = previewApproval({ ...a4, attachments: ["ใบเสร็จ.pdf"], contactId: undefined }, MOCK_RESOLVER);
+    const r = previewApproval({ ...a4, attachments: [mockEvidenceRef(9)], contactId: undefined }, MOCK_RESOLVER);
     expect(r.canApprove).toBe(false);
     expect(r.blockedReason).toContain("คู่ค้า");
   });

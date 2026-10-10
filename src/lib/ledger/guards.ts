@@ -10,6 +10,7 @@
  */
 
 import { isCashAccount } from "@/lib/rules/coa";
+import { hasRealEvidence } from "@/lib/storage/evidence";
 import {
   TX_TYPES,
   findSub,
@@ -252,6 +253,11 @@ export type EvidenceInput = { attachments?: string[]; contactId?: string };
  * Corporate strict — ดักตั้งแต่ที่นี่เพื่อให้ผู้ใช้เห็นข้อความที่เข้าใจได้
  * (DB มี trigger กันอีกชั้นอยู่แล้ว ที่นี่ไม่ได้แทนที่ แต่ช่วยให้รู้ตัวก่อนกดส่ง)
  *
+ * **หลักฐาน = ไฟล์ที่อัปโหลดขึ้น Storage จริง ไม่ใช่จำนวนช่องใน `attachments` (D-095)**
+ * นับด้วย `hasRealEvidence()` ซึ่งใช้กฎรูปแบบ path ชุดเดียวกับ DB และกันการยืมไฟล์
+ * ของผู้ถืออื่นมาอ้าง · ข้อ "มีไฟล์จริงไหม" ตรวจได้ที่ DB ที่เดียว ที่นี่จึงเป็นด่านข้อความ
+ * **ไม่ใช่ตัวอนุญาต** — ปุ่มบันทึกยังต้องกั้นด้วย `buildPosting()` และ DB ยังปฏิเสธเองอีกชั้น
+ *
  * แยกออกจากการสร้างบรรทัดโดยตั้งใจ: เอกสารหลักฐานไม่ได้เปลี่ยนคู่บัญชี
  * พรีวิวจึงแสดงบรรทัดได้ทั้งที่ยังไม่แนบไฟล์ แต่ตัวจริงจะไม่ยอมปล่อยผ่าน
  */
@@ -262,9 +268,10 @@ export function assertEvidencePolicy(
 ): void {
   const owner = ownerOf(resolve, ownerId);
   if (owner.policy !== "corporate_strict") return;
-  if ((input.attachments?.length ?? 0) === 0) {
+  if (!hasRealEvidence(input.attachments, { ownerId })) {
     throw new PostingError(
-      `${owner.name} เป็นนิติบุคคล ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้/สัญญา) ก่อนบันทึก`
+      `${owner.name} เป็นนิติบุคคล ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้/สัญญา) ที่อัปโหลดขึ้น Storage` +
+        " จริงของผู้ถือรายนี้อย่างน้อยหนึ่งไฟล์ก่อนบันทึก — ชื่อไฟล์ที่พิมพ์เองหรือไฟล์ของผู้ถืออื่นใช้แทนไม่ได้"
     );
   }
   if (!input.contactId) {

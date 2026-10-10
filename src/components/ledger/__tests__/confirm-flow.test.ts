@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { CASH_GROUPS, UNASSIGNED_CASH_ROWS, type PendingCashRow } from "@/lib/mock/ledger";
+import { CASH_GROUPS, UNASSIGNED_CASH_ROWS, mockEvidenceRef, type PendingCashRow } from "@/lib/mock/ledger";
 import { MOCK_RESOLVER } from "@/lib/mock/resolver";
 import { TX_TYPES, accrualCheck } from "@/lib/rules/tx-rules";
 import {
@@ -78,7 +78,7 @@ describe("ปุ่มยืนยันกั้นด้วย buildClearing()
     expect(confirm([cc3]).ok).toBe(false);
   });
   it("แนบสลิปแล้ว → ยืนยันได้", () => {
-    const d = draft(cc3, { slips: ["สลิป-cc3-1.pdf"] });
+    const d = draft(cc3, { slips: [mockEvidenceRef(11)] });
     expect(check(cc3, d).canConfirm).toBe(true);
     expect(confirm([cc3], { cc3: d }).ok).toBe(true);
   });
@@ -157,7 +157,7 @@ describe("ยืนยันซ้ำและยืนยันบางส่�
   });
 
   it("ยืนยันบางส่วน แล้วยืนยันส่วนที่เหลือ → ได้ และรวมกันไม่เกินยอดค้าง", () => {
-    const slip = ["สลิป-1.pdf"];
+    const slip = [mockEvidenceRef(12)];
     const part1 = confirm([cc3], { cc3: draft(cc3, { slips: slip, amount: "30,000.00" }) });
     if (!part1.ok) throw new Error("ส่วนแรกต้องผ่าน");
     expect(part1.posted.cc3.map((c) => c.amount)).toEqual([30_000]);
@@ -304,10 +304,10 @@ describe("ทิศทางรับ-จ่ายอ่านจากตาร
 
 describe("ข้อมูลที่กติกาใช้ต้องเดินทางไปกับ input", () => {
   it("ส่งทรัพย์ คู่ค้า หลักฐาน และเลขอ้างอิงตามตัวรายการ", () => {
-    const input = clearingInputOf(cc1, draft(cc1, { slips: ["สลิป-1.pdf"] }), fresh());
+    const input = clearingInputOf(cc1, draft(cc1, { slips: [mockEvidenceRef(12)] }), fresh());
     expect(input.assetId).toBe(cc1.assetId);
     expect(input.contactId).toBe(cc1.contactId);
-    expect(input.attachments).toEqual([...(cc1.attachments ?? []), "สลิป-1.pdf"]);
+    expect(input.attachments).toEqual([...(cc1.attachments ?? []), mockEvidenceRef(12)]);
     expect(input.clearingRef).toBe("cc1-clr-1");
     expect(input.typeKey).toBe(cc1.typeKey);
     expect(input.subCode).toBe(cc1.subCode);

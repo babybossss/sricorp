@@ -1,6 +1,19 @@
 import type { TxTypeKey } from "@/lib/rules/tx-rules";
 import type { PostedClearing } from "@/lib/ledger/types";
 
+/**
+ * ไฟล์หลักฐานในข้อมูลจำลอง — ต้องเป็น **path ของไฟล์ใน Storage** เหมือนของจริง
+ * (`<owner_id>/<uploader_id>/<uuid>.<ext>` ดู `src/lib/storage/path.ts`)
+ *
+ * ตั้งแต่ D-095 ด่าน corporate_strict นับเฉพาะไฟล์ที่อัปโหลดจริง ชื่อไฟล์อย่าง
+ * `"สลิป.jpg"` จึงไม่ใช่หลักฐานอีก · แถวจำลองเหล่านี้สมมุติว่า "อัปโหลดไว้ก่อนแล้ว"
+ * ชื่อสำหรับแสดงไม่ได้เก็บไว้ที่ไหน (ตั้งใจ) หน้าจอจึงแสดงเป็น "ไฟล์หลักฐาน n"
+ */
+const MOCK_REF_OWNER = "00000000-0000-4000-8000-000000000001";
+const MOCK_REF_UPLOADER = "00000000-0000-4000-8000-000000000002";
+export const mockEvidenceRef = (n: number): string =>
+  `${MOCK_REF_OWNER}/${MOCK_REF_UPLOADER}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}.pdf`;
+
 export type LedgerStatus = "wait" | "saved" | "done" | "late" | "off";
 
 export type LedgerRow = {
@@ -100,8 +113,8 @@ export const CASH_GROUPS: {
     match: "ตรงกัน",
     matched: true,
     rows: [
-      { id: "cc1", name: "ดอกเบี้ยขายฝาก งวด 9", sub: "ทาวน์โฮมตัวอย่าง B", ownerId: "corp", typeKey: "income", subCode: "inc.interest_srr", accruedAmount: 36000, postedClearings: [], assetId: "th_b", contactId: "c2", bankAccountId: "b1", attachments: ["ตารางงวดสัญญาขายฝาก.pdf"], due: "16/09/2026", actual: "36,000.00", date: "16/09/2026", checked: true },
-      { id: "cc2", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "SRI Corporation", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", bankAccountId: "b1", attachments: ["บิลค่าน้ำไฟ-ก.ย..pdf"], due: "15/09/2026", actual: "8,600.00", date: "15/09/2026", checked: true },
+      { id: "cc1", name: "ดอกเบี้ยขายฝาก งวด 9", sub: "ทาวน์โฮมตัวอย่าง B", ownerId: "corp", typeKey: "income", subCode: "inc.interest_srr", accruedAmount: 36000, postedClearings: [], assetId: "th_b", contactId: "c2", bankAccountId: "b1", attachments: [mockEvidenceRef(1)], due: "16/09/2026", actual: "36,000.00", date: "16/09/2026", checked: true },
+      { id: "cc2", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "SRI Corporation", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", bankAccountId: "b1", attachments: [mockEvidenceRef(2)], due: "15/09/2026", actual: "8,600.00", date: "15/09/2026", checked: true },
       // ตั้งใจไม่มีหลักฐาน — นิติบุคคลต้องแนบสลิปก่อนจึงยืนยันได้ ห้ามเติมให้ผ่าน
       { id: "cc3", name: "ค่าเช่าอาคารพาณิชย์ E", sub: "SRI Corporation", ownerId: "corp", typeKey: "income", subCode: "inc.rent", accruedAmount: 45000, postedClearings: [], assetId: "rent3", contactId: "c2", bankAccountId: "b1", due: "05/09/2026", actual: "30,000.00", date: "12/09/2026" },
     ],
@@ -166,13 +179,13 @@ export type Approval = {
 // a4 (นิติบุคคล) ตั้งใจไม่มีหลักฐาน — ให้เห็นว่าระบบปฏิเสธจริง ห้ามเติมให้ผ่าน
 // a3 (ฝั่งบุคคล) ไม่มีหลักฐานโดยปกติ และต้องอนุมัติได้
 export const APPROVALS: Approval[] = [
-  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026", assetId: "rent2", contactId: "c2", bankAccountId: "b1", attachments: ["ใบเสร็จซ่อมแอร์.pdf"] },
-  { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026", assetId: "rent2", contactId: "c2", notYetPaid: true, attachments: ["บิลค่าน้ำไฟ-ก.ย..pdf"] },
+  { id: "a1", typeKey: "expense", subCode: "exp.repair", detail: "ค่าซ่อมแอร์ 2 ห้อง", source: "คีย์มือ · คอนโดตัวอย่าง A", ownerId: "corp", amount: -12400, by: "มาวิน", date: "10/09/2026", assetId: "rent2", contactId: "c2", bankAccountId: "b1", attachments: [mockEvidenceRef(3)] },
+  { id: "a2", typeKey: "expense", subCode: "exp.common", detail: "ค่าน้ำ-ไฟส่วนกลาง", source: "ตารางงวด", ownerId: "corp", amount: -8600, by: "ระบบ", date: "11/09/2026", assetId: "rent2", contactId: "c2", notYetPaid: true, attachments: [mockEvidenceRef(4)] },
   { id: "a3", typeKey: "income", subCode: "inc.rent", detail: "ค่าเช่าเดือน ก.ย.", source: "ตารางงวด · คอนโดตัวอย่าง C", ownerId: "thanakorn", amount: 12000, by: "ระบบ", date: "11/09/2026", assetId: "rent1", contactId: "c2", notYetPaid: true, bankAccountId: "b4" },
   { id: "a4", typeKey: "expense", subCode: "exp.travel", detail: "เบิกค่าเดินทางดูทรัพย์", source: "เบิกจ่าย", ownerId: "corp", amount: -3500, by: "แพทตี้", date: "12/09/2026", contactId: "c2", bankAccountId: "b1" },
-  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026", contactId: "c2", bankAccountId: "b1", attachments: ["ใบสำคัญจ่ายเงินเดือน-ก.ย..pdf"] },
-  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026", assetId: "land_d", contactId: "c2", bankAccountId: "b1", attachments: ["ใบเสร็จกรมที่ดิน.pdf"] },
-  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2", notYetPaid: true, bankAccountId: "b1", attachments: ["ตารางงวดสัญญาขายฝาก.pdf"] },
+  { id: "a5", typeKey: "expense", subCode: "exp.salary", detail: "เงินเดือนทีมดูแลอาคาร", source: "เงินเดือน", ownerId: "corp", amount: -96000, by: "ระบบ", date: "15/09/2026", contactId: "c2", bankAccountId: "b1", attachments: [mockEvidenceRef(5)] },
+  { id: "a6", typeKey: "expense", subCode: "exp.land_office", detail: "ค่าธรรมเนียมจดจำนอง", source: "คีย์มือ · ที่ดินตัวอย่าง D", ownerId: "corp", amount: -18000, by: "มาวิน", date: "15/09/2026", assetId: "land_d", contactId: "c2", bankAccountId: "b1", attachments: [mockEvidenceRef(6)] },
+  { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2", notYetPaid: true, bankAccountId: "b1", attachments: [mockEvidenceRef(7)] },
 ];
 
 /**
@@ -218,6 +231,6 @@ export type PendingCashRow = {
 };
 
 export const UNASSIGNED_CASH_ROWS: PendingCashRow[] = [
-  { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", attachments: ["บิลค่าน้ำไฟ-ก.ย..pdf"], due: "30/09/2026", actual: "8,600.00", date: "30/09/2026" },
+  { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", attachments: [mockEvidenceRef(8)], due: "30/09/2026", actual: "8,600.00", date: "30/09/2026" },
   { id: "cu2", name: "ค่าเช่าคอนโดตัวอย่าง C เดือน ก.ย.", sub: "คุณสมชาย (ผู้เช่า) · ตั้งค้างรับไว้", ownerId: "thanakorn", typeKey: "income", subCode: "inc.rent", accruedAmount: 12000, postedClearings: [], assetId: "rent1", contactId: "c1", due: "01/09/2026", actual: "12,000.00", date: "03/09/2026" },
 ];

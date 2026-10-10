@@ -19,7 +19,7 @@ import { PostingError, type PostingInput, type PostingLine } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
 import { allowedSubs, findSub, movesCash } from "@/lib/rules/tx-rules";
 import { statementOf } from "@/lib/rules/statements";
-import { TEST_RESOLVER } from "./fixture-resolver";
+import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 
@@ -201,7 +201,7 @@ describe("เคสข้อมูลขาด — ต้องปฏิเส�
   it("นิติบุคคลยังต้องแนบหลักฐาน — ไม่มีเงินเคลื่อนไม่ได้ปลดกติกาเอกสาร", () => {
     const corp = adj("adj.doubtful", { ownerId: "corp" });
     expect(() => buildPosting(corp)).toThrow(/ต้องแนบหลักฐาน/);
-    const ok = buildPosting({ ...corp, attachments: ["รายงานอายุลูกหนี้.pdf"] });
+    const ok = buildPosting({ ...corp, attachments: EVIDENCE });
     expect(allLines(ok).some((l) => isCashAccount(l.coaCode))).toBe(false);
   });
 
