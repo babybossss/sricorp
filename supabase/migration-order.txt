@@ -43,3 +43,4 @@
 20261009000001_cash_date_invariant.sql
 20261009000002_allowance_and_writeoff.sql
 20261009000004_allowance_fixes.sql
+20261010000001_recovery_cap_and_delta.sql
