@@ -59,15 +59,20 @@ describe("uploadAttachment", () => {
 
   it("Storage ค้าง → timeout (ไม่ค้างตาม)", async () => {
     const f = fakeClient({ upload: () => new Promise(() => undefined) });
-    const t0 = Date.now();
-    // ใช้ fake timers ไม่ได้กับ Promise.race จริง — ตรวจว่า withTimeout ผูกกับ config โดยย่อเวลาผ่าน vi
+    // ตรวจว่า withTimeout ผูกกับ config โดยย่อเวลาผ่าน fake timers
     const { vi } = await import("vitest");
     vi.useFakeTimers();
     const p = uploadAttachment(f.client, { userId: USER, ownerId: OWNER, bytes: JPEG });
     await vi.advanceTimersByTimeAsync(26_000);
     expect(await p).toMatchObject({ ok: false, code: "timeout" });
     vi.useRealTimers();
-    expect(Date.now() - t0).toBeLessThan(5000);
+
+    // เดิมมี `expect(Date.now() - t0).toBeLessThan(5000)` ต่อท้าย · **ถอดออกแล้ว (10/10)**
+    // มันวัดเวลานาฬิกาจริง จึงแดงเองเมื่อเครื่องยุ่ง (เจอจริงตอนรันเอเจ้นท์ขนานหลายตัว)
+    // และมัน **ซ้ำซ้อน**: ถ้า fake timers คุม setTimeout ของ withTimeout ไม่ได้
+    // `advanceTimersByTimeAsync` จะไม่ทำให้ promise คลาย แล้ว `await p` จะค้าง
+    // → vitest จับเป็น test timeout เอง ซึ่งแดงอยู่แล้วโดยไม่ต้องวัดเวลา
+    // **ห้ามใส่กลับ** — เทสต์ที่แดงสุ่มทำให้คนเลิกเชื่อสีแดงทั้งชุด ซึ่งอันตรายกว่าเทสต์ที่ขาด
   });
 });
 
