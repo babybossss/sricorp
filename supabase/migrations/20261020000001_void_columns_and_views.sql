@@ -172,8 +172,15 @@ comment on column transactions.void_reason is
 --   เราคิดเหตุผลย้อนหลังแทนคนแทนไม่ได้ (เดา = หลักฐานปลอม) · not valid ยังบังคับกับ
 --   ทุก insert/update ตั้งแต่นี้ไป รวมการ update แถวเก่าพวกนั้น → รูไม่เปิด
 --   แล้ว validate ในบล็อกด้านล่าง: DB ที่สะอาดจะ valid จริง · DB ที่มีประวัติจะได้ warning
---   พร้อมจำนวนแถวที่ต้องตามเก็บ (raise ที่นี่ = migrate ของจริงล้มเพราะอดีต ซึ่งแก้ด้วย
---   ไฟล์นี้ไม่ได้ · หลักเดียวกับ guard ท้าย 20261009000000)
+--   พร้อม **จำนวนแถวและ query ที่ต้องไปตามเก็บ** ซึ่งเป็นข้อมูลที่ raise เฉยๆ ให้ไม่ได้
+--
+--   **แต่ปลายทางต้องพัง** — guard 6e บังคับ `convalidated` ไว้
+--   เหตุผล: `raise warning` ในล็อกการ apply ยาวๆ ไม่มีใครเห็น · ถ้าปล่อยให้ไฟล์ผ่าน
+--   ไปทั้งที่ constraint ค้างสถานะ not valid เราจะได้ระบบที่ **ทุกคนเชื่อว่าทุกแถวที่
+--   void มีเหตุผลครบ** ทั้งที่ยังมีผีค้างอยู่ → ข้อความของ guard แข็งกว่าความจริง
+--   (เปิดครึ่งเดียวอันตรายกว่าไม่เปิด · บทเรียนข้อ 7)
+--   แบ่งหน้าที่: บล็อกนี้ **บอกว่าต้องเก็บอะไร** · guard 6e **ไม่ยอมให้ผ่าน**
+--   ไฟล์นี้ idempotent → ตามเก็บเสร็จแล้ว apply ซ้ำได้เลย (validate จะผ่านแล้ว guard เงียบ)
 -- ------------------------------------------------------------
 do $$
 begin
@@ -197,7 +204,7 @@ exception when check_violation then
    where (status = 'void') <> (voided_at is not null)
       or (status = 'void') <> (voided_by is not null)
       or (status = 'void') <> (void_reason is not null and btrim(void_reason) <> '');
-  raise warning 'มีรายการ % แถวที่ยกเลิกไว้ก่อนไฟล์นี้และยังไม่มี voided_at/voided_by/void_reason → constraint ยังอยู่สถานะ not valid (บังคับกับของใหม่ครบแล้ว แต่ของเก่ายังเป็นผีไม่มีคำอธิบาย) · ให้ตามเก็บด้วย migration ที่เติมค่าจาก audit_log แล้ว validate ซ้ำ: select id, doc_date, owner_id from sri_os.transactions where status = ''void'' and void_reason is null;', n;
+  raise warning 'มีรายการ % แถวที่ยกเลิกไว้ก่อนไฟล์นี้และยังไม่มี voided_at/voided_by/void_reason → constraint ค้างสถานะ NOT VALID · **ไฟล์นี้จะพังที่ guard ท้ายไฟล์ (บังคับ convalidated) ไม่ปล่อยผ่าน** · ให้ตามเก็บจาก audit_log ก่อน: select id, doc_date, owner_id from sri_os.transactions where status = ''void'' and (voided_at is null or voided_by is null or void_reason is null or btrim(void_reason) = '''');', n;
 end $$;
 
 -- ------------------------------------------------------------
