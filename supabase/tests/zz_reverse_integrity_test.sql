@@ -433,7 +433,7 @@ declare v_orig uuid := '00000000-0000-0000-0000-00000000d001';
 begin
   -- R11 · ต้นฉบับถูก void แล้ว (ไม่นับในงบ) → ลงใบกลับรายการชี้มาไม่ได้
   perform pg_temp.mk_orig(v_orig, 'SUTEE', 500);
-  update sri_os.transactions set status = 'void' where id = v_orig;
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = v_orig;
   perform pg_temp.must_fail_like('R11 ต้นฉบับ void แล้วลงใบกลับรายการ', format(
     $q$ select pg_temp.try_rev('00000000-0000-0000-0000-00000000d002', 'SUTEE', %L,
           pg_temp.mirror_of(%L)) $q$, v_orig, v_orig), 'void');
@@ -451,13 +451,13 @@ begin
 
   -- R12 · void ต้นฉบับที่มีใบกลับรายการที่ยังนับอยู่ → ปฏิเสธ
   perform pg_temp.must_fail_like('R12 void ต้นฉบับที่มีใบกลับรายการที่ยังนับอยู่', format(
-    $q$ update sri_os.transactions set status = 'void' where id = %L $q$, v_orig),
+    $q$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = %L $q$, v_orig),
     'กลับรายการ');
   select status::text into v_status from sri_os.transactions where id = v_orig;
   if v_status <> 'posted' then raise exception 'FAIL: ต้นฉบับกลายเป็น % แล้ว', v_status; end if;
 
   -- R13 · void ใบกลับรายการที่ลงผิดได้ แล้วกลับรายการใบใหม่ได้ (ห้ามเป็นทางตัน)
-  update sri_os.transactions set status = 'void' where id = v_rev;
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = v_rev;
   perform pg_temp.must_pass('R13 กลับรายการใหม่หลัง void ใบกลับรายการเดิม', format(
     $q$ select pg_temp.try_rev(%L, 'SUTEE', %L, pg_temp.mirror_of(%L)) $q$,
     v_rev2, v_orig, v_orig));
@@ -568,7 +568,7 @@ begin
 
   -- R14a · corporate: งบที่ยื่นไปแล้วต้องไม่ขยับ → void ไม่ได้ ให้ลงใบกลับรายการในงวดปัจจุบัน
   perform pg_temp.must_fail_like('R14a void ในงวดที่ปิดแล้ว (corporate)', format(
-    $q$ update sri_os.transactions set status = 'void' where id = %L $q$, v_corp), 'งวด');
+    $q$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = %L $q$, v_corp), 'งวด');
   select status::text into v_status from sri_os.transactions where id = v_corp;
   if v_status <> 'posted' then
     raise exception 'FAIL: รายการในงวดที่ปิดแล้วกลายเป็น % (งบที่ยื่นไปแล้วเปลี่ยนเงียบๆ)', v_status;
@@ -576,7 +576,7 @@ begin
 
   -- R14b · personal: ยังยืดหยุ่นได้ตาม Entity Policy เดิม (ห้ามเปลี่ยนนโยบายนั้นเอง)
   perform pg_temp.must_pass('R14b void ในงวดที่ปิดแล้ว (บุคคล)', format(
-    $q$ update sri_os.transactions set status = 'void' where id = %L $q$, v_pers));
+    $q$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = %L $q$, v_pers));
   select status::text into v_status from sri_os.transactions where id = v_pers;
   if v_status <> 'void' then
     raise exception 'FAIL: ฝั่งบุคคล void ไม่ได้ (status %) — กันแน่นเกินและเปลี่ยนนโยบาย', v_status;

@@ -576,28 +576,28 @@ begin
 
   -- void ใบ **ตั้งค่าเผื่อ** ขณะที่ใบตัดหนี้สูญยังอยู่ → ค่าเผื่อติดลบ → ปฏิเสธ
   perform pg_temp.must_fail_like('F7b void ใบตั้งค่าเผื่อที่ถูกใช้ไปแล้ว → ต้องปฏิเสธ',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000f0062' $i$) $q$,
     'ใบตั้งค่าเผื่อถูกเอาออก');
 
   -- และข้อความต้องชี้ว่าให้ **กลับใบตัดหนี้สูญ** ก่อน
   perform pg_temp.must_fail_like('F7b ข้อความต้องบอกให้จัดการใบตัดหนี้สูญก่อน',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000f0062' $i$) $q$,
     'ต้องกลับรายการหรือยกเลิกใบตัดหนี้สูญ');
 
   -- **และต้องไม่** บอกให้ไปตั้งค่าเผื่อเพิ่ม ซึ่งเป็นทางแก้ของอีกสถานการณ์
   perform pg_temp.must_fail_without('F7b ข้อความห้ามชี้ทางแก้ของอีกสถานการณ์',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000f0062' $i$) $q$,
     'ต้องลง "ตั้งค่าเผื่อหนี้สงสัยจะสูญ"');
 
   -- ลำดับที่ถูกต้องยังทำได้ (ห้ามกันแน่นเกิน)
   perform pg_temp.must_pass('F7c void ใบตัดหนี้สูญก่อน แล้วค่อย void ใบตั้งค่าเผื่อ',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000f0063' $i$) $q$);
   perform pg_temp.must_pass('F7c แล้ว void ใบตั้งค่าเผื่อได้',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000f0062' $i$) $q$);
 
   raise notice 'ok F7 · ข้อความของด่านค่าเผื่อติดลบแยกตามสาเหตุ (เอาค่าเผื่อออกเกิน vs ยกเลิกใบตั้งค่าเผื่อที่ถูกใช้ไปแล้ว) · ลำดับที่ถูกต้องยังทำได้';

@@ -19,6 +19,18 @@
 
 \set ON_ERROR_STOP 1
 
+-- ---------- fixture: ผู้ใช้สำหรับ voided_by (D-098 · 20261020000001) ----------
+-- ตั้งแต่ D-098 การ void ต้องบันทึก voided_at + voided_by + void_reason ครบ
+-- (void_reason บังคับทุกผู้ถือ) และ voided_by เป็น FK ไป app_users = ต้องเป็นคนจริง
+-- ไฟล์นี้เดิมไม่มี app_users เลยจนถึง L17 → เคส void ก่อนหน้านั้นต้องมีคนให้อ้าง
+-- **ไม่ใช่การลดความเข้ม** แค่ทำให้ fixture เป็นข้อมูลที่ลงได้จริงตามกฎใหม่
+insert into auth.users(id) values ('00000000-0000-0000-0000-0000000f0a01')
+on conflict do nothing;
+insert into sri_os.app_users(id, email, display_name, role, is_active) values
+  ('00000000-0000-0000-0000-0000000f0a01', 'li-void@zz', 'ZZ ผู้ยกเลิก (line integrity)',
+   'management', true)
+on conflict (id) do update set is_active = true;
+
 -- ---------- fixture: รายการที่ post แล้ว 500/500 (ธุรกรรมแยก จบด้วย commit) ----------
 begin;
 insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments)
@@ -105,7 +117,7 @@ end $$;
 do $$
 declare n int;
 begin
-  update sri_os.transactions set status = 'void'
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
    where id = '00000000-0000-0000-0000-0000000f0001';
   begin
     delete from sri_os.transaction_lines
@@ -253,6 +265,8 @@ do $$
 declare v text[];
 begin
   begin
+    -- f0001 ถูก void ไปแล้วที่ L4 · D-098 ห้ามแก้ร่องรอยการยกเลิกย้อนหลัง
+    -- → UPDATE นี้คง voided_* เดิมไว้ (เคสนี้วัดกติกาหลักฐาน ไม่ใช่กติกาการ void)
     update sri_os.transactions set attachments = '{}', status = 'void'
      where id = '00000000-0000-0000-0000-0000000f0001';
     raise exception 'FAIL: ล้างไฟล์แนบของรายการนิติบุคคลด้วย UPDATE ได้ = กติกาหลักฐานไม่ถูกบังคับตอน UPDATE';
@@ -264,6 +278,7 @@ begin
   if cardinality(v) = 0 then raise exception 'FAIL: ไฟล์แนบถูกล้างไปแล้ว'; end if;
 
   -- ขาบวก: void ตามปกติ (ไม่แตะไฟล์แนบ) ต้องยังทำได้ ไม่งั้นเส้นทาง reverse ตาย
+  -- void ซ้ำบนแถวที่ void แล้ว = ไม่แตะ voided_at/voided_by/void_reason (D-098 แช่แข็ง)
   update sri_os.transactions set status = 'void'
    where id = '00000000-0000-0000-0000-0000000f0001';
   raise notice 'ok L11 · ล้างไฟล์แนบตอน UPDATE ไม่ได้ · แต่ void ตามปกติยังทำได้';
@@ -373,10 +388,14 @@ end $$;
 -- แล้วกลายเป็น "ที่ว่าง" ให้ธุรกรรมอื่นมาวางบรรทัดแล้ว flip เป็น posted
 \set ON_ERROR_STOP 0
 begin;
-insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, status)
+-- ร่องรอยการยกเลิกต้องครบ (D-098) ไม่งั้นแถวนี้จะถูกปฏิเสธด้วยเหตุผลคนละเรื่อง
+-- (transactions_void_fields_both_ways) แล้วเคสนี้จะ "เขียวเพราะกฎอื่น" ไม่ได้วัดกฎที่ตั้งใจ
+insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, attachments, status,
+                                voided_at, voided_by, void_reason)
 values ('00000000-0000-0000-0000-0000000f0016',
         (select id from sri_os.owners where code = 'SRI_HOLDING'),
-        'exp.other', current_date, array['e.pdf'], 'void');
+        'exp.other', current_date, array['e.pdf'], 'void',
+        now(), '00000000-0000-0000-0000-0000000f0a01', 'เทสต์ L16 · หัวรายการ void 0 บรรทัด');
 commit;
 \set ON_ERROR_STOP 1
 
@@ -407,7 +426,7 @@ on conflict do nothing;
 -- รายการของ **บุคคล** (SUTEE) ที่ posted แล้ว → void
 -- ใช้ฝั่งบุคคลเพราะ fn_corporate_immutable ไม่แตะ owner ฝั่งนี้เลย
 -- ถ้าเทสต์นี้ผ่านแปลว่ากฎ "void ปลายทาง" บังคับกับทุก owner จริง ไม่ได้ผ่านเพราะกติกานิติบุคคล
-update sri_os.transactions set status = 'void'
+update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
  where id = '00000000-0000-0000-0000-0000000f0006';
 
 do $$
@@ -476,7 +495,7 @@ commit;
 do $$
 declare v text;
 begin
-  update sri_os.transactions set status = 'void'
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
    where id = '00000000-0000-0000-0000-0000000f0018';
   select status::text into v from sri_os.transactions
    where id = '00000000-0000-0000-0000-0000000f0018';
@@ -623,7 +642,7 @@ end $$;
 -- → สิทธิ์ย้ายไปอยู่ใน supabase/migrations/20261007000001_grants.sql ทั้งสองฝั่งใช้ไฟล์เดียวกัน
 -- เทสต์นี้ assert จากสิ่งที่ migration ให้ ไม่ใช่จากค่าที่ harness ตั้งเอง
 do $$
-declare v text; n int;
+declare v text; v2 text; n int;
 begin
   -- 1) ต้องไม่มีสิทธิ์อันตราย
   select string_agg(table_name || '.' || privilege_type, ', '), count(*) into v, n
@@ -636,14 +655,21 @@ begin
   end if;
 
   -- 2) ต้องมี DML ครบทุกตารางการเงิน ไม่งั้นข้อ 1 ผ่านฟรีๆ และแอปใช้งานไม่ได้ (สถานะของจริง)
-  --    ข้อยกเว้นเดียว: `owners` ถูก revoke UPDATE ระดับตารางโดยเจตนา แล้ว grant
-  --    เป็นระดับคอลัมน์แทน (20261007000005) เพราะ RLS กันเป็นคอลัมน์ไม่ได้
-  --    → ตรวจแยกในข้อ 2b ว่า column grant ถูกต้องจริง ไม่ใช่ยกเว้นแล้วเลิกตรวจ
+  --    ข้อยกเว้นที่ **ตั้งใจ** และตรวจแยกต่อข้างล่าง ไม่ใช่ยกเว้นแล้วเลิกตรวจ:
+  --      · `owners` ถูก revoke UPDATE ระดับตารางแล้ว grant เป็นระดับคอลัมน์ (20261007000005)
+  --        → ข้อ 2b ตรวจว่า column grant ถูกต้องจริง
+  --      · ตารางที่มีคอลัมน์ขึ้นทะเบียนเป็น `grant` ใน sri_os.column_exposure ถูก revoke
+  --        SELECT ระดับตารางแล้ว grant เป็นระดับคอลัมน์ (20261020000000 · D-089)
+  --        → ข้อ 2c ตรวจว่ายังเหลือ DML ที่จำเป็นและคอลัมน์ที่เปิดยังอ่านได้
+  --        (รายการยกเว้นอ่านจากทะเบียนใน DB ไม่ใช่พิมพ์ชื่อตารางมือ → ตารางที่ติดด่าน
+  --         เพิ่มขึ้นในอนาคตก็ยังถูกตรวจด้วยกฎเดียวกัน)
   select string_agg(t.c, ', '), count(*) into v, n from (
     select c.relname as c
       from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
      where ns.nspname = 'sri_os' and c.relkind = 'r'
        and c.relname <> 'owners'
+       and not exists (select 1 from sri_os.column_exposure ce
+                        where ce.table_name = c.relname and ce.exposure = 'grant')
        and (select count(*) from information_schema.role_table_grants g
              where g.table_schema = 'sri_os' and g.grantee = 'authenticated'
                and g.table_name = c.relname
@@ -653,8 +679,10 @@ begin
     raise exception 'FAIL: % ตารางที่ authenticated ไม่มี DML ครบสี่ตัว: % → แอปถูกปฏิเสธที่ชั้น GRANT ก่อนถึง RLS', n, v;
   end if;
 
-  -- 2b) owners: SELECT/INSERT/DELETE ระดับตารางต้องยังมี · UPDATE ต้องไม่มีระดับตาราง
-  foreach v in array array['SELECT', 'INSERT', 'DELETE'] loop
+  -- 2b) owners: INSERT/DELETE ระดับตารางต้องยังมี · UPDATE ต้องไม่มีระดับตาราง
+  --     SELECT ของ owners ย้ายไปเป็นระดับคอลัมน์แล้ว (20261020000000 · D-089 ปิด
+  --     tax_id_last4) → ความครบของ SELECT ถูกตรวจในข้อ 2c จากทะเบียน column_exposure
+  foreach v in array array['INSERT', 'DELETE'] loop
     if not exists (
       select 1 from information_schema.role_table_grants
        where table_schema = 'sri_os' and table_name = 'owners'
@@ -670,6 +698,36 @@ begin
   ) then
     raise exception 'FAIL: owners มี UPDATE ระดับตาราง → column grant ของคอลัมน์กติกาไม่มีผล (ปลด corporate_strict ได้ด้วยคำสั่งเดียว)';
   end if;
+
+  -- 2c) ตารางที่มีด่านคอลัมน์ (D-089): SELECT ระดับตารางต้องไม่มี · INSERT/UPDATE/DELETE
+  --     ระดับตารางต้องยังมี · และคอลัมน์ที่ทะเบียนบอกว่าเปิดต้องอ่านได้จริงทุกตัว
+  --     (ไม่งั้น "ยกเว้นจากข้อ 2" จะกลายเป็นช่องที่ตารางไม่มีสิทธิ์อะไรเลยแล้วไม่มีใครรู้)
+  for v in select distinct ce.table_name from sri_os.column_exposure ce
+            where ce.exposure = 'grant' order by 1
+  loop
+    if exists (
+      select 1 from information_schema.role_table_grants
+       where table_schema = 'sri_os' and table_name = v
+         and grantee = 'authenticated' and privilege_type = 'SELECT'
+    ) then
+      raise exception 'FAIL: % มี SELECT ระดับตาราง → ด่านคอลัมน์ของ D-089 ไม่มีผลเลย', v;
+    end if;
+    select count(*) into n from information_schema.role_table_grants
+     where table_schema = 'sri_os' and table_name = v and grantee = 'authenticated'
+       and privilege_type in ('INSERT', 'UPDATE', 'DELETE');
+    -- owners ถูก revoke UPDATE ระดับตารางไว้ด้วย (20261007000005) → คาด 2 ไม่ใช่ 3
+    if n <> (case when v = 'owners' then 2 else 3 end) then
+      raise exception 'FAIL: % มี INSERT/UPDATE/DELETE ระดับตารางแค่ % ตัว → แอปเขียนไม่ได้', v, n;
+    end if;
+    select string_agg(ce.column_name, ', '), count(*) into v2, n
+      from sri_os.column_exposure ce
+     where ce.table_name = v and ce.exposure in ('open', 'row')
+       and not has_column_privilege('authenticated',
+             ('sri_os.' || quote_ident(v))::regclass, ce.column_name, 'select');
+    if n > 0 then
+      raise exception 'FAIL: %: คอลัมน์ที่ทะเบียนบอกว่าเปิด อ่านไม่ได้ % คอลัมน์: % → หน้าจอที่ต้องใช้จะพัง', v, n, v2;
+    end if;
+  end loop;
 
   -- 3) anon ต้องไม่มีอะไรเลย (ระบบนี้ต้องล็อกอินทุกหน้า ไม่มีหน้า public)
   if has_schema_privilege('anon', 'sri_os', 'usage') then

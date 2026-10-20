@@ -497,7 +497,7 @@ do $$
 begin
   -- SRI Holding ตอนนี้: ลูกหนี้ 9,000 · ค่าเผื่อ 9,000
   perform pg_temp.upd(format(
-    $q$ update sri_os.transactions set status = 'void'
+    $q$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
          where id = '00000000-0000-0000-0000-0000000a0041' $q$));
   if pg_temp.allowance('SRI_HOLDING') <> 0 then
     raise exception 'FAIL: A10 void ใบตั้งค่าเผื่อแล้วค่าเผื่อควรเป็น 0 ได้ %', pg_temp.allowance('SRI_HOLDING');
@@ -539,7 +539,7 @@ begin
 
   -- (ก) ยกเลิกใบ **ตั้งค่าเผื่อ** ทั้งที่ใบตัดหนี้สูญยังอยู่ → ค่าเผื่อติดลบ → ต้องปฏิเสธ
   perform pg_temp.must_fail_like('A11 void ใบตั้งค่าเผื่อ ขณะที่ใบตัดหนี้สูญยังอยู่',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000a0036' $i$) $q$,
     'ใบตั้งค่าเผื่อถูกเอาออก');
   if pg_temp.allowance('SUTEE') <> 0 then
@@ -548,7 +548,7 @@ begin
 
   -- (ข) ห้ามกันแน่นเกิน: ยกเลิกใบ **ตัดหนี้สูญ** ก่อน ทำได้ (ค่าเผื่อกลับมามีของรองรับ)
   perform pg_temp.must_pass('A11 void ใบตัดหนี้สูญ (ลำดับที่ถูกต้อง)',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000a0037' $i$) $q$);
   if pg_temp.allowance('SUTEE') <> 8000 or pg_temp.net_receivable('SUTEE') <> 0 then
     raise exception 'FAIL: A11 หลัง void ใบตัดหนี้สูญ ค่าเผื่อควรเป็น 8000 และลูกหนี้สุทธิ 0 ได้ % / %',

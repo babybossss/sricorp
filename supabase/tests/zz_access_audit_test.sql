@@ -829,7 +829,7 @@ begin
 
   -- void **ใบกลับรายการ** ไม่ใช่ต้นฉบับ (D-097: ต้นฉบับที่ถูกกลับรายการต้องยัง posted
   -- ไม่งั้นสมุดผิดไป −ต้นฉบับ · trg_void_blocked_by_reverse ปฏิเสธเส้นทางเดิมแล้ว)
-  update sri_os.transactions set status = 'void'
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
    where id = '00000000-0000-0000-0000-0000000000e2';
 
   insert into sri_os.period_closes(owner_id, period, closed_by)

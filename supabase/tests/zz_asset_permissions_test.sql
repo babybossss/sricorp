@@ -523,7 +523,8 @@ begin
   end if;
 
   -- patch ถูกนำไปใช้ และรหัสออกตอนอนุมัติ
-  select units, location, code into v_units, v_loc, v_code from sri_os.assets where id = v_asset;
+  -- D-089: units/location ปิดด้วยสิทธิ์ระดับคอลัมน์ → อ่านผ่าน fn_assets_visible()
+  select units, location, code into v_units, v_loc, v_code from sri_os.fn_assets_visible() where id = v_asset;
   if v_units <> 12.5 or v_loc <> 'อโศก' then
     raise exception 'FAIL: patch ไม่ถูกนำไปใช้ (units=% location=%)', v_units, v_loc;
   end if;
@@ -583,7 +584,8 @@ begin
   if v_asset <> '00000000-0000-0000-0000-00000000e001' then
     raise exception 'FAIL: ร่างแก้ไขควรคืน target_asset_id เดิม';
   end if;
-  if (select location from sri_os.assets where id = v_asset) <> 'เอกมัย' then
+  -- D-089: อ่าน location ผ่านทางเข้า
+  if (select location from sri_os.fn_assets_visible() where id = v_asset) <> 'เอกมัย' then
     raise exception 'FAIL: ร่างแก้ไขอนุมัติแล้วแต่ค่าไม่เปลี่ยน';
   end if;
 

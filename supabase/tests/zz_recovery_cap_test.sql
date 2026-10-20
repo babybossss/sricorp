@@ -545,13 +545,13 @@ begin
   -- (ก) void ใบ **ตัดหนี้สูญ** ขณะที่ใบรับคืนยังอยู่ → ปฏิเสธ
   --     (ไม่งั้นลูกหนี้ 5,000 กลับมาในงบดุล **พร้อมกับ** รายได้ที่รับคืนไปแล้ว = นับสองรอบ)
   perform pg_temp.must_fail_like('R5 void ใบตัดหนี้สูญขณะที่ใบรับคืนยังอยู่ในสมุด',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000e0042' $i$) $q$,
     'ต้องกลับรายการหรือยกเลิกใบหนี้สูญได้รับคืนนั้นก่อน');
 
   -- (ข) และข้อความ **ต้องไม่** เป็นสาขา "ยังไม่ได้ตัดหนี้สูญ" ซึ่งทางแก้ตรงข้ามกัน
   perform pg_temp.must_fail_without('R5 ข้อความห้ามชี้ทางแก้ของอีกสถานการณ์',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000e0042' $i$) $q$,
     'หมวดนี้ใช้ได้เฉพาะหนี้ที่ถูกตัดหนี้สูญไปแล้ว');
 
@@ -561,10 +561,10 @@ begin
 
   -- (ค) ลำดับที่ถูกต้องยังทำได้ — ห้ามกันแน่นเกิน
   perform pg_temp.must_pass('R5 void ใบรับคืนก่อน',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000e0043' $i$) $q$);
   perform pg_temp.must_pass('R5 แล้ว void ใบตัดหนี้สูญได้',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000e0042' $i$) $q$);
   if pg_temp.recovered('SUTEE') <> 0 or pg_temp.receivable('SUTEE', '1200') <> 5000 then
     raise exception 'FAIL: R5 หลัง void ตามลำดับที่ถูก ควรเหลือรับคืน 0 · ลูกหนี้ 5000 ได้ % / %',

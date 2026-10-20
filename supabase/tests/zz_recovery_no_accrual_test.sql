@@ -568,7 +568,7 @@ declare
   v_brec_tw numeric := pg_temp.recovered('THANAWIN');
 begin
   perform pg_temp.must_pass('N5 void ใบรับคืนของธนากร',
-    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void'
+    $q$ select pg_temp.upd($i$ update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$
             where id = '00000000-0000-0000-0000-0000000a7023' $i$) $q$);
   if pg_temp.recovered('THANAKORN') <> v_brec_tk then
     raise exception 'FAIL: N5 หลัง void ใบรับคืน ยอดรับคืนควรกลับเป็น % ได้ %',

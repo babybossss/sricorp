@@ -305,7 +305,8 @@ begin
   end if;
 
   -- ของจริงต้องไม่ขยับ และร่างต้องยัง pending (ไม่ใช่ approved ลอยๆ)
-  select location into v_loc from sri_os.assets where id = '00000000-0000-0000-0000-0000000fa001';
+  -- D-089: location ปิดด้วยสิทธิ์ระดับคอลัมน์ → อ่านผ่าน fn_assets_visible() (ผู้บริหารทรัพย์ยังเห็นค่าจริง)
+  select location into v_loc from sri_os.fn_assets_visible() where id = '00000000-0000-0000-0000-0000000fa001';
   select status::text into v_status from sri_os.asset_drafts where id = v_draft;
   if v_loc <> 'ชลบุรี' then raise exception 'FAIL: ทรัพย์เปลี่ยนไปแล้ว (%)', v_loc; end if;
   if v_status <> 'pending' then raise exception 'FAIL: ร่างขึ้นสถานะ % ทั้งที่การอนุมัติถูกปฏิเสธ', v_status; end if;
@@ -344,7 +345,8 @@ begin
   if v_asset <> '00000000-0000-0000-0000-0000000fa001' then
     raise exception 'FAIL: ร่างแก้ไขควรคืน target_asset_id เดิม (ได้ %)', v_asset;
   end if;
-  select location, size_note into v_loc, v_note from sri_os.assets where id = v_asset;
+  -- D-089: location/size_note ปิดด้วยสิทธิ์ระดับคอลัมน์ → อ่านผ่านทางเข้า
+  select location, size_note into v_loc, v_note from sri_os.fn_assets_visible() where id = v_asset;
   if v_loc <> 'ศรีราชา' or v_note <> '2 ไร่ 1 งาน' then
     raise exception 'FAIL: อนุมัติแล้วข้อมูลไม่เปลี่ยนจริง (location=% size_note=%)', v_loc, v_note;
   end if;
@@ -396,7 +398,8 @@ begin
   end if;
 
   -- ทรัพย์ต้องไม่ถูกแตะจากการปฏิเสธ/ยกเลิก
-  if (select location from sri_os.assets where id = '00000000-0000-0000-0000-0000000fa001') <> 'ศรีราชา' then
+  -- D-089: อ่าน location ผ่านทางเข้า
+  if (select location from sri_os.fn_assets_visible() where id = '00000000-0000-0000-0000-0000000fa001') <> 'ศรีราชา' then
     raise exception 'FAIL: การปฏิเสธ/ยกเลิกร่างไปแก้ทรัพย์';
   end if;
 
@@ -477,8 +480,9 @@ begin
   select count(*) into n1 from sri_os.assets;
   if n1 <> n0 + 1 then raise exception 'FAIL: อนุมัติร่างสร้างทรัพย์แล้ว assets ควร +1 (%→%)', n0, n1; end if;
 
+  -- D-089: location ปิดด้วยสิทธิ์ระดับคอลัมน์ → อ่านผ่านทางเข้า
   select code, location, created_at into v_code, v_loc, v_created
-    from sri_os.assets where id = v_asset;
+    from sri_os.fn_assets_visible() where id = v_asset;
   if v_code is null or v_code !~ '^[A-Z_]+-[0-9]{4}$' then
     raise exception 'FAIL: รหัสทรัพย์ผิดรูป: %', coalesce(v_code, '(null)');
   end if;
@@ -553,7 +557,8 @@ begin
   perform pg_temp.ilogin('i_mgr');
   perform sri_os.fn_apply_asset_draft(v_d1);
   perform sri_os.fn_apply_asset_draft(v_d2);
-  if (select location from sri_os.assets where id = '00000000-0000-0000-0000-0000000fa001') <> 'แก้ครั้งที่สาม' then
+  -- D-089: อ่าน location ผ่านทางเข้า
+  if (select location from sri_os.fn_assets_visible() where id = '00000000-0000-0000-0000-0000000fa001') <> 'แก้ครั้งที่สาม' then
     raise exception 'FAIL: ร่างแก้ไขใบที่สองไม่มีผล';
   end if;
 
@@ -634,7 +639,7 @@ begin
   if v_s1 <> 'received' then raise exception 'FAIL: ตั้ง received ไม่ได้ (%) — fixtures ผิด', v_s1; end if;
 
   -- ---------- void รายการที่ post แล้ว ----------
-  update sri_os.transactions set status = 'void' where id = '00000000-0000-0000-0000-0000000ff001';
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = '00000000-0000-0000-0000-0000000ff001';
 
   select status into v_s1 from sri_os.schedules where id = '00000000-0000-0000-0000-0000000fd001';
   select status into v_s2 from sri_os.schedules where id = '00000000-0000-0000-0000-0000000fd002';
@@ -703,7 +708,7 @@ begin
   end if;
 
   -- ---------- กลับรายการที่ลงผิด แล้ว void ทิ้ง → ต้นฉบับมีผลอีกครั้ง ----------
-  update sri_os.transactions set status = 'void' where id = '00000000-0000-0000-0000-0000000ff003';
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = '00000000-0000-0000-0000-0000000ff003';
   select status into v_s1 from sri_os.schedules where id = '00000000-0000-0000-0000-0000000fd001';
   select status into v_s2 from sri_os.schedules where id = '00000000-0000-0000-0000-0000000fd002';
   if v_s1 <> 'received' or v_s2 <> 'received' then
@@ -738,7 +743,7 @@ do $$
 declare v_err text;
 begin
   -- คืน id01 ให้เป็น received บนร่างที่มีผล (void รายการกลับรายการใบที่สองทิ้ง)
-  update sri_os.transactions set status = 'void' where id = '00000000-0000-0000-0000-0000000ff004';
+  update sri_os.transactions set status = 'void', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = '00000000-0000-0000-0000-0000000ff004';
   if (select status from sri_os.schedules where id = '00000000-0000-0000-0000-0000000fd001') <> 'received' then
     raise exception 'FAIL: fixtures ของ I10 ผิด — id01 ควรกลับเป็น received';
   end if;
@@ -913,7 +918,7 @@ begin
 
   -- void (txn.void = Management มี)
   perform pg_temp.irows('Management void รายการ',
-    format('update sri_os.transactions set status = ''void'' where id = %L', v_txn), 1);
+    format('update sri_os.transactions set status = ''void'', voided_at = now(), voided_by = coalesce(auth.uid(), (select id from sri_os.app_users order by created_at limit 1)), void_reason = $vr$เทสต์ D-098 · ยกเลิกรายการ$vr$ where id = %L', v_txn), 1);
 
   -- ปิดงวด แล้วเปิดกลับ (period.reopen)
   perform pg_temp.ipass('ปิดงวด', format(

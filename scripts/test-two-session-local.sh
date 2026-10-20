@@ -110,8 +110,11 @@ SQL
     echo "begin;"
     echo "set local role authenticated;"
     echo "set local \"test.uid\" = '$MGMT';"
-    echo "insert into sri_os.transactions(id,owner_id,txn_type_code,doc_date,attachments,status,created_at)"
-    echo "values ('$txn',(select id from sri_os.owners where code='SUTEE'),'exp.other',current_date,array['e.pdf'],'void','$T0'::timestamptz);"
+    # ใบนี้ลง status='void' ตรงๆ จึงต้องมีร่องรอยการยกเลิกครบตามด่านของ D-098
+    # (ใครยกเลิก เมื่อไหร่ ทำไม) · **ห้ามผ่อนด่านเพื่อให้ fixture ผ่าน** —
+    # การ insert ใบ void โดยไม่มีเหตุผลคือรูที่ D-098 ปิดไปแล้ว
+    echo "insert into sri_os.transactions(id,owner_id,txn_type_code,doc_date,attachments,status,created_at,voided_at,voided_by,void_reason)"
+    echo "values ('$txn',(select id from sri_os.owners where code='SUTEE'),'exp.other',current_date,array['e.pdf'],'void','$T0'::timestamptz,now(),'$MGMT','เทสต์ two-session · ใบนี้ต้องไม่มีผลต่องบ');"
     if [ "$plant_lines" = "yes" ]; then
       echo "insert into sri_os.transaction_lines(transaction_id, coa_id, debit, credit)"
       echo "select '$txn', c.id, case when c.rn=1 then 100 else 0 end, case when c.rn=2 then 100 else 0 end"
