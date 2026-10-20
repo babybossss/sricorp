@@ -51,3 +51,6 @@
 # grants.sql จะ `grant select on all tables` ทับ แล้ว **ลบด่านรายคอลัมน์ทิ้งเงียบๆ**
 20261020000000_column_exposure.sql
 20261020000001_void_columns_and_views.sql
+# ไฟล์นี้จัดประเภทคอลัมน์ของ transactions/transaction_lines จึง **ต้องอยู่หลัง
+# 20261020000001** ที่สร้าง v_ledger_posted/v_ledger_voided (มันอ้างสองวิวนั้น)
+20261020000002_column_exposure_ledger.sql

@@ -125,7 +125,7 @@ select 'ZZCE_A1', 'ทรัพย์ของ mgr', o.id, ct.class_id, ct.id, '
 insert into sri_os.bank_accounts(owner_id, bank, account_name, display_name,
                                  account_no_last4, coa_id, opening_balance, opening_date)
 select o.id, 'kbank', 'บัญชีทดสอบ', 'กสิกร ทดสอบ', '9999',
-       (select id from sri_os.chart_of_accounts where is_active order by code limit 1),
+       (select id from sri_os.chart_of_accounts where code = '1100'),
        250000, current_date
   from sri_os.owners o where o.code = 'ZZCE1';
 
@@ -524,8 +524,231 @@ begin
   if n <> 0 then
     raise exception 'FAIL: C6e ยังมี % รายการที่ไม่ได้จัดประเภท', n;
   end if;
-  select count(*) into n from sri_os.column_exposure_tables where review_state = 'deferred';
-  raise notice 'ok C6 · โครงสร้างด่านถูกต้อง · ตารางที่ยังเลื่อนการจัดประเภท % ตาราง (ต้องปิดให้ครบเมื่อ D-098 เสร็จ)', n;
+  -- (ฉ) ไม่เหลือตารางที่เลื่อนการจัดประเภท (20261020000002 ปิดสมุดเงินแล้ว)
+  --     **ถ้าวันหนึ่งต้องเลื่อนตารางใหม่จริง ให้แก้เคสนี้พร้อมเหตุผลในคำสั่งเดียวกับ
+  --     migration ที่เลื่อน** ไม่ใช่เลื่อนเงียบๆ แล้วปล่อยเทสต์ผ่าน
+  select string_agg(table_name, ', '), count(*) into v, n
+    from sri_os.column_exposure_tables where review_state = 'deferred';
+  if n > 0 then
+    raise exception 'FAIL: C6f ยังมี % ตารางที่เลื่อนการจัดประเภทไว้: % · "ปล่อยค้าง" คือสิ่งที่ D-089 ห้าม', n, v;
+  end if;
+  raise notice 'ok C6 · โครงสร้างด่านถูกต้อง · ไม่มีตารางที่เลื่อนการจัดประเภทเหลืออยู่';
+end $$;
+
+-- ============================================================
+-- C7 · สมุดเงิน (transactions · transaction_lines) · จัดประเภทเป็น `row` ทั้งใบ
+--      (20261020000002) · ต้องพิสูจน์สามอย่าง:
+--        ① เหตุผลของ row จริง: ไม่มี ledger.read = เห็น 0 แถว ไม่ใช่เห็นบางคอลัมน์
+--        ② เส้นทางที่ถูกต้องไม่พัง: สองวิวของ D-098 ยังอ่านได้ · fn_post_entry ยังลงได้
+--        ③ guard จับของใหม่/ทางอ้อมได้จริง
+-- ============================================================
+do $$
+declare n int; v text;
+begin
+  -- ทะเบียน: ครบทุกคอลัมน์ · เป็น row ด้วย ledger.read · ไม่มี open
+  foreach v in array array['transactions', 'transaction_lines'] loop
+    if (select review_state from sri_os.column_exposure_tables where table_name = v) <> 'classified' then
+      raise exception 'FAIL: C7a % ยังไม่ถูกจัดประเภท (deferred) → สมุดเงินทั้งเล่มไม่มีด่าน', v;
+    end if;
+    select count(*) into n from pg_attribute a
+     where a.attrelid = ('sri_os.' || v)::regclass and a.attnum > 0 and not a.attisdropped
+       and not exists (select 1 from sri_os.column_exposure ce
+                        where ce.table_name = v and ce.column_name = a.attname);
+    if n > 0 then raise exception 'FAIL: C7a %: % คอลัมน์ยังไม่จัดประเภท', v, n; end if;
+    select count(*) into n from sri_os.column_exposure
+     where table_name = v and (exposure <> 'row' or min_permission <> 'ledger.read');
+    if n > 0 then
+      raise exception 'FAIL: C7a %: % คอลัมน์ไม่ใช่ row/ledger.read → สมุดเงินต้องเป็น row ทั้งใบ', v, n;
+    end if;
+  end loop;
+  raise notice 'ok C7a · สมุดเงินจัดประเภทครบทุกคอลัมน์เป็น row ด้วย ledger.read';
+end $$;
+
+-- ---------- C7b · ลงรายการจริงด้วย role authenticated (fn_post_entry ต้องไม่พัง) ----------
+set local role authenticated;
+select pg_temp.login('mgr');
+do $$
+declare v_out jsonb; v_bank uuid; v_own uuid; n int;
+begin
+  select id into v_bank from sri_os.bank_accounts where display_name = 'กสิกร ทดสอบ';
+  select id into v_own  from sri_os.owners where code = 'ZZCE1';
+  -- fn_post_entry ไม่ใช่ security definer → อ่าน/เขียน transactions ด้วยสิทธิ์ผู้คีย์
+  -- ถ้าวันหนึ่งมีใครถอน select ของตารางฐาน (เปลี่ยน row → grant) เคสนี้จะแดงทันที
+  v_out := sri_os.fn_post_entry(jsonb_build_object(
+    'txn_type_code', 'inc.rent',
+    'doc_date', current_date::text,
+    'cash_date', current_date::text,
+    'memo', 'ค่าเช่าทดสอบ D-089',
+    'transactions', jsonb_build_array(jsonb_build_object(
+      'owner_id', v_own,
+      'lines', jsonb_build_array(
+        jsonb_build_object('coa_code', '1100', 'bank_account_id', v_bank,
+                           'debit', 9000, 'credit', 0, 'cf_category', 'operating'),
+        jsonb_build_object('coa_code', '4200', 'debit', 0, 'credit', 9000,
+                           'cf_category', 'operating')
+      )
+    ))
+  ));
+  if v_out is null then raise exception 'FAIL: C7b fn_post_entry ไม่คืนผล'; end if;
+  select count(*) into n from sri_os.transactions where memo = 'ค่าเช่าทดสอบ D-089';
+  if n <> 1 then raise exception 'FAIL: C7b ลงรายการแล้วแต่อ่านกลับไม่เจอ (% แถว)', n; end if;
+  raise notice 'ok C7b · fn_post_entry ลงรายการได้ด้วยสิทธิ์ผู้คีย์ (เส้นทางลงบัญชีจริงไม่พัง)';
+end $$;
+
+-- ---------- C7c · สองวิวของ D-098 ต้องอ่านได้ตามระดับ ไม่ใช่ permission denied ----------
+do $$
+declare n_mgr int; n_mgmt int; n_staff int; n_void int;
+begin
+  -- Manager: เห็นรายการที่ตัวเองคีย์ (fn_can_read_txn → created_by = ตัวเอง)
+  perform pg_temp.login('mgr');
+  select count(*) into n_mgr from sri_os.v_ledger_posted where txn_memo = 'ค่าเช่าทดสอบ D-089';
+  if n_mgr < 2 then
+    raise exception 'FAIL: C7c Manager อ่าน v_ledger_posted ของรายการที่ตัวเองคีย์ได้ % บรรทัด (ต้อง 2) → วิวรายงานพัง', n_mgr;
+  end if;
+  select count(*) into n_void from sri_os.v_ledger_voided;   -- ต้องไม่ error
+  -- Management: เห็นด้วย (portfolio.view_all)
+  perform pg_temp.login('mgmt');
+  select count(*) into n_mgmt from sri_os.v_ledger_posted where txn_memo = 'ค่าเช่าทดสอบ D-089';
+  if n_mgmt < 2 then
+    raise exception 'FAIL: C7c ผู้บริหารอ่าน v_ledger_posted ไม่ได้ (% บรรทัด) → งบทุกใบพัง', n_mgmt;
+  end if;
+  select count(*) into n_void from sri_os.v_ledger_voided;
+  -- Staff: **ไม่มี ledger.read** → ต้องได้ 0 แถว และต้องไม่ใช่ error
+  --        (นี่คือเหตุผลทั้งหมดของการจัดประเภทแบบ row: ชั้นแถวกันไว้แล้ว)
+  perform pg_temp.login('staff');
+  select count(*) into n_staff from sri_os.v_ledger_posted;
+  if n_staff <> 0 then
+    raise exception 'FAIL: C7c Staff เห็น v_ledger_posted % บรรทัด → ไม่มี ledger.read แต่อ่านสมุดเงินได้', n_staff;
+  end if;
+  select count(*) into n_staff from sri_os.v_ledger_voided;
+  if n_staff <> 0 then raise exception 'FAIL: C7c Staff เห็น v_ledger_voided % บรรทัด', n_staff; end if;
+  -- และอ่านตารางฐานตรงๆ ก็ต้องได้ 0 แถว (ไม่ใช่ error · ไม่ใช่บางคอลัมน์)
+  select count(*) into n_staff from sri_os.transactions;
+  if n_staff <> 0 then raise exception 'FAIL: C7c Staff เห็น transactions % แถว', n_staff; end if;
+  select count(*) into n_staff from sri_os.transaction_lines;
+  if n_staff <> 0 then raise exception 'FAIL: C7c Staff เห็น transaction_lines % แถว', n_staff; end if;
+  -- ผู้ใช้ที่ไม่มีแถวใน app_users และระดับที่ไม่มีสิทธิ์เลย ก็ต้อง 0 แถว (ไม่ fail open)
+  perform pg_temp.login('ghost');
+  if (select count(*) from sri_os.v_ledger_posted) <> 0
+     or (select count(*) from sri_os.transactions) <> 0 then
+    raise exception 'FAIL: C7c ผู้ใช้ที่ไม่มีแถวใน app_users อ่านสมุดเงินได้';
+  end if;
+  perform pg_temp.login('nobody');
+  if (select count(*) from sri_os.v_ledger_posted) <> 0
+     or (select count(*) from sri_os.transaction_lines) <> 0 then
+    raise exception 'FAIL: C7c ระดับที่ไม่มีสิทธิ์เลยอ่านสมุดเงินได้';
+  end if;
+  raise notice 'ok C7c · v_ledger_posted/voided อ่านได้ตามระดับ · Staff/ghost/ไม่มีสิทธิ์ = 0 แถว ไม่ใช่ error';
+end $$;
+
+reset role;
+
+-- ---------- C7d · guard ต้องจับของใหม่และทางอ้อมของสมุดเงินได้จริง ----------
+do $$
+declare n int;
+begin
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (1) คอลัมน์ใหม่ใน transactions ที่ยังไม่จัดประเภท → guard แดง
+  alter table sri_os.transactions add column zz_ce_probe text;
+  select count(*) into n from sri_os.fn_column_exposure_unclassified()
+   where object_name = 'transactions.zz_ce_probe';
+  if n <> 1 then
+    raise exception 'FAIL: C7d guard หาคอลัมน์ใหม่ของ transactions ไม่เจอ → สมุดเงินเพิ่มคอลัมน์ได้เงียบๆ';
+  end if;
+  perform pg_temp.must_raise('C7d คอลัมน์ใหม่ของสมุดเงิน',
+    'select sri_os.fn_column_exposure_guard()', 'ยังไม่จัดประเภท');
+  alter table sri_os.transactions drop column zz_ce_probe;
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (2) policy อ่านกว้างขึ้น → เหตุผลของ row ตาย → แดง
+  create policy zz_ce_wide_txn on sri_os.transactions for select to authenticated using (true);
+  perform pg_temp.must_raise('C7d policy อ่าน transactions ถูกผ่อน',
+    'select sri_os.fn_column_exposure_guard()', 'ไม่ติดจริง');
+  drop policy zz_ce_wide_txn on sri_os.transactions;
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (3) ทางอ้อมแบบ definer: ฟังก์ชันที่เจ้าของเป็นเจ้าของตาราง อ่าน transactions
+  --     ให้ authenticated เรียกได้ และไม่ถามสิทธิ์ → แดง
+  create or replace function sri_os.zz_ce_leak_fn()
+  returns table (id uuid, memo text)
+  language sql stable security definer set search_path = '' as $f$
+    select t.id, t.memo from sri_os.transactions t
+  $f$;
+  grant execute on function sri_os.zz_ce_leak_fn() to authenticated;
+  select count(*) into n from sri_os.fn_column_exposure_row_escapes()
+   where function_name = 'zz_ce_leak_fn';
+  if n <> 1 then
+    raise exception 'FAIL: C7d guard หาทางอ้อมแบบ definer ไม่เจอ → row กลายเป็นตรายาง';
+  end if;
+  perform pg_temp.must_raise('C7d ทางอ้อมแบบ definer ที่ไม่ถามสิทธิ์',
+    'select sri_os.fn_column_exposure_guard()', 'ไม่ติดจริง');
+
+  -- (3b) ถ้าฟังก์ชันเดียวกันถามสิทธิ์ที่ **ครอบ** ledger.read ต้องผ่าน
+  --      (settings.manage วันนี้มีแต่ระดับที่มี ledger.read อยู่แล้ว → ครอบ)
+  create or replace function sri_os.zz_ce_leak_fn()
+  returns table (id uuid, memo text)
+  language sql stable security definer set search_path = '' as $f$
+    select t.id, t.memo from sri_os.transactions t
+     where sri_os.fn_can('settings.manage')
+  $f$;
+  perform sri_os.fn_column_exposure_guard();
+  -- (3c) แต่ถ้าถามสิทธิ์ที่ Staff ก็มี (txn.create) → ไม่ครอบ → ต้องแดงอีก
+  create or replace function sri_os.zz_ce_leak_fn()
+  returns table (id uuid, memo text)
+  language sql stable security definer set search_path = '' as $f$
+    select t.id, t.memo from sri_os.transactions t where sri_os.fn_can('txn.create')
+  $f$;
+  perform pg_temp.must_raise('C7d ทางอ้อมที่ถามสิทธิ์ซึ่งไม่ครอบ ledger.read',
+    'select sri_os.fn_column_exposure_guard()', 'ไม่ติดจริง');
+  drop function sri_os.zz_ce_leak_fn();
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (4) allow-list: ถอน fn_reverse_link_ok ออก → ต้องกลายเป็นทางอ้อมที่ไม่ได้ตัดสิน
+  delete from sri_os.column_exposure_definer_reads where function_name = 'fn_reverse_link_ok';
+  select count(*) into n from sri_os.fn_column_exposure_row_escapes()
+   where function_name = 'fn_reverse_link_ok';
+  if n <> 1 then
+    raise exception 'FAIL: C7d ถอน allow-list แล้วยังไม่เจอ fn_reverse_link_ok → allow-list ไม่ได้ทำงาน (guard ข้อ 9 ผ่านฟรีๆ)';
+  end if;
+  insert into sri_os.column_exposure_definer_reads(function_name, table_name, reason)
+    values ('fn_reverse_link_ok', 'transactions',
+            'คืนแค่ boolean · trigger ที่เรียกมันไม่ใช่ definer จึงต้องเรียกได้ด้วยสิทธิ์ผู้คีย์ (คืนค่าเดิมหลังเทสต์)');
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (5) allow-list ที่อ้างฟังก์ชันไม่มีจริง → แดง
+  insert into sri_os.column_exposure_definer_reads(function_name, table_name, reason)
+    values ('fn_zz_ce_ไม่มีจริง', 'transactions', 'แถวทดสอบว่า guard จับ allow-list ที่อ้างของที่ไม่มีจริงได้');
+  perform pg_temp.must_raise('C7d allow-list อ้างฟังก์ชันที่ไม่มี',
+    'select sri_os.fn_column_exposure_guard()', 'ไม่ติดจริง');
+  delete from sri_os.column_exposure_definer_reads where function_name = 'fn_zz_ce_ไม่มีจริง';
+  perform sri_os.fn_column_exposure_guard();
+
+  -- (6) role ที่มี bypassrls ได้ select บนสมุดเงิน → `row` ไม่มีด่านอะไรเลย → แดง
+  --     สร้าง role ชั่วคราวที่มี bypassrls เอง **ไม่พึ่ง service_role ของ harness**
+  --     เพราะ harness ในเครื่องสร้าง service_role แบบไม่มี bypassrls (ของจริงบน
+  --     Supabase มี) → ถ้าพึ่งมัน เคสนี้จะถูกข้ามเงียบๆ ในที่เดียวที่รันเทสต์จริง
+  create role zz_ce_bypass nologin bypassrls;
+  grant usage on schema sri_os to zz_ce_bypass;
+  grant select on sri_os.transactions to zz_ce_bypass;
+  select count(*) into n from sri_os.fn_column_exposure_breaches()
+   where breach_kind = 'bypassrls_grant';
+  if n < 1 then
+    raise exception 'FAIL: C7d(6) grant สมุดเงินให้ role ที่มี bypassrls แล้ว guard ไม่เห็น → การจัดประเภทแบบ row ไม่มีด่านจริงสำหรับ role พวกนี้';
+  end if;
+  perform pg_temp.must_raise('C7d grant สมุดเงินให้ role ที่มี bypassrls',
+    'select sri_os.fn_column_exposure_guard()', 'ไม่ติดจริง');
+  revoke select on sri_os.transactions from zz_ce_bypass;
+  revoke usage on schema sri_os from zz_ce_bypass;
+  drop role zz_ce_bypass;
+  perform sri_os.fn_column_exposure_guard();
+  -- และของจริง: ถ้าคลัสเตอร์นี้มี service_role ที่มี bypassrls มันต้องไม่มีสิทธิ์อยู่แล้ว
+  if exists (select 1 from pg_roles where rolname = 'service_role' and rolbypassrls)
+     and has_table_privilege('service_role', 'sri_os.transactions', 'select') then
+    raise exception 'FAIL: C7d(6) service_role (bypassrls) อ่าน transactions ได้';
+  end if;
+
+  raise notice 'ok C7d · guard แดงจริงทั้ง 6 เคสของสมุดเงิน (คอลัมน์ใหม่ · policy ถูกผ่อน · definer ไม่ถามสิทธิ์ · ถามสิทธิ์ที่ไม่ครอบ · allow-list ถูกถอน/ค้าง · bypassrls)';
 end $$;
 
 drop view sri_os.zz_ce_leak_view;
