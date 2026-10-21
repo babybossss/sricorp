@@ -14,14 +14,30 @@
 
 ### หาค่า
 
-1. เปิด https://supabase.com/dashboard/project/oyigmbmxxlfhkrevsmxo/settings/database
-2. เลื่อนหา **Connection string** → แท็บ **URI**
-3. กด **Copy** · จะได้รูปแบบ
-   ```
-   postgresql://postgres.oyigmbmxxlfhkrevsmxo:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
-   ```
-4. แทน `[YOUR-PASSWORD]` ด้วยรหัสผ่านฐานข้อมูลจริง
-   **จำไม่ได้** → ปุ่ม **Reset database password** หน้าเดียวกัน (ตั้งใหม่ได้ ไม่กระทบข้อมูล)
+> แก้ 21/10 — ของเดิมในคู่มือนี้ชี้ไป Settings → Database ซึ่ง **หาไม่เจอแล้ว**
+> Supabase ย้ายไปอยู่หลังปุ่ม **Connect** · ตรวจกับเอกสาร Supabase ปัจจุบันแล้ว
+
+1. เปิด https://supabase.com/dashboard/project/oyigmbmxxlfhkrevsmxo
+2. กดปุ่ม **Connect** — อยู่ **แถบบนสุดของหน้า** (ไม่ได้อยู่ในเมนู Settings อีกแล้ว)
+3. จะมีให้เลือก 3 แบบ · **เลือก `Session pooler`** (พอร์ต 5432)
+
+   | แบบ | พอร์ต | ใช้ไหม |
+   |---|---|---|
+   | Direct connection | 5432 | **ไม่** — เป็น IPv6 เครื่องที่ผมรันอยู่ต่อไม่ได้ |
+   | **Session pooler** | **5432** | ✅ **อันนี้** — ใช้ได้กับเครือข่าย IPv4 และรองรับ migration |
+   | Transaction pooler | 6543 | **ไม่** — สำหรับ serverless · ใช้ apply migration ไม่ได้ดี |
+
+4. กด **Copy** แล้วแทน `[YOUR-PASSWORD]` ด้วยรหัสผ่านฐานข้อมูลจริง
+   **จำไม่ได้** → รีเซ็ตได้ที่ **Database → Settings** (ตั้งใหม่ได้ ไม่กระทบข้อมูล)
+
+> **ชื่อ host ของ pooler เดาจากภูมิภาคไม่ได้** มันต่างกันไปตาม project
+> ต้องก๊อปจากหน้า Connect เท่านั้น · ส่วนชื่อผู้ใช้ก็ต่างกัน:
+> Direct ใช้ `postgres` · pooler ใช้ `postgres.oyigmbmxxlfhkrevsmxo`
+
+### ⚠️ ถ้ารหัสผ่านมีอักขระพิเศษ
+`&` · `#` · `?` · `%` · `@` หรือ **เว้นวรรค** ใน connection string จะทำให้ต่อไม่ติด
+(ต้องเข้ารหัสแบบ percent-encode ซึ่งยุ่ง)
+→ **ทางที่ง่ายกว่า**: รีเซ็ตรหัสผ่านให้มีแค่ **ตัวอักษรกับตัวเลข** แล้วค่อยก๊อป
 
 ### ใส่ค่า
 
