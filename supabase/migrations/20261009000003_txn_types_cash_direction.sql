@@ -1,6 +1,20 @@
 -- ============================================================
 -- SRI OS · ตารางกฎฝั่ง DB ต้องเก็บ `cash: "none"` ได้ (คอลัมน์ txn_types.cash_direction)
 --
+-- ------------------------------------------------------------
+-- ⚠ เงื่อนไขที่ต้องจริงตลอดไป (แก้ไฟล์นี้ 22/10 · D-106 · D-090)
+-- ------------------------------------------------------------
+-- ไฟล์นี้ถูกแก้หลังวันที่เขียนครั้งแรก ซึ่ง D-090 ห้ามทำกับไฟล์ที่ apply ไปแล้ว
+-- ทำได้เพราะตรวจแล้ว 22/10 ว่า **หมายเลขรุ่นใน project เดิม
+-- (`oyigmbmxxlfhkrevsmxo`) เป็นคนละชุดกับชื่อไฟล์ในรีโปนี้ทั้งหมด**
+-- (ของจริง `20260917160457` · ของรีโป `20260917000001`) → ไฟล์พวกนี้
+-- **ไม่เคยถูก apply ในฐานะไฟล์** และ project ใหม่เริ่มจากศูนย์
+--
+-- **ห้ามเอาไฟล์ในรีโปนี้ไป apply กับ project เดิม (`oyigmbmxxlfhkrevsmxo`) อีก**
+-- เงื่อนไขนี้คือสิ่งเดียวที่ทำให้การแก้ไฟล์เก่าปลอดภัย · ถ้าวันหนึ่งมีใครจะ
+-- apply ย้อนกับ project เดิม ต้องถือว่าสมมติฐานนี้ตายแล้ว และต้องตรวจ
+-- ทุกไฟล์ที่ถูกแก้ย้อนหลังใหม่ทั้งหมดก่อน
+--
 -- ย้อนกลับ (rollback):
 --   alter table sri_os.txn_types drop constraint if exists txn_types_cash_direction_matches_direction;
 --   alter table sri_os.txn_types drop constraint if exists txn_types_cash_direction_values;
@@ -55,6 +69,21 @@ alter table sri_os.txn_types
 update sri_os.txn_types
    set cash_direction = case direction when 1 then 'in' when -1 then 'out' else 'both' end
  where cash_direction is null;
+
+-- ---------- บังคับให้ด่าน deferred ยิงก่อน DDL ----------
+-- `txn_types` มี constraint trigger แบบ `deferrable initially deferred`
+-- (`trg_assert_accrual_clearable` ของ 20261006000003) · การ update ข้างบน
+-- จึง **ค้าง trigger event ไว้จนจบ transaction** และ Postgres ปฏิเสธ DDL
+-- ตัวถัดไปด้วย `cannot ALTER TABLE because it has pending trigger events`
+-- (วัดแล้ว 20/10 · D-106 — ต้นเหตุที่ลากไฟล์พังต่ออีก 8 ไฟล์ตอน replay
+--  จาก DB เปล่า · ตอนรันแบบไม่ atomic ไม่เจอ เพราะ trigger ยิงท้ายทุกคำสั่ง
+--  = สิ่งที่เทสต์กับสิ่งที่ apply เป็นคนละอย่าง)
+--
+-- `set constraints all immediate` **ไม่ลดความเข้มอะไรเลย** — มันบังคับให้ด่าน
+-- ที่ค้างอยู่ตรวจ **เดี๋ยวนี้** แทนที่จะตรวจตอน commit · ถ้าแถวไหนละเมิด
+-- ไฟล์นี้จะพังที่บรรทัดนี้ (เสียงดัง) ไม่ใช่ผ่านไปเงียบๆ
+-- ผลข้างเคียงคือด่านที่เหลือในไฟล์นี้ก็ตรวจทันทีเช่นกัน ซึ่งเข้มกว่าเดิม
+set constraints all immediate;
 
 alter table sri_os.txn_types
   alter column cash_direction set not null;
