@@ -79,4 +79,16 @@ begin
     raise exception 'constraint ของตารางกฎหายไปหรือยังไม่ validate: % — '
       'ไฟล์ที่ควรใส่คือ 20260918000003 และ 20261007000002', missing;
   end if;
+
+  -- 6. ชื่อบัญชีชั่วคราวของ `20260918000005a_coa_commodity_fk_target.sql` ต้องถูกเขียนทับแล้ว
+  --    (ไฟล์นั้นใส่แถว 1720 ไว้ล่วงหน้าเพื่อให้ FK ของไฟล์ seed ที่เรียงก่อนผังบัญชีผ่าน)
+  --    ถ้ายังค้าง = ไฟล์ seed_rules ตัวจริงไม่ได้รัน → ผังบัญชีใน DB ถือชื่อปลอม
+  select string_agg(code, ', ' order by code) into missing
+    from sri_os.chart_of_accounts
+   where name_th like '%[[BOOTSTRAP]]%';
+  if missing is not null then
+    raise exception 'ผังบัญชียังค้างชื่อชั่วคราวจากไฟล์ bootstrap ที่รหัส: % — '
+      'แปลว่าไฟล์ seed_rules ตัวจริงไม่ได้รันหลัง '
+      '20260918000005a_coa_commodity_fk_target.sql · apply ไฟล์ seed_rules ให้ครบก่อน', missing;
+  end if;
 end $$;
