@@ -73,12 +73,13 @@ MINE=20261008000009_storage_policies.sql
 # STORAGE_MIGRATION=<ไฟล์> ใช้ทดลอง mutation (ถอดการแก้ออกแล้วเทสต์ต้องแดง) แทนไฟล์จริง
 MIG_FILE=${STORAGE_MIGRATION:-$REPO/supabase/migrations/$MINE}
 
-for f in "$REPO"/supabase/migrations/*.sql; do
+# เรียงด้วย LC_ALL=C เสมอ — เหตุผลเดียวกับ scripts/apply-migrations.sh
+while IFS= read -r f; do
   name=$(basename "$f")
   in_under_test "$name" && continue
   [ "$name" = "$MINE" ] && continue
   if psql_run < "$f" >"$LOG" 2>&1; then :; else echo "  migration SKIP  $name (เหมือน harness หลัก)"; fi
-done
+done < <(printf '%s\n' "$REPO"/supabase/migrations/*.sql | LC_ALL=C sort)
 for name in $UNDER_TEST; do
   [ -f "$REPO/supabase/migrations/$name" ] && psql_run < "$REPO/supabase/migrations/$name" >/dev/null
 done

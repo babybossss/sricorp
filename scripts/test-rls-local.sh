@@ -86,7 +86,10 @@ LOG=${TMPDIR:-/tmp}/srios-mig.log
 
 fail=0
 skipped=""
-for f in "$REPO"/supabase/migrations/*.sql; do
+# เรียงด้วย LC_ALL=C เสมอ — เหตุผลเดียวกับ scripts/apply-migrations.sh
+# (locale ที่ข้าม `_` ทำให้ `...0005_` กับ `...0005a_` สลับที่ แล้วผลเทสต์
+#  ในเครื่องหนึ่งจะไม่ตรงกับอีกเครื่อง ทั้งที่ไฟล์ชุดเดียวกัน)
+while IFS= read -r f; do
   name=$(basename "$f")
   in_under_test "$name" && continue
   if psql_run < "$f" >"$LOG" 2>&1; then
@@ -99,7 +102,7 @@ for f in "$REPO"/supabase/migrations/*.sql; do
     skipped="$skipped$name|$(grep -m1 -i 'ERROR' "$LOG" | cut -c1-120)
 "
   fi
-done
+done < <(printf '%s\n' "$REPO"/supabase/migrations/*.sql | LC_ALL=C sort)
 
 for name in $UNDER_TEST; do
   [ -f "$REPO/supabase/migrations/$name" ] || continue

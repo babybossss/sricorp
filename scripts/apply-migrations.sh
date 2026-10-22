@@ -149,7 +149,11 @@ is_deferred() { local x; for x in "${deferred[@]}"; do [ "$x" = "$1" ] && return
 
 pending_early=()
 pending_late=()
-for f in "$MIG_DIR"/*.sql; do
+# **เรียงด้วย LC_ALL=C เสมอ** ไม่ใช่ปล่อยให้ glob เรียงตาม locale ของเครื่องที่รัน
+# locale หลายตัวข้าม `_` ตอนเทียบ → ชื่อที่ต่างกันแค่ตัวที่ 15 เช่น
+# `...0005_coa_retained` กับ `...0005a_coa_commodity` จะสลับลำดับกันระหว่างเครื่อง
+# แล้วไฟล์ seed จะอ้างรหัสบัญชีที่ยังไม่เกิด · ลำดับการ apply ต้องไม่ขึ้นกับเครื่อง
+while IFS= read -r f; do
   name=$(basename "$f")
   ver=${name%%_*}
   # เช็คลำดับก่อนเช็คว่า apply แล้ว ไม่งั้นไฟล์ที่เข้าทั้งสองเงื่อนไขจะถูกพิมพ์สองรอบ
@@ -160,7 +164,7 @@ for f in "$MIG_DIR"/*.sql; do
   else
     pending_early+=("$f")
   fi
-done
+done < <(printf '%s\n' "$MIG_DIR"/*.sql | LC_ALL=C sort)
 # ไฟล์ที่เลื่อนไว้ ต่อท้ายตามลำดับใน migration-order.txt (ไม่ใช่ตามชื่อ)
 for n in "${deferred[@]}"; do
   ver=${n%%_*}
