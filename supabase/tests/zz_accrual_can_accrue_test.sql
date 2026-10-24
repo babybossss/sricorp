@@ -121,14 +121,20 @@ exception when others then
 end $fn$;
 
 create or replace function pg_temp.mk(p_id uuid, p_owner text, p_type text,
-                                      p_cash date, p_lines jsonb) returns uuid
+                                      p_cash date, p_lines jsonb,
+                                      p_ref text default null) returns uuid
 language plpgsql as $fn$
 declare r jsonb;
 begin
+  /**
+   * `p_ref` = เลขอ้างอิงการล้าง `<id ต้นทาง>-clr-<n>` — **ใบที่ลดบัญชีพักต้องส่งมา**
+   * (20261025000007) เพราะ DB เติม `clears_id` จากค่านี้ และด่านกันล้างเกินปฏิเสธ
+   * ใบที่ลดบัญชีพักโดยไม่มีลิงก์ไปรายการต้นทาง (เดิมไม่ส่งก็ไม่ถูกตรวจ = ล้างเกินได้)
+   */
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
-                                  attachments, contact_id)
+                                  attachments, contact_id, source_ref)
   values (p_id, pg_temp.own(p_owner), p_type, current_date, p_cash, 'CA ' || p_id::text,
-          array['หลักฐาน CA.pdf'], '00000000-0000-0000-0000-0000000ca700');
+          array['หลักฐาน CA.pdf'], '00000000-0000-0000-0000-0000000ca700', p_ref);
   for r in select * from jsonb_array_elements(p_lines) loop
     insert into sri_os.transaction_lines(transaction_id, coa_id, bank_account_id,
                                          debit, credit, cf_category, memo)
@@ -375,21 +381,24 @@ begin
           jsonb_build_array(
             jsonb_build_object('coa', '1100', 'dr', 30000, 'cr', 0, 'cf', 'operating',
                                'bank', %L),
-            jsonb_build_object('coa', '1200', 'dr', 0, 'cr', 30000))) $q$, pg_temp.bank('SUTEE')));
+            jsonb_build_object('coa', '1200', 'dr', 0, 'cr', 30000)),
+          '00000000-0000-0000-0000-0000000ca201-clr-1') $q$, pg_temp.bank('SUTEE')));
 
   perform pg_temp.must_pass('CA3 รับชำระดอกเบี้ยค้างรับ 5,000 (Dr 1100 / Cr 1210)', format(
     $q$ select pg_temp.mk('00000000-0000-0000-0000-0000000ca302', 'SUTEE', 'inv.collect_interest', current_date,
           jsonb_build_array(
             jsonb_build_object('coa', '1100', 'dr', 5000, 'cr', 0, 'cf', 'operating',
                                'bank', %L),
-            jsonb_build_object('coa', '1210', 'dr', 0, 'cr', 5000))) $q$, pg_temp.bank('SUTEE')));
+            jsonb_build_object('coa', '1210', 'dr', 0, 'cr', 5000)),
+          '00000000-0000-0000-0000-0000000ca202-clr-1') $q$, pg_temp.bank('SUTEE')));
 
   perform pg_temp.must_pass('CA3 จ่ายเจ้าหนี้ค้างจ่าย 8,000 (Dr 2100 / Cr 1100)', format(
     $q$ select pg_temp.mk('00000000-0000-0000-0000-0000000ca303', 'SUTEE', 'fin.pay_payable', current_date,
           jsonb_build_array(
             jsonb_build_object('coa', '2100', 'dr', 8000, 'cr', 0),
             jsonb_build_object('coa', '1100', 'dr', 0, 'cr', 8000, 'cf', 'operating',
-                               'bank', %L))) $q$, pg_temp.bank('SUTEE')));
+                               'bank', %L)),
+          '00000000-0000-0000-0000-0000000ca203-clr-1') $q$, pg_temp.bank('SUTEE')));
 
   -- ล้างแล้วยอดค้างต้องกลับไปเท่าก่อนตั้งค้าง (ไม่ค้างในงบดุล ไม่นับรายได้ซ้ำ)
   if pg_temp.net('SUTEE', '1200') <> v_b1200 - 30000

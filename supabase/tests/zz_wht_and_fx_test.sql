@@ -138,10 +138,14 @@ create or replace function pg_temp.entry(p_type text, p_memo text, p_lines jsonb
                                         p_amount numeric default null,
                                         p_cert text default null,
                                         p_cash_date date default '2026-10-31',
-                                        p_asset uuid default '00000000-0000-0000-0000-00000002a001')
+                                        p_asset uuid default '00000000-0000-0000-0000-00000002a001',
+                                        p_ref text default null)
 returns jsonb language sql stable as $fn$
+  -- `p_ref` = เลขอ้างอิงการล้าง `<id ต้นทาง>-clr-<n>` · ใบที่ลดบัญชีพักต้องส่งมา
+  -- (20261025000007 · ไม่มีลิงก์ = ปฏิเสธ ไม่ใช่ข้ามการตรวจ)
   select jsonb_strip_nulls(jsonb_build_object(
     'txn_type_code', p_type,
+    'source_ref', p_ref,
     'doc_date', '2026-10-31',
     'cash_date', case when p_cash_date is null then null else p_cash_date::text end,
     'memo', p_memo,
@@ -511,10 +515,10 @@ end $$;
 --          → **5,000 หายจากสมุดถาวร** หรือผู้ใช้ต้องลงผิดเป็นค่าใช้จ่าย
 -- ============================================================
 do $$
-declare v_recv numeric;
+declare v_recv numeric; v_src uuid;
 begin
   -- (1) ตั้งลูกหนี้ค่าเช่า — ไม่มีบรรทัดเงินสด จึงไม่มี cash_date (ด่าน cash_date)
-  perform pg_temp.post(pg_temp.entry('inc.rent', 'W8 ตั้งค้างรับค่าเช่า 100,000',
+  v_src := pg_temp.post(pg_temp.entry('inc.rent', 'W8 ตั้งค้างรับค่าเช่า 100,000',
     jsonb_build_array(
       pg_temp.ln('1200', 100000, 0, '00000000-0000-0000-0000-00000002a001', 'none'),
       pg_temp.ln('4200', 0, 100000, '00000000-0000-0000-0000-00000002a001', 'none')),
@@ -537,13 +541,15 @@ begin
    *  "เงินได้ = เงินสด + ภาษี" ถูกบังคับร่วมกันโดยด่านสมดุลกับข้อ (ง)
    *  ส่วนด่านข้อ (ค) เป็นตัวหลักของใบที่รับรู้รายได้พร้อมรับเงิน ซึ่ง W3 ทดสอบไว้)
    */
+  -- ส่งลิงก์ไปต้นทางให้ถูกต้อง เพื่อให้คนที่ปฏิเสธคือ **ด่านภาษี** ไม่ใช่ด่านลิงก์
   perform pg_temp.must_fail_like('W8b ปิดลูกหนี้ด้วยยอดสุทธิ',
-    $q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'W8b ปิดลูกหนี้ยอดสุทธิ',
+    format($q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'W8b ปิดลูกหนี้ยอดสุทธิ',
           jsonb_build_array(
             pg_temp.cash(90000, 0),
             pg_temp.ln('1800', 5000, 0, null, 'operating'),
             pg_temp.ln('1200', 0, 95000, '00000000-0000-0000-0000-00000002a001', 'operating')),
-          5, 5000, 'WHT-2569-008b')) $q$,
+          5, 5000, 'WHT-2569-008b', '2026-10-31',
+          '00000000-0000-0000-0000-00000002a001', %L)) $q$, v_src::text || '-clr-1'),
     'ยอดเต็ม');
 
   -- (3) รับชำระโดยถูกหักภาษี 5% — ลูกหนี้ต้องปิด **ยอดเต็ม** 100,000
@@ -552,7 +558,8 @@ begin
       pg_temp.cash(95000, 0),
       pg_temp.ln('1800', 5000, 0, null, 'operating'),
       pg_temp.ln('1200', 0, 100000, '00000000-0000-0000-0000-00000002a001', 'operating')),
-    5, 5000, 'WHT-2569-008'));
+    5, 5000, 'WHT-2569-008', '2026-10-31',
+    '00000000-0000-0000-0000-00000002a001', v_src::text || '-clr-2'));
 
   select coalesce(sum(l.debit - l.credit), 0) into v_recv
     from sri_os.transaction_lines l

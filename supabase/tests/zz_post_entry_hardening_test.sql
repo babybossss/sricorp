@@ -645,7 +645,7 @@ declare
   v_t uuid := (select id from sri_os.owners where code='THANAKORN');
   v_s uuid := (select id from sri_os.owners where code='SUTEE');
   v_corp uuid := (select id from sri_os.owners where code='SRI_CORP');
-  v_out jsonb; v_ids uuid[]; v_src uuid; v_n int;
+  v_out jsonb; v_ids uuid[]; v_src uuid; v_accr uuid; v_n int;
 begin
   -- (ก) รายการปกติ
   v_out := sri_os.fn_post_entry(pg_temp.rent('H8 ปกติ'));
@@ -653,16 +653,19 @@ begin
   if (v_out ->> 'replayed')::boolean then raise exception 'FAIL: รายการปกติถูกมองเป็น replay'; end if;
 
   -- (ข) ค้างรับ (ไม่มีขาเงินสด ไม่มี cash_date)
-  perform sri_os.fn_post_entry(jsonb_build_object(
+  v_out := sri_os.fn_post_entry(jsonb_build_object(
     'txn_type_code','inc.rent','doc_date','2026-09-14','memo','H8 ค้างรับ',
     'transactions', jsonb_build_array(jsonb_build_object('owner_id', v_t,
       'lines', jsonb_build_array(
         jsonb_build_object('coa_code','1200','debit',31500,'credit',0,'cf_category','none'),
         jsonb_build_object('coa_code','4200','debit',0,'credit',31500,'cf_category','none'))))));
+  v_accr := ((v_out -> 'transaction_ids') ->> 0)::uuid;
 
   -- (ค) ล้างยอดค้าง (หมวดทางล้างของตารางกฎ: inv.collect_rent 1100/1200)
+  --     ต้องมีลิงก์ไปใบตั้งค้าง (20261025000007 · ไม่มีลิงก์ = ปฏิเสธ)
   perform sri_os.fn_post_entry(jsonb_build_object(
     'txn_type_code','inv.collect_rent','doc_date','2026-09-15','cash_date','2026-09-15','memo','H8 ล้างค้างรับ',
+    'source_ref', v_accr::text || '-clr-1',
     'transactions', jsonb_build_array(jsonb_build_object('owner_id', v_t,
       'lines', jsonb_build_array(
         jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-0000000d0001','debit',31500,'credit',0,'cf_category','operating'),

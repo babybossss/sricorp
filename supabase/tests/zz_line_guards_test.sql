@@ -434,7 +434,7 @@ declare
   v_t uuid := (select id from sri_os.owners where code='THANAKORN');
   v_s uuid := (select id from sri_os.owners where code='SUTEE');
   v_c uuid := (select id from sri_os.owners where code='SRI_CORP');
-  v_out jsonb; v_rent uuid; v_n int; v_bad text;
+  v_out jsonb; v_rent uuid; v_accr uuid; v_n int; v_bad text;
 begin
   -- 1 · ปกติ: ค่าเช่าเข้าบัญชี
   v_out := sri_os.fn_post_entry(jsonb_build_object(
@@ -445,15 +445,17 @@ begin
   v_rent := ((v_out -> 'transaction_ids') ->> 0)::uuid;
 
   -- 2 · ค้างรับ (ไม่มีบรรทัดเงินสด → cash_date ต้องเป็น null)
-  perform sri_os.fn_post_entry(jsonb_build_object(
+  v_out := sri_os.fn_post_entry(jsonb_build_object(
     'txn_type_code','inc.rent','doc_date','2026-09-05','memo','G7-2',
     'transactions', jsonb_build_array(jsonb_build_object('owner_id', v_t, 'lines', jsonb_build_array(
       jsonb_build_object('coa_code','1200','debit',8000,'credit',0,'cf_category','none'),
       jsonb_build_object('coa_code','4200','debit',0,'credit',8000,'cf_category','none'))))));
+  v_accr := ((v_out -> 'transaction_ids') ->> 0)::uuid;
 
-  -- 3 · ล้างค้าง (เก็บค่าเช่าที่ค้างไว้)
+  -- 3 · ล้างค้าง (เก็บค่าเช่าที่ค้างไว้) — ต้องมีลิงก์ไปใบตั้งค้าง (20261025000007)
   perform sri_os.fn_post_entry(jsonb_build_object(
     'txn_type_code','inv.collect_rent','doc_date','2026-09-10','cash_date','2026-09-10','memo','G7-3',
+    'source_ref', v_accr::text || '-clr-1',
     'transactions', jsonb_build_array(jsonb_build_object('owner_id', v_t, 'lines', jsonb_build_array(
       jsonb_build_object('coa_code','1100','bank_account_id','00000000-0000-0000-0000-00000001b001','debit',8000,'credit',0,'cf_category','operating'),
       jsonb_build_object('coa_code','1200','debit',0,'credit',8000,'cf_category','operating'))))));

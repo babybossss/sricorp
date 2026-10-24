@@ -161,14 +161,15 @@ end $fn$;
  * **ไม่ใส่ค่า default ให้ cash_date** โดยตั้งใจ (บทเรียนข้อ 3)
  */
 create or replace function pg_temp.mk(p_id uuid, p_owner text, p_type text,
-                                      p_cash date, p_lines jsonb) returns uuid
+                                      p_cash date, p_lines jsonb,
+                                      p_ref text default null) returns uuid
 language plpgsql as $fn$
 declare r jsonb;
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
-                                  attachments, contact_id)
+                                  attachments, contact_id, source_ref)
   values (p_id, pg_temp.own(p_owner), p_type, current_date, p_cash, 'AF ' || p_id::text,
-          array['รายงานอายุลูกหนี้.pdf'], '00000000-0000-0000-0000-0000000fac01');
+          array['รายงานอายุลูกหนี้.pdf'], '00000000-0000-0000-0000-0000000fac01', p_ref);
   for r in select * from jsonb_array_elements(p_lines) loop
     insert into sri_os.transaction_lines(transaction_id, coa_id, bank_account_id,
                                          debit, credit, cf_category, memo)
@@ -183,6 +184,48 @@ end $fn$;
 create or replace function pg_temp.bank(p_owner text) returns uuid
 language sql stable as $fn$
   select id from sri_os.bank_accounts where owner_id = pg_temp.own(p_owner) and display_name like 'AF %'
+$fn$;
+
+
+/**
+ * เลขอ้างอิงการล้างของ **ใบค้างรับ/ค้างจ่ายที่ยังเปิดอยู่** ของผู้ถือนี้ (20261025000007)
+ *
+ * ตั้งแต่ไฟล์นั้น ใบที่ **ลดบัญชีพัก** ต้องมีลิงก์ไปรายการต้นทางเสมอ (DB เติม
+ * `clears_id` จาก `source_ref`) · ไม่มีลิงก์ = ปฏิเสธ ไม่ใช่ข้ามการตรวจ
+ * (รูเดิม: ไม่ส่งเลขอ้างอิงก็ล้างเกินได้ โดยยอดรวมของผู้ถือยังบวกอยู่)
+ *
+ * เทสต์ชุดนี้ไม่ได้ทดสอบเรื่องลิงก์ จึงหาต้นทางที่เปิดอยู่ให้เองจากสมุด
+ * และนับงวดถัดไปให้ไม่ซ้ำ (index กันเลขซ้ำต่อต้นทาง)
+ */
+create or replace function pg_temp.clr_ref(p_owner text, p_amt numeric,
+                                           p_code text default '1200') returns text
+language sql as $fn$
+  -- เลือกต้นทางที่ **ยอดค้างคงเหลือ** (ตั้งค้าง − ที่ล้างไปแล้วผ่าน clears_id)
+  -- พอสำหรับยอดนี้ · ถ้าไม่มีให้คืน null แล้วด่านจะอธิบายเอง (เทสต์จะไม่เขียวเงียบๆ)
+  select src.id::text || '-clr-' ||
+         (1 + (select count(*) from sri_os.transactions x where x.clears_id = src.id))::text
+    from (
+      select t.id,
+             (select coalesce(sum(case when c.type = 'liability' then l2.credit - l2.debit
+                                       else l2.debit - l2.credit end), 0)
+                from sri_os.transactions t2
+                join sri_os.transaction_lines l2 on l2.transaction_id = t2.id
+                join sri_os.chart_of_accounts c on c.id = l2.coa_id
+               where t2.status <> 'void' and c.code = p_code
+                 and (t2.id = t.id or t2.reverses_id = t.id
+                      or t2.clears_id = t.id
+                      or t2.reverses_id in (select x.id from sri_os.transactions x
+                                             where x.clears_id = t.id))) as remaining
+        from sri_os.transactions t
+       where t.owner_id = pg_temp.own(p_owner) and t.status <> 'void'
+         and t.clears_id is null and t.reverses_id is null
+         and exists (select 1 from sri_os.transaction_lines l
+                      join sri_os.chart_of_accounts c on c.id = l.coa_id
+                     where l.transaction_id = t.id and c.code = p_code)
+    ) src
+   where src.remaining >= p_amt
+   order by src.remaining
+   limit 1;
 $fn$;
 
 -- ตั้งลูกหนี้ค่าเช่าค้างรับ (Dr 1200 / Cr 4200) — ไม่มีขาเงินสด
@@ -206,7 +249,8 @@ create or replace function pg_temp.mk_writeoff(p_id uuid, p_owner text, p_amt nu
 language sql as $fn$
   select pg_temp.mk(p_id, p_owner, 'adj.writeoff_rent', null,
     jsonb_build_array(jsonb_build_object('coa', '1290', 'dr', p_amt, 'cr', 0),
-                      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)))
+                      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)),
+    pg_temp.clr_ref(p_owner, p_amt))
 $fn$;
 
 -- กลับค่าเผื่อ (Dr 1290 / Cr 5920)
@@ -224,7 +268,8 @@ language sql as $fn$
     jsonb_build_array(
       jsonb_build_object('coa', '1100', 'dr', p_amt, 'cr', 0, 'cf', 'operating',
                          'bank', pg_temp.bank(p_owner)),
-      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)))
+      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)),
+    pg_temp.clr_ref(p_owner, p_amt))
 $fn$;
 
 -- **หนี้สูญได้รับคืน** (Dr 1100 / Cr 4320) — หมวดใหม่ของข้อ 2

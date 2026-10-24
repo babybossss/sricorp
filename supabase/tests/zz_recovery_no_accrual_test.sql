@@ -155,14 +155,15 @@ begin
 end $fn$;
 
 create or replace function pg_temp.mk(p_id uuid, p_owner text, p_type text,
-                                      p_cash date, p_lines jsonb) returns uuid
+                                      p_cash date, p_lines jsonb,
+                                      p_ref text default null) returns uuid
 language plpgsql as $fn$
 declare r jsonb;
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
-                                  attachments, contact_id)
+                                  attachments, contact_id, source_ref)
   values (p_id, pg_temp.own(p_owner), p_type, current_date, p_cash, 'RN ' || p_id::text,
-          array['รายงานอายุลูกหนี้.pdf'], '00000000-0000-0000-0000-0000000ac703');
+          array['รายงานอายุลูกหนี้.pdf'], '00000000-0000-0000-0000-0000000ac703', p_ref);
   for r in select * from jsonb_array_elements(p_lines) loop
     insert into sri_os.transaction_lines(transaction_id, coa_id, bank_account_id,
                                          debit, credit, cf_category, memo)
@@ -180,6 +181,41 @@ language sql stable as $fn$
 $fn$;
 
 -- ตั้งลูกหนี้ค่าเช่าค้างรับ (Dr 1200 / Cr 4200) — ลูกหนี้ **จริง** ที่มาจากรายได้
+
+/**
+ * เลขอ้างอิงการล้างของใบค้างที่ยังเปิดอยู่ (20261025000007 — ใบที่ลดบัญชีพัก
+ * ต้องมีลิงก์ไปรายการต้นทางเสมอ · ไม่มีลิงก์ = ปฏิเสธ ไม่ใช่ข้ามการตรวจ)
+ * เทสต์ชุดนี้ไม่ได้ทดสอบเรื่องลิงก์ จึงหาต้นทางที่ยอดค้างคงเหลือพอให้เอง
+ */
+create or replace function pg_temp.clr_ref(p_owner text, p_amt numeric,
+                                           p_code text default '1200') returns text
+language sql as $fn$
+  select src.id::text || '-clr-' ||
+         (1 + (select count(*) from sri_os.transactions x where x.clears_id = src.id))::text
+    from (
+      select t.id,
+             (select coalesce(sum(case when c.type = 'liability' then l2.credit - l2.debit
+                                       else l2.debit - l2.credit end), 0)
+                from sri_os.transactions t2
+                join sri_os.transaction_lines l2 on l2.transaction_id = t2.id
+                join sri_os.chart_of_accounts c on c.id = l2.coa_id
+               where t2.status <> 'void' and c.code = p_code
+                 and (t2.id = t.id or t2.reverses_id = t.id
+                      or t2.clears_id = t.id
+                      or t2.reverses_id in (select x.id from sri_os.transactions x
+                                             where x.clears_id = t.id))) as remaining
+        from sri_os.transactions t
+       where t.owner_id = pg_temp.own(p_owner) and t.status <> 'void'
+         and t.clears_id is null and t.reverses_id is null
+         and exists (select 1 from sri_os.transaction_lines l
+                      join sri_os.chart_of_accounts c on c.id = l.coa_id
+                     where l.transaction_id = t.id and c.code = p_code)
+    ) src
+   where src.remaining >= p_amt
+   order by src.remaining
+   limit 1;
+$fn$;
+
 create or replace function pg_temp.mk_recv(p_id uuid, p_owner text, p_amt numeric) returns uuid
 language sql as $fn$
   select pg_temp.mk(p_id, p_owner, 'inc.rent', null,
@@ -199,7 +235,8 @@ create or replace function pg_temp.mk_writeoff(p_id uuid, p_owner text, p_amt nu
 language sql as $fn$
   select pg_temp.mk(p_id, p_owner, 'adj.writeoff_rent', null,
     jsonb_build_array(jsonb_build_object('coa', '1290', 'dr', p_amt, 'cr', 0),
-                      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)))
+                      jsonb_build_object('coa', '1200', 'dr', 0, 'cr', p_amt)),
+    pg_temp.clr_ref(p_owner, p_amt, '1200'))
 $fn$;
 
 -- ตัดหนี้สูญ **ลูกหนี้อื่น 1220** (Dr 1290 / Cr 1220) — ขั้นที่ 3 ของวงปั๊ม
@@ -207,7 +244,8 @@ create or replace function pg_temp.mk_writeoff_other(p_id uuid, p_owner text, p_
 language sql as $fn$
   select pg_temp.mk(p_id, p_owner, 'adj.writeoff_other', null,
     jsonb_build_array(jsonb_build_object('coa', '1290', 'dr', p_amt, 'cr', 0),
-                      jsonb_build_object('coa', '1220', 'dr', 0, 'cr', p_amt)))
+                      jsonb_build_object('coa', '1220', 'dr', 0, 'cr', p_amt)),
+    pg_temp.clr_ref(p_owner, p_amt, '1220'))
 $fn$;
 
 -- รับคืนหนี้สูญ **ด้วยเงินเข้าจริง** (Dr 1100 / Cr 4320) — ทางที่ถูก ต้องผ่านเสมอ

@@ -143,14 +143,16 @@ create or replace function pg_temp.mk_txn(p_id uuid, p_owner text, p_type text,
                                           p_att text[] default array['หลักฐาน-CD.pdf'],
                                           p_source text default 'manual',
                                           p_reverses uuid default null,
-                                          p_doc date default current_date) returns uuid
+                                          p_doc date default current_date,
+                                          p_ref text default null) returns uuid
 language plpgsql as $fn$
 declare r jsonb;
 begin
   insert into sri_os.transactions(id, owner_id, txn_type_code, doc_date, cash_date, memo,
-                                  attachments, contact_id, source, reverses_id)
+                                  attachments, contact_id, source, reverses_id, source_ref)
   values (p_id, pg_temp.own(p_owner), p_type, p_doc, p_cash, 'CD ' || p_id::text,
-          p_att, '00000000-0000-0000-0000-00000000cc01', p_source::sri_os.txn_source, p_reverses);
+          p_att, '00000000-0000-0000-0000-00000000cc01', p_source::sri_os.txn_source, p_reverses,
+          p_ref);
   for r in select * from jsonb_array_elements(p_lines) loop
     insert into sri_os.transaction_lines(transaction_id, coa_id, bank_account_id,
                                          debit, credit, cf_category, memo)
@@ -553,7 +555,15 @@ begin
   --        ทั้ง fn_reverse_link_ok (ต้นฉบับมีจริง ผู้ถือเดียวกัน ยังไม่ถูกกลับรายการ)
   --        และ trg_reverse_mirrors_original (บรรทัดต้องสะท้อนตรงตัว)
   --        → ปิดทางนี้ด้วยคือกันแน่นเกิน: ใบที่ลงถูกแล้วแต่ลืมใส่ลิงก์จะซ่อมไม่ได้เลย
-  perform pg_temp.mk_txn(v_x, 'THANAKORN', 'exp.other', null, pg_temp.mirror_of(v_o2));
+  /**
+   * ใบนี้ **ลดบัญชีพัก 2100** (เป็นภาพสะท้อนของใบตั้งค้างจ่าย) และตอน insert ยังไม่มี
+   * `reverses_id` (เคสนี้ทดสอบ null → ค่า) → ตั้งแต่ 20261025000007 มันต้องมีลิงก์ไป
+   * รายการต้นทางตอนลง เพราะข้อยกเว้นของใบกลับรายการใช้ได้เฉพาะใบที่มี `reverses_id`
+   * มาแต่ต้น (ประตูส่งมาพร้อมกันในคำขอเดียว) · ยอดที่ลดเท่ากับยอดค้างพอดี จึงไม่เกิน
+   */
+  perform pg_temp.mk_txn(v_x, 'THANAKORN', 'exp.other', null, pg_temp.mirror_of(v_o2),
+                         array['หลักฐาน-CD.pdf'], 'manual', null, current_date,
+                         v_o2::text || '-clr-1');
   perform pg_temp.must_pass('C8c ตั้ง reverses_id จาก null เป็นค่าที่สะท้อนบรรทัดจริง', format(
     $q$ select pg_temp.upd(%L) $q$,
     format($u$ update sri_os.transactions set reverses_id = %L, source = 'reverse' where id = %L $u$,

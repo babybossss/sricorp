@@ -583,6 +583,308 @@ begin
   raise notice 'ok K7b · index และ trigger กลับมาหลัง rollback · ไม่มีใบของ mutation ค้างในสมุด';
 end $$;
 
+-- ============================================================
+-- K8..K11 · **รูที่ผู้ตรวจ/ผมไล่เจอเอง (D-115)** — ด่านรุ่น 20261025000003
+--   ทำงาน **เฉพาะเมื่อผู้เรียกส่ง `source_ref` รูปใบล้าง** ซึ่งเป็นข้อความที่
+--   ผู้เรียกตั้งเอง → **ไม่ส่งก็ไม่ถูกตรวจและไม่ถูกนับ** = ล้างเกินได้เหมือนเดิม
+--   เหลือแต่ด่านหยาบระดับผู้ถือ (ซึ่ง K1e ยืนยันแล้วว่าเงียบเมื่อมีของค้างก้อนอื่นคลุม)
+--
+--   ด่านใหม่ต้องตัดสินจาก **ของที่ผู้เรียกเปลี่ยนไม่ได้**:
+--     ใครคือ "ใบที่ลดบัญชีพัก" → อ่านจากผังบัญชี + `txn_types.accrual_coa_code`
+--     ชี้ไปต้นทางไหน → คอลัมน์ **FK `clears_id`** ที่ประตูเติมให้ และต้องชี้ไป
+--     ใบที่มียอดค้างจริงของผู้ถือเดียวกัน · ไม่มีลิงก์ = **ปฏิเสธ** ไม่ใช่ข้ามการตรวจ
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- K8 · ล้าง 7,000 (มี ref) + 6,000 (**ไม่ส่ง ref**) บนของค้าง 12,000
+--      วัดก่อนแก้: ใบที่สองผ่าน → ล้างไป 13,000 · ลูกหนี้ของต้นทางนั้น **−1,000**
+-- ------------------------------------------------------------
+do $$
+declare v_src uuid; v_other uuid;
+begin
+  v_other := pg_temp.post(pg_temp.entry('inc.rent', 'K8 ของค้างก้อนอื่น 50,000',
+    jsonb_build_array(
+      pg_temp.ln('1200', 50000, 0, 'none', null, '00000000-0000-0000-0000-00000004a001'),
+      pg_temp.ln('4200', 0, 50000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+    null));
+  v_src := pg_temp.post(pg_temp.entry('inc.rent', 'K8 ตั้งค้างรับ 12,000',
+    jsonb_build_array(
+      pg_temp.ln('1200', 12000, 0, 'none', null, '00000000-0000-0000-0000-00000004a001'),
+      pg_temp.ln('4200', 0, 12000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+    null));
+
+  perform pg_temp.post(pg_temp.entry('inv.collect_rent', 'K8 ล้าง 7,000 (มีเลขอ้างอิง)',
+    jsonb_build_array(
+      pg_temp.ln('1100', 7000, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+      pg_temp.ln('1200', 0, 7000, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+    '2026-10-31', v_src::text || '-clr-1'));
+
+  -- **ไม่ส่ง source_ref เลย** — ก่อนแก้ ด่านไม่ยิงและยอดนี้ไม่ถูกนับ
+  perform pg_temp.must_fail_like('K8b ล้างโดยไม่ส่งเลขอ้างอิง',
+    $q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'K8b ล้าง 6,000 ไม่ส่งเลขอ้างอิง',
+          jsonb_build_array(
+            pg_temp.ln('1100', 6000, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+            pg_temp.ln('1200', 0, 6000, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+          '2026-10-31')) $q$,
+    'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+
+  if pg_temp.src_balance(v_src) <> 5000 then
+    raise exception 'FAIL: K8b — ใบที่ถูกปฏิเสธทิ้งผลไว้ (ยอดค้างของต้นทาง %)', pg_temp.src_balance(v_src);
+  end if;
+
+  -- ของที่ถูกต้องยังทำได้ (ด่านห้ามแน่นเกิน)
+  perform pg_temp.must_pass('K8c ล้างส่วนที่เหลือพอดีโดยมีเลขอ้างอิง',
+    format($q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'K8c ล้าง 5,000 ส่วนที่เหลือ',
+          jsonb_build_array(
+            pg_temp.ln('1100', 5000, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+            pg_temp.ln('1200', 0, 5000, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+          '2026-10-31', %L)) $q$, v_src::text || '-clr-2'));
+  if pg_temp.src_balance(v_src) <> 0 or pg_temp.src_balance(v_other) <> 50000 then
+    raise exception 'FAIL: K8c — ยอดหลังล้างครบผิด (ต้นทาง % · ก้อนอื่น %)',
+      pg_temp.src_balance(v_src), pg_temp.src_balance(v_other);
+  end if;
+  raise notice 'ok K8 · ใบที่ลดบัญชีพักโดยไม่มีลิงก์ไปต้นทางถูกปฏิเสธ (ก่อนแก้: ผ่าน → ล้าง 13,000 บนของค้าง 12,000 · ลูกหนี้ติดลบ 1,000)';
+end $$;
+
+-- ------------------------------------------------------------
+-- K9 · **ไล่ทุกรูปของลิงก์ที่คิดออก** — ทุกรูปต้องถูกปฏิเสธด้วย
+--      **เหตุผลเดียวกัน** ไม่ใช่รอดไปรูปใดรูปหนึ่ง (รูปเดียวกับที่ทำกับขา 3410)
+-- ------------------------------------------------------------
+do $$
+declare
+  v_src   uuid;
+  v_other uuid;
+  v_refs  text[];
+  v_ref   text;
+  v_n     int := 0;
+begin
+  v_other := pg_temp.post(pg_temp.entry('inc.rent', 'K9 ของค้างก้อนอื่น 50,000',
+    jsonb_build_array(
+      pg_temp.ln('1200', 50000, 0, 'none', null, '00000000-0000-0000-0000-00000004a001'),
+      pg_temp.ln('4200', 0, 50000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+    null));
+  v_src := pg_temp.post(pg_temp.entry('inc.rent', 'K9 ตั้งค้างรับ 3,000',
+    jsonb_build_array(
+      pg_temp.ln('1200', 3000, 0, 'none', null, '00000000-0000-0000-0000-00000004a001'),
+      pg_temp.ln('4200', 0, 3000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+    null));
+
+  v_refs := array[
+    'ล้างงวด ต.ค. 2569',                                        -- ข้อความอิสระ (ไม่ใช่รูปใบล้าง)
+    '00000000-0000-0000-0000-0000000000ff-clr-1',               -- ชี้ไปใบที่ไม่มีอยู่
+    v_other::text,                                              -- uuid เปล่าๆ ไม่มีรูป -clr-
+    v_src::text || '-clr'                                        -- รูปขาดเลขงวดท้าย
+    -- หมายเหตุ: ตัวพิมพ์ใหญ่ (`-CLR-1`) **ใช้ได้โดยตั้งใจ** — fn_clearing_ref_source
+    -- จับแบบไม่สนตัวพิมพ์ จึงไม่ใช่รูปที่ต้องปฏิเสธ (เคยเขียนเป็นเคสนี้แล้วพบว่าผ่าน)
+  ];
+  foreach v_ref in array v_refs loop
+    v_n := v_n + 1;
+    perform pg_temp.must_fail_like('K9 ลิงก์รูปที่ ' || v_n,
+      format($q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'K9 รูปที่ %s',
+            jsonb_build_array(
+              pg_temp.ln('1100', 1000, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+              pg_temp.ln('1200', 0, 1000, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+            '2026-10-31', %L)) $q$, v_n, v_ref),
+      'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+  end loop;
+  if v_n <> 4 then
+    raise exception 'FAIL: K9 — ลูปว่าง/ไม่ครบ (%)', v_n;
+  end if;
+
+  -- และลิงก์ที่ชี้ไปใบที่ **ไม่ได้ตั้งค้าง** (ใบเงินสดธรรมดา) ก็ไม่ได้
+  declare v_cash uuid;
+  begin
+    v_cash := pg_temp.post(pg_temp.entry('inc.rent', 'K9 รับเงินสดเลย ไม่ได้ตั้งค้าง',
+      jsonb_build_array(
+        pg_temp.ln('1100', 900, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+        pg_temp.ln('4200', 0, 900, 'operating', null, '00000000-0000-0000-0000-00000004a001'))));
+    perform pg_temp.must_fail_like('K9b ลิงก์ไปใบที่ไม่มียอดค้าง',
+      format($q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'K9b ล้างใบที่ไม่ได้ตั้งค้าง',
+            jsonb_build_array(
+              pg_temp.ln('1100', 500, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+              pg_temp.ln('1200', 0, 500, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+            '2026-10-31', %L)) $q$, v_cash::text || '-clr-1'),
+      'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+  end;
+
+  raise notice 'ok K9 · ลิงก์ทั้ง 5 รูป (ข้อความอิสระ · ใบที่ไม่มีอยู่ · uuid ไม่มีรูป -clr- · รูปเพี้ยน · ใบที่ไม่มียอดค้าง) ถูกปฏิเสธด้วยเหตุผลเดียวกัน';
+end $$;
+
+-- ------------------------------------------------------------
+-- K10 · ลิงก์ของผู้ถือคนอื่น → ปฏิเสธ
+--       (ลดลูกหนี้ของเรา แต่ไปนับกับยอดค้างของคนอื่น = ลูกหนี้ของเราติดลบเงียบๆ)
+-- ------------------------------------------------------------
+do $$
+declare v_theirs uuid;
+begin
+  -- ของค้างของสุธี (ลงเป็นใบของสุธีเอง)
+  v_theirs := ((sri_os.fn_post_entry(jsonb_build_object(
+      'txn_type_code', 'inc.rent',
+      'doc_date', '2026-10-31',
+      'memo', 'K10 ของค้างของสุธี 9,000',
+      'contact_id', '00000000-0000-0000-0000-00000004c001',
+      'attachments', jsonb_build_array('หลักฐาน.pdf'),
+      'transactions', jsonb_build_array(jsonb_build_object(
+        'owner_id', pg_temp.owner('SUTEE'),
+        'lines', jsonb_build_array(
+          pg_temp.ln('1200', 9000, 0, 'none'),
+          pg_temp.ln('4200', 0, 9000, 'none'))))
+    )) -> 'transaction_ids') ->> 0)::uuid;
+
+  perform pg_temp.must_fail_like('K10 ลิงก์ไปของค้างของผู้ถืออื่น',
+    format($q$ select pg_temp.post(pg_temp.entry('inv.collect_rent', 'K10 ล้างของค้างคนอื่น',
+          jsonb_build_array(
+            pg_temp.ln('1100', 1000, 0, 'operating', '00000000-0000-0000-0000-00000004b001'),
+            pg_temp.ln('1200', 0, 1000, 'operating', null, '00000000-0000-0000-0000-00000004a001')),
+          '2026-10-31', %L)) $q$, v_theirs::text || '-clr-1'),
+    'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+  raise notice 'ok K10 · ลิงก์ข้ามผู้ถือถูกปฏิเสธ — ยอดค้างของคนอื่นเอามาคุมการลดลูกหนี้ของเราไม่ได้';
+end $$;
+
+-- ------------------------------------------------------------
+-- K11 · **ตัดหนี้สูญก็ลดบัญชีพัก** → ต้องมีลิงก์และเกินยอดค้างไม่ได้
+--       (หมวด `adj.writeoff_*` ไม่ใช่ "ใบล้าง" ในสายตาด่านเก่าเลย จึงหลุดทั้งหมด)
+-- ------------------------------------------------------------
+do $$
+declare v_src uuid;
+begin
+  v_src := pg_temp.post(pg_temp.entry('inc.rent', 'K11 ตั้งค้างรับ 4,000',
+    jsonb_build_array(
+      pg_temp.ln('1200', 4000, 0, 'none', null, '00000000-0000-0000-0000-00000004a001'),
+      pg_temp.ln('4200', 0, 4000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+    null));
+
+  -- ตั้งค่าเผื่อหนี้สงสัยจะสูญก่อน — ด่านเดิม (ค่าเผื่อติดลบไม่ได้) บังคับไว้
+  -- ถ้าไม่ตั้ง เคสนี้จะถูกปฏิเสธด้วยเหตุอื่นและ **ไม่ได้ทดสอบด่านที่เรากำลังทำ**
+  perform pg_temp.post(pg_temp.entry('adj.doubtful', 'K11 ตั้งค่าเผื่อ 6,000',
+    jsonb_build_array(
+      pg_temp.ln('5920', 6000, 0, 'none'),
+      pg_temp.ln('1290', 0, 6000, 'none')),
+    null));
+
+  perform pg_temp.must_fail_like('K11 ตัดหนี้สูญโดยไม่มีลิงก์',
+    $q$ select pg_temp.post(pg_temp.entry('adj.writeoff_rent', 'K11 ตัดหนี้สูญ 4,000 ไม่มีลิงก์',
+          jsonb_build_array(
+            pg_temp.ln('1290', 4000, 0, 'none'),
+            pg_temp.ln('1200', 0, 4000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+          null)) $q$,
+    'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+
+  perform pg_temp.must_fail_like('K11b ตัดหนี้สูญเกินยอดค้าง',
+    format($q$ select pg_temp.post(pg_temp.entry('adj.writeoff_rent', 'K11b ตัดหนี้สูญ 5,000 เกินยอด',
+          jsonb_build_array(
+            pg_temp.ln('1290', 5000, 0, 'none'),
+            pg_temp.ln('1200', 0, 5000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+          null, %L)) $q$, v_src::text || '-clr-1'),
+    'ล้างยอดค้างเกิน');
+
+  perform pg_temp.must_pass('K11c ตัดหนี้สูญพอดีตามยอดค้าง',
+    format($q$ select pg_temp.post(pg_temp.entry('adj.writeoff_rent', 'K11c ตัดหนี้สูญ 4,000 พอดี',
+          jsonb_build_array(
+            pg_temp.ln('1290', 4000, 0, 'none'),
+            pg_temp.ln('1200', 0, 4000, 'none', null, '00000000-0000-0000-0000-00000004a001')),
+          null, %L)) $q$, v_src::text || '-clr-1'));
+  if pg_temp.src_balance(v_src) <> 0 then
+    raise exception 'FAIL: K11c — ตัดหนี้สูญครบแล้วยอดค้างต้องเป็น 0 แต่ได้ %', pg_temp.src_balance(v_src);
+  end if;
+  raise notice 'ok K11 · ตัดหนี้สูญถูกคุมด้วยด่านเดียวกัน (ไม่มีลิงก์ไม่ได้ · เกินยอดค้างไม่ได้ · พอดีได้) — ด่านเก่าไม่เคยเห็นหมวดนี้เลยเพราะไม่ได้ส่งเลขอ้างอิงรูปใบล้าง';
+end $$;
+
+-- ------------------------------------------------------------
+-- K12 · **ห้ามกันแน่นเกิน** · ของค้างเปิดอยู่ใบเดียว → ลงใบรับชำระเองได้
+--        โดยไม่ต้องมีเลขอ้างอิง (สมุดบอกได้เองว่าล้างของใบไหน)
+--        แต่ **เกินยอดของใบนั้นก็ยังไม่ได้** — ด่านคุมด้วยยอดค้างของต้นทางเสมอ
+--
+--        นี่คือเส้นทางที่แอปใช้อยู่จริง (ฟอร์มปกติยังไม่มีช่องเลือกใบค้าง)
+--        ถ้าปิดทางนี้ = ปิดฟีเจอร์ที่ถูกต้อง (บทเรียนข้อ 7)
+-- ------------------------------------------------------------
+do $$
+declare v_src uuid; v_owner uuid;
+begin
+  -- ใช้ผู้ถือที่ **ยังไม่มีของค้างในไฟล์นี้เลย** เพื่อให้ฉาก "เปิดอยู่ใบเดียว" เป็นจริง
+  -- (สุธีมีของค้างจากเคสก่อนๆ อยู่แล้ว ถ้าใช้สุธีเคสนี้จะวัดอย่างอื่น)
+  v_owner := pg_temp.owner('BENJAPORN');
+  insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
+  values ('00000000-0000-0000-0000-00000004b003', v_owner, 'SCB', 'เบ็ญจพร',
+          'เบ็ญจพร - SCB (ล้างของค้าง)')
+  on conflict (id) do nothing;
+  v_src := ((sri_os.fn_post_entry(jsonb_build_object(
+      'txn_type_code', 'inc.rent',
+      'doc_date', '2026-10-31',
+      'memo', 'K12 ตั้งค้างรับของเบ็ญจพร 9,000',
+      'contact_id', '00000000-0000-0000-0000-00000004c001',
+      'attachments', jsonb_build_array('หลักฐาน.pdf'),
+      'transactions', jsonb_build_array(jsonb_build_object(
+        'owner_id', v_owner,
+        'lines', jsonb_build_array(
+          pg_temp.ln('1200', 9000, 0, 'none'),
+          pg_temp.ln('4200', 0, 9000, 'none'))))
+    )) -> 'transaction_ids') ->> 0)::uuid;
+
+  perform pg_temp.must_pass('K12 ลงใบรับชำระเองโดยไม่มีเลขอ้างอิง (ของค้างเปิดอยู่ใบเดียว)',
+    $q$ select sri_os.fn_post_entry(jsonb_build_object(
+          'txn_type_code', 'inv.collect_rent',
+          'doc_date', '2026-10-31', 'cash_date', '2026-10-31',
+          'memo', 'K12 รับชำระเอง 6,000',
+          'contact_id', '00000000-0000-0000-0000-00000004c001',
+          'attachments', jsonb_build_array('หลักฐาน.pdf'),
+          'transactions', jsonb_build_array(jsonb_build_object(
+            'owner_id', pg_temp.owner('BENJAPORN'),
+            'lines', jsonb_build_array(
+              pg_temp.ln('1100', 6000, 0, 'operating', '00000000-0000-0000-0000-00000004b003'),
+              pg_temp.ln('1200', 0, 6000, 'operating')))))) $q$);
+
+  /**
+   * เกินยอดของใบนั้น (6,000 + 4,000 > 9,000) → ต้องถูกปฏิเสธ แม้ไม่มีเลขอ้างอิง
+   *
+   * ฉากนี้ผู้ถือมีของค้างใบเดียว → "ต่อรายการต้นทาง" กับ "ต่อผู้ถือ" เป็นเรื่องเดียวกัน
+   * ด่านเก่า (ลูกหนี้ติดลบต่อผู้ถือ) จึงพูดก่อน และนั่นถูกต้อง — ด่านต่อรายการต้นทาง
+   * มีค่าตรงที่ **มีของค้างก้อนอื่นคลุมยอดรวมไว้** (K1/K8 คือเคสนั้น)
+   */
+  perform pg_temp.must_fail_like('K12b รับชำระเองเกินยอดค้างของใบเดียวที่เปิดอยู่',
+    $q$ select sri_os.fn_post_entry(jsonb_build_object(
+          'txn_type_code', 'inv.collect_rent',
+          'doc_date', '2026-10-31', 'cash_date', '2026-10-31',
+          'memo', 'K12b รับชำระเอง 4,000 เกินยอด',
+          'contact_id', '00000000-0000-0000-0000-00000004c001',
+          'attachments', jsonb_build_array('หลักฐาน.pdf'),
+          'transactions', jsonb_build_array(jsonb_build_object(
+            'owner_id', pg_temp.owner('BENJAPORN'),
+            'lines', jsonb_build_array(
+              pg_temp.ln('1100', 4000, 0, 'operating', '00000000-0000-0000-0000-00000004b003'),
+              pg_temp.ln('1200', 0, 4000, 'operating')))))) $q$,
+    'ติดลบ');
+
+  -- และเมื่อ **มีของค้างใบที่สอง** เปิดขึ้นมา การลงเองโดยไม่ระบุก็ต้องถูกปฏิเสธทันที
+  perform sri_os.fn_post_entry(jsonb_build_object(
+      'txn_type_code', 'inc.rent',
+      'doc_date', '2026-10-31',
+      'memo', 'K12 ตั้งค้างรับของเบ็ญจพรใบที่สอง 5,000',
+      'contact_id', '00000000-0000-0000-0000-00000004c001',
+      'attachments', jsonb_build_array('หลักฐาน.pdf'),
+      'transactions', jsonb_build_array(jsonb_build_object(
+        'owner_id', v_owner,
+        'lines', jsonb_build_array(
+          pg_temp.ln('1200', 5000, 0, 'none'),
+          pg_temp.ln('4200', 0, 5000, 'none'))))));
+
+  perform pg_temp.must_fail_like('K12c มีของค้างสองใบแล้วลงเองโดยไม่ระบุ',
+    $q$ select sri_os.fn_post_entry(jsonb_build_object(
+          'txn_type_code', 'inv.collect_rent',
+          'doc_date', '2026-10-31', 'cash_date', '2026-10-31',
+          'memo', 'K12c รับชำระเอง 1,000 ตอนมีสองใบ',
+          'contact_id', '00000000-0000-0000-0000-00000004c001',
+          'attachments', jsonb_build_array('หลักฐาน.pdf'),
+          'transactions', jsonb_build_array(jsonb_build_object(
+            'owner_id', pg_temp.owner('BENJAPORN'),
+            'lines', jsonb_build_array(
+              pg_temp.ln('1100', 1000, 0, 'operating', '00000000-0000-0000-0000-00000004b003'),
+              pg_temp.ln('1200', 0, 1000, 'operating')))))) $q$,
+    'ต้องชี้ไปที่รายการต้นทางที่มียอดค้างจริง');
+
+  raise notice 'ok K12 · ของค้างเปิดใบเดียว → ลงรับชำระเองได้โดยไม่มีเลขอ้างอิง (แต่เกินยอดไม่ได้) · เปิดสองใบ → ต้องระบุว่าล้างของใบไหน';
+end $$;
+
 do $$ begin raise notice '=== ล้างยอดค้างเกินไม่ได้ (ปิดจังหวะพร้อมกันที่ DB) ผ่านทั้งหมด ==='; end $$;
 
 rollback;
