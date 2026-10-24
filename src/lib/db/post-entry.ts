@@ -1,4 +1,9 @@
-import { isCashAccount } from "@/lib/rules/coa";
+import {
+  FX_TRANSLATION_DIFF_COA,
+  isCashAccount,
+  REALISED_FX_GAIN,
+  REALISED_FX_LOSS,
+} from "@/lib/rules/coa";
 import type { SubCategory } from "@/lib/rules/tx-rules";
 import type { PostingInput, PostingResult } from "@/lib/ledger/types";
 
@@ -114,8 +119,31 @@ export function toPostEntryPayload(
  *   ถ้าลงแต่บัญชี สัญญาจะไม่มีตัวตนและหน้ายืนยันรับ-จ่ายไม่มีงวดให้ดึง
  * - `capitalGain` — ส่วนเกินทุนจากการตีราคาที่ค้างใน 3400 ต้องอ่านจากยอดที่ post แล้วจริง
  *   (types.ts: `unrealizedAdjustment`) ฟอร์มยังส่งค่านี้ให้ engine ไม่ได้ ถ้าปล่อยผ่านจะค้างในส่วนของเจ้าของ
+ *
+ * และกั้นจาก **คู่บัญชีในตารางกฎ** (ไม่ได้เช็ครหัสหมวด) สำหรับหมวดอัตราแลกเปลี่ยน:
+ * หมวดที่แตะ `3410` หรือประกาศบัญชีกำไร/ขาดทุน FX ที่เกิดจริง ต้องให้ engine สร้างบรรทัดเพิ่ม
+ * (ขาผลต่าง · ขาล้าง 3410 · `currency`/`fx_rate` ต่อบรรทัด) ซึ่ง **ยังสร้างไม่ได้**
+ * ผู้ตรวจวัดได้สามเคสที่ตัวเลขผิดจริงถ้าปล่อยผ่าน:
+ *   1. แลกเงินหมดโดยไม่ล้าง 3410 → 3410 ค้างถาวร **และ** 4330 รับรู้กำไรก้อนเดิมอีกครั้ง = นับซ้ำ
+ *   2. แปลงค่าบน **บัญชีบาท** → dr 1100 / cr 3410 ผ่าน = **เงินสดโผล่จากอากาศ**
+ *      แล้ว `fxEffect` ในงบกระแสเงินสดกลืนไว้ ทำให้ตัวจับความผิดปกติเงียบ
+ *   3. `trf.fx_convert` มี `requires: ["transferTarget"]` → engine คืนใบโอนธรรมดา
+ *      ไม่มีขากำไร/ขาดทุนเลย (แลกขาดทุน 5,000 แสดงเป็น 0)
+ * ปลดได้เมื่อ engine สร้างบรรทัดครบและด่านฝั่ง DB อุดทั้งสามเคสแล้ว
  */
-export function notWiredReason(sub: Pick<SubCategory, "label" | "requires"> | undefined): string | null {
+export function notWiredReason(
+  sub: Pick<SubCategory, "label" | "requires" | "dr" | "cr" | "gainCoa" | "lossCoa"> | undefined
+): string | null {
+  // กั้นหมวดอัตราแลกเปลี่ยนก่อน เพราะ `trf.fx_convert` มี requires เหมือนการโอนธรรมดา
+  // จึงแยกด้วยธง requires ไม่ได้ ต้องดูจากคู่บัญชีที่ตารางกฎประกาศไว้
+  const touches = [sub?.dr, sub?.cr, sub?.gainCoa, sub?.lossCoa].filter((c): c is string => !!c);
+  if (
+    touches.includes(FX_TRANSLATION_DIFF_COA) ||
+    touches.includes(REALISED_FX_GAIN) ||
+    touches.includes(REALISED_FX_LOSS)
+  ) {
+    return `หมวด "${sub?.label}" ต้องให้ระบบสร้างบรรทัดผลต่างอัตราแลกเปลี่ยนและบรรทัดล้างส่วนของเจ้าของให้ครบ ซึ่งยังทำไม่ได้ — ยังบันทึกจริงไม่ได้ในรอบนี้ (ถ้าปล่อยผ่าน กำไรจะถูกนับซ้ำและยอดเงินสดจะเพิ่มขึ้นเองโดยไม่มีเงินเข้า)`;
+  }
   if (!sub?.requires) return null;
   if (sub.requires.includes("loanTerms")) {
     return `หมวด "${sub.label}" ต้องสร้างสัญญาและตารางงวดในฐานข้อมูลด้วย ซึ่งยังไม่ได้ต่อ — ยังบันทึกจริงไม่ได้ในรอบนี้ (ระบบไม่ลงบัญชีครึ่งเดียว)`;

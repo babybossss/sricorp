@@ -5,6 +5,11 @@ import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { TX_TYPES } from "@/lib/rules/tx-rules";
 import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
+import {
+  FX_TRANSLATION_DIFF_COA,
+  REALISED_FX_GAIN,
+  REALISED_FX_LOSS,
+} from "@/lib/rules/coa";
 import { PayloadError, humanizeDbError, notWiredReason, toPostEntryPayload } from "../post-entry";
 import { makeResolver } from "../resolver";
 import type { Reference } from "../reference-types";
@@ -127,8 +132,36 @@ describe("notWiredReason · หมวดที่เส้นทางบัน�
     for (const s of flagged) expect(notWiredReason(s), s.code).toMatch(/ยังบันทึกจริงไม่ได้/);
   });
 
+  /**
+   * หมวดอัตราแลกเปลี่ยนแยกด้วยธง `requires` ไม่ได้ เพราะ `trf.fx_convert` ใช้
+   * `transferTarget` เหมือนการโอนธรรมดา จึงกั้นจาก **คู่บัญชีที่ตารางกฎประกาศ**
+   */
+  const touchesFx = (s: (typeof subs)[number]) =>
+    [s.dr, s.cr, s.gainCoa, s.lossCoa].some(
+      (c) => c === FX_TRANSLATION_DIFF_COA || c === REALISED_FX_GAIN || c === REALISED_FX_LOSS
+    );
+
+  it("ทุกหมวดที่แตะ 3410 หรือบัญชีกำไร/ขาดทุน FX ที่เกิดจริง ถูกกั้น", () => {
+    const fx = subs.filter(touchesFx);
+    expect(fx.length, "ไม่มีหมวด FX เลย — ด่านนี้จะไม่ได้กั้นอะไร").toBeGreaterThan(0);
+    for (const s of fx) expect(notWiredReason(s), s.code).toMatch(/ยังบันทึกจริงไม่ได้/);
+  });
+
+  it("กั้น `trf.fx_convert` ด้วย ทั้งที่ธง requires เหมือนการโอนธรรมดา", () => {
+    const convert = subs.find((s) => s.code === "trf.fx_convert");
+    const plain = subs.find((s) => s.code === "trf.internal");
+    expect(convert, "ไม่มีหมวดแลกเงิน").toBeTruthy();
+    expect(plain, "ไม่มีหมวดโอนระหว่างบัญชีตัวเอง").toBeTruthy();
+    // ธงเหมือนกัน → ถ้าด่านอ่านแต่ธง จะกั้นทั้งคู่หรือปล่อยทั้งคู่ ซึ่งผิดทั้งสองทาง
+    expect(convert!.requires).toEqual(plain!.requires);
+    expect(notWiredReason(convert!), "แลกเงินต้องถูกกั้น").toMatch(/ยังบันทึกจริงไม่ได้/);
+    expect(notWiredReason(plain!), "โอนระหว่างบัญชีตัวเองต้องลงได้ปกติ").toBeNull();
+  });
+
   it("หมวดอื่นไม่ถูกกั้น (เช่น ค่าเช่า) และไม่รู้จักหมวดไม่ทำให้พัง", () => {
-    const free = subs.filter((s) => !s.requires?.includes("loanTerms") && !s.requires?.includes("capitalGain"));
+    const free = subs.filter(
+      (s) => !s.requires?.includes("loanTerms") && !s.requires?.includes("capitalGain") && !touchesFx(s)
+    );
     expect(free.length).toBeGreaterThan(0);
     for (const s of free) expect(notWiredReason(s), s.code).toBeNull();
     expect(notWiredReason(undefined)).toBeNull();
