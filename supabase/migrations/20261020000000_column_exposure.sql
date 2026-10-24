@@ -771,11 +771,17 @@ language sql stable security definer set search_path = '' as $body$
 $body$;
 $x$, r.table_name, v_sig, v_body);
 
-    execute format('alter function sri_os.fn_%s_visible() owner to sri_os_column_reader', r.table_name);
+    -- **ลำดับสำคัญ**: ทุกคำสั่งที่ต้องเป็น "เจ้าของ" ต้องทำ **ก่อน** ยกเจ้าของออกไป
+    -- (revoke/grant/comment ของฟังก์ชัน ล้วนต้องเป็นเจ้าของทั้งสิ้น)
+    -- superuser ในเครื่องทดสอบทำได้หมดไม่ว่าลำดับไหน จึงไม่เคยเห็นปัญหานี้
+    -- บน Supabase ลำดับเดิมได้ `WARNING: no privileges could be revoked`
+    -- แล้วจบด้วย `ERROR: must be owner of function` (วัดจากของจริง 24/10)
     execute format('revoke all on function sri_os.fn_%s_visible() from public', r.table_name);
     execute format('grant execute on function sri_os.fn_%s_visible() to authenticated', r.table_name);
-    execute format('grant select on sri_os.%I to sri_os_column_reader', r.table_name);
     execute format($c$comment on function sri_os.fn_%1$s_visible() is 'ทางเข้าของระดับที่มีสิทธิ์อ่านคอลัมน์ที่ปิดของ sri_os.%1$s (D-089) · เจ้าของเป็น sri_os_column_reader ซึ่งเป็นสมาชิกของ authenticated → **RLS ยังกรองแถวตาม auth.uid() ของผู้เรียก** ไม่ได้เขียนเงื่อนไขแถวซ้ำ · คอลัมน์ที่ไม่มีสิทธิ์ได้ NULL · สร้างจากตาราง sri_os.column_exposure ห้ามแก้มือ'$c$, r.table_name);
+    execute format('grant select on sri_os.%I to sri_os_column_reader', r.table_name);
+    -- ยกเจ้าของเป็นขั้นสุดท้าย (ACL กับ comment ที่ตั้งไว้แล้วยังอยู่หลังเปลี่ยนเจ้าของ)
+    execute format('alter function sri_os.fn_%s_visible() owner to sri_os_column_reader', r.table_name);
     v_n := v_n + 1;
   end loop;
   -- ถอนสิทธิ์ชั่วคราวคืนทันที · **ต้องถอนทั้งสอง**
