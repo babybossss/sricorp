@@ -13,7 +13,8 @@
 --   - ขายบางส่วน → ล้าง 3400 **ตามสัดส่วน** (ขาย 3 ใน 10 = 30%)
 --   - กำไรที่ยังไม่ขายโชว์ได้ แต่ห้ามเข้า P&L เด็ดขาด (D-111)
 --
--- **จำนวนหน่วยยังไม่มีในฐานข้อมูล** (ไม่มีตารางล็อตและไม่มีคอลัมน์ quantity เลย)
+-- **จำนวนหน่วยระดับรายการยังไม่มีในฐานข้อมูล** (ไม่มีตารางล็อต · มีแต่
+--   `assets.units` ที่แก้มือได้และไม่ผูกกับใบ จึงใช้บังคับสัดส่วนไม่ได้)
 --   → สัดส่วนฝั่ง DB วัดด้วย **เงิน**: ต้นทุนที่ตัดออก ÷ ต้นทุนก่อนขาย
 --   ซึ่งเท่ากับสัดส่วนจำนวนหน่วยพอดีเมื่อคิดต้นทุนแบบถัวเฉลี่ย (ต้นทุนต่อหน่วยเท่ากันทุกหน่วย)
 --   ฝั่งจำนวนหน่วย/ล็อตมีเทสต์ของตัวเองที่ src/lib/ledger/__tests__/average-cost.test.ts
@@ -167,6 +168,21 @@ begin
                     and g.tgname = 'trg_assert_asset_cost_sane'
                     and not g.tgisinternal and g.tgdeferrable and g.tginitdeferred) then
     raise exception 'FAIL: ไม่มี constraint trigger trg_assert_asset_cost_sane แบบ deferrable initially deferred บน transaction_lines — ด่านที่ต้องอ่านทุกบรรทัดของใบ ยิงตอนใส่บรรทัดแรกไม่ได้';
+  end if;
+
+  /**
+   * **ปากทางที่แอปเรียกจริงต้องเป็นรุ่นที่แก้แล้ว**
+   *
+   * เคสที่ข้อนี้กัน: ไฟล์ 20261024000001_wht_and_fx.sql ก็ `create or replace`
+   * `fn_asset_cost_basis` เหมือนกัน → ถ้า 20261025000002 ยังไม่ได้ลงทะเบียนลำดับ
+   * (supabase/migration-order.txt + UNDER_TEST ของ scripts/test-rls-local.sh)
+   * มันจะรันก่อนแล้วถูกเขียนทับกลับเป็นรุ่นที่คืน 240,000 — โดยที่เทสต์ส่วนอื่น
+   * ของไฟล์นี้ยังเขียวหมด เพราะมันอ่าน fn_asset_ledger_parts ซึ่งไม่ถูกทับ
+   * = กำไรปลอมกลับมาเงียบๆ ทั้งที่เทสต์ผ่าน
+   */
+  if pg_get_functiondef('sri_os.fn_asset_cost_basis(uuid)'::regprocedure)
+     not like '%fn_asset_ledger_parts%' then
+    raise exception 'FAIL: fn_asset_cost_basis ไม่ได้อ่านจาก fn_asset_ledger_parts — มีไฟล์อื่นเขียนทับหลัง 20261025000002_asset_cost_basis_average.sql (ลำดับยังไม่ได้ลงทะเบียนใน supabase/migration-order.txt และ UNDER_TEST ของ scripts/test-rls-local.sh) → ต้นทุนคงเหลือต่ำกว่าจริงเท่าส่วนที่ตีราคาไว้ และกำไรปลอมกลับมาทั้งก้อน';
   end if;
 
   if has_function_privilege('anon', 'sri_os.fn_asset_cost_basis(uuid)', 'execute') then

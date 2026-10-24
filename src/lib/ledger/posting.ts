@@ -16,6 +16,8 @@ import { fxCheck, toThb } from "@/lib/rules/currency";
 import { coa, coaLabel, isCashAccount, CASH_COA, REVALUATION_SURPLUS_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
+// สมการสัดส่วนส่วนเกินทุนอยู่ที่เดียว (D-112) — ตัวเดียวกับที่ด่านฝั่ง DB ใช้
+import { surplusToReverseFor } from "./average-cost";
 import {
   PostingError,
   type LedgerResolver,
@@ -424,12 +426,51 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     const d = input.disposal!;
     // ตัวเลขคำนวณที่ `lib/disposal/capital-gain.ts` ที่เดียว ที่นี่แปลงเป็นบรรทัดบัญชีอย่างเดียว
     // money() ดักค่าที่คำนวณต่อไม่ได้ก่อน เพื่อให้ได้ข้อความภาษาคนแทน error ดิบ
+    /**
+     * **ส่วนเกินทุนที่ต้องล้าง = สัดส่วนที่ขายออก × ส่วนเกินทั้งก้อน** (D-112)
+     *
+     * ขายบางส่วนแล้วล้างทั้งก้อน = ต้นทุนคงเหลือต่ำกว่าจริงเท่าส่วนที่ล้างเกิน
+     * แล้วการขายครั้งถัดไปโชว์ "กำไร" ที่ไม่มีอยู่จริง (ผู้ตรวจวัดได้ 460,000
+     * ในฉากซื้อ 10 หน่วย 1,000,000 → ตีขึ้น 460,000 → ขาย 3 หน่วย)
+     *
+     * สมการอยู่ที่ `surplusToReverseFor()` **ตัวเดียวกับที่ด่านฝั่ง DB ใช้**
+     * (`fn_assert_asset_cost_sane` ข้อ ข) → ยอดที่ผู้ใช้เห็นในพรีวิวกับยอดที่
+     * ฐานข้อมูลจะยอมรับเป็นตัวเดียวกันเสมอ
+     *
+     * ส่งทั้งสองแบบมาแล้วไม่ตรงกัน → **ปฏิเสธ ไม่ใช่เลือกเอาตัวใดตัวหนึ่ง**
+     * (เลือกเองคือการตัดสินใจเรื่องเงินแทนผู้ใช้โดยไม่มีใครเห็น)
+     */
+    let surplusToClear = d.unrealizedAdjustment ?? 0;
+    if (d.priorSurplus !== undefined || d.assetCostBefore !== undefined) {
+      if (d.priorSurplus === undefined || d.assetCostBefore === undefined) {
+        throw new PostingError(
+          "ต้องส่งทั้งต้นทุนทั้งก้อนก่อนขาย (assetCostBefore) และส่วนเกินทุนที่ค้างอยู่ (priorSurplus) คู่กัน — " +
+            "มีตัวเดียวคิดสัดส่วนที่ขายออกไม่ได้ · ทั้งสองค่าต้องอ่านจากสมุดที่ post แล้วจริง " +
+            "(fn_asset_cost_basis และ fn_asset_revaluation_surplus) ไม่ใช่จาก state ของหน้าจอ"
+        );
+      }
+      const computed = surplusToReverseFor({
+        priorSurplus: d.priorSurplus,
+        costBefore: money(d.assetCostBefore, "ต้นทุนทั้งก้อนก่อนขาย"),
+        costRemoved: money(d.costBasis, "ต้นทุน"),
+      });
+      if (d.unrealizedAdjustment !== undefined && Math.abs(round2(d.unrealizedAdjustment - computed)) > 0.01) {
+        throw new PostingError(
+          `ส่วนเกินทุนที่ต้องล้างในใบนี้คือ ${computed} บาท (${d.priorSurplus} × ` +
+            `${d.costBasis}/${d.assetCostBefore} ตามสัดส่วนที่ขายออก · D-112) แต่ระบุมา ${d.unrealizedAdjustment} — ` +
+            "ล้างเกินทำให้ต้นทุนคงเหลือต่ำกว่าจริงแล้วการขายครั้งถัดไปโชว์กำไรที่ไม่มีอยู่จริง · " +
+            "ล้างขาดทำให้ส่วนเกินทุนของหน่วยที่ขายไปแล้วค้างในส่วนของเจ้าของตลอดไป"
+        );
+      }
+      surplusToClear = computed;
+    }
+
     const r = computeDisposal({
       costBasis: money(d.costBasis, "ต้นทุน"),
       salePrice: money(d.salePrice, "ราคาขาย"),
       sellingCosts: money(d.sellingCosts ?? 0, "ค่าใช้จ่ายในการขาย"),
       // **ติดลบได้** จึงไม่ผ่าน money() ที่ห้ามติดลบ — เคยตีราคาลงคือเรื่องปกติ
-      unrealizedAdjustment: d.unrealizedAdjustment ?? 0,
+      unrealizedAdjustment: surplusToClear,
     });
     const { costBasis, netProceeds, capitalGain: gain } = r;
 
@@ -633,7 +674,7 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
        *
        * `assetId`: `fn_asset_cost_basis()` รวม **ทุกบรรทัดบัญชีสินทรัพย์ที่ผูกทรัพย์**
        * เป็นต้นทุนของทรัพย์ชิ้นนั้น → ผูกที่นี่ = ต้นทุนคอนโดบวมขึ้นเท่าภาษีที่ถูกหัก
-       * จากค่าเช่าทุกเดือน แล้วกำไรจากการขาย (FIFO · D-038) จะต่ำกว่าจริงเรื่อยๆ
+       * จากค่าเช่าทุกเดือน แล้วกำไรจากการขาย (ถัวเฉลี่ย · D-112) จะต่ำกว่าจริงเรื่อยๆ
        * โดยที่ทุกใบสมดุลและไม่มีอะไรฟ้อง · ภาษีที่ถูกหักเป็นเครดิตระดับผู้ถือ
        * ไม่ใช่ต้นทุนของทรัพย์
        */

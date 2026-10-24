@@ -259,10 +259,17 @@ create constraint trigger trg_assert_wht_gross
  * เบื้องหลัง แต่ตัว UPDATE ยังผ่านได้ในงวดที่ยังไม่ปิด) จึงแก้ตัวเลขภาษี
  * ย้อนหลังให้ไม่ตรงกับสมุดได้ โดยที่รายงานภาษีกับสมุดแยกจากกันเงียบๆ
  *
- * ยิงเฉพาะตอนที่สามช่องนั้นเปลี่ยนจริง (`when`) — ไม่ใช่ทุก UPDATE ของหัวรายการ
- * เพราะใบที่ไม่เกี่ยวกับภาษีไม่ควรเสียเวลาไล่บรรทัดทั้งใบ
- * INSERT ต้องตรวจด้วย: ลงหัวรายการที่บอกว่าถูกหักภาษีแต่ไม่มีบรรทัด 1800
- * จะถูกจับตอน commit (ใบที่ยังไม่มีบรรทัดเลยปล่อยผ่าน — ดู fn_assert_wht_gross_for)
+ * ยิงเฉพาะตอนที่สามช่องนั้นเปลี่ยนจริง (`update of ...`) — ไม่ใช่ทุก UPDATE
+ * ของหัวรายการ เพราะใบที่ไม่เกี่ยวกับภาษีไม่ควรเสียเวลาไล่บรรทัดทั้งใบ
+ *
+ * **เป็น trigger ธรรมดา ไม่ใช่ constraint trigger แบบ deferred โดยตั้งใจ**
+ *   ฝั่งบรรทัดต้องเลื่อนถึง commit เพราะตอนใส่บรรทัดแรกใบยังไม่ครบ
+ *   แต่ฝั่งหัวรายการ **ตรงกันข้าม**: การ UPDATE หัวรายการของใบที่มีบรรทัดครบแล้ว
+ *   ต้องถูกปฏิเสธ **ทันทีที่สั่ง** ไม่ใช่ตอน commit — ถ้าเลื่อนไว้ คนที่แก้ยอดภาษี
+ *   ย้อนหลังในเซสชันที่ไม่เคย commit (เช่นเปิด transaction ค้างไว้) จะไม่โดนด่านเลย
+ *   และข้อความก็ไปโผล่ตอน commit ที่อ่านไม่ออกว่าใบไหนผิด
+ *   INSERT ของใบใหม่ไม่ติดด่านนี้ เพราะตอนลงหัวรายการยังไม่มีบรรทัดเลย
+ *   (fn_assert_wht_gross_for ปล่อยผ่าน) แล้วฝั่งบรรทัดจะตรวจทั้งใบตอน commit เอง
  */
 create or replace function fn_assert_wht_gross_txn() returns trigger
 language plpgsql security definer set search_path = '' as $fn$
@@ -281,9 +288,8 @@ begin
 end $$;
 
 drop trigger if exists trg_assert_wht_gross_txn on transactions;
-create constraint trigger trg_assert_wht_gross_txn
+create trigger trg_assert_wht_gross_txn
   after insert or update of wht_rate, wht_amount, wht_certificate_no on transactions
-  deferrable initially deferred
   for each row execute function fn_assert_wht_gross_txn();
 
 -- ============================================================
@@ -758,17 +764,22 @@ begin
     raise exception 'ไม่มีหมวดใดที่ล้างบัญชี 1800 ได้เลย — เปิดให้บันทึกการถูกหักภาษีแต่ล้างไม่ได้ แปลว่ายอดเครดิตภาษีโตขึ้นตลอดไป';
   end if;
 
-  -- (จ) ด่านต้องผูกทั้งสองตาราง และเป็น constraint trigger แบบ deferred ทั้งคู่
-  select string_agg(x.want, ', ') into v
-    from (values ('transaction_lines', 'trg_assert_wht_gross'),
-                 ('transactions', 'trg_assert_wht_gross_txn')) x(tbl, want)
-   where not exists (
-     select 1 from pg_trigger g
-      where g.tgrelid = ('sri_os.' || x.tbl)::regclass
-        and g.tgname = x.want and not g.tgisinternal
-        and g.tgdeferrable and g.tginitdeferred);
-  if v is not null then
-    raise exception 'trigger ของกฎภาษีหัก ณ ที่จ่ายหายไปหรือไม่ใช่ constraint trigger แบบ deferred: % — ด่านที่ผูกแต่ตารางบรรทัด ทำให้แก้ยอดภาษีที่หัวรายการย้อนหลังได้โดยไม่มีใครจับ (ข้อ 4)', v;
+  -- (จ) ด่านต้องผูก **ทั้งสองตาราง** · ฝั่งบรรทัดเลื่อนถึง commit (ใบยังไม่ครบ
+  --     ตอนใส่บรรทัดแรก) · ฝั่งหัวรายการยิงทันที (ดูเหตุผลที่หัวข้อ 2)
+  if not exists (
+    select 1 from pg_trigger g
+     where g.tgrelid = 'sri_os.transaction_lines'::regclass
+       and g.tgname = 'trg_assert_wht_gross' and not g.tgisinternal
+       and g.tgdeferrable and g.tginitdeferred) then
+    raise exception 'trg_assert_wht_gross บน transaction_lines หายไปหรือไม่ใช่ constraint trigger แบบ deferred — ถ้ายิงตอนใส่บรรทัดแรก ใบที่ถูกต้องจะลงไม่ได้เลย';
+  end if;
+  if not exists (
+    select 1 from pg_trigger g
+     where g.tgrelid = 'sri_os.transactions'::regclass
+       and g.tgname = 'trg_assert_wht_gross_txn' and not g.tgisinternal
+       and not g.tgdeferrable
+       and (g.tgtype & 1) <> 0 and (g.tgtype & 4) <> 0 and (g.tgtype & 16) <> 0) then
+    raise exception 'trg_assert_wht_gross_txn บน transactions หายไป หรือถูกทำเป็น deferred/statement trigger — ด่านที่ผูกแต่ตารางบรรทัด ทำให้แก้ยอดภาษีที่หัวรายการย้อนหลังได้โดยไม่มีใครจับ (ข้อ 4 ของผู้ตรวจ)';
   end if;
 
   -- (ฉ) ฟังก์ชันด่านที่เป็น definer ต้องเรียกตรงไม่ได้ (D-089)

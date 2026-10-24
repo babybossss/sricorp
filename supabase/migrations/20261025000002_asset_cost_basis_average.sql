@@ -18,8 +18,11 @@
 --   → กำไรคิดจากต้นทุนถัวเฉลี่ยของทั้งกอง ไม่ใช่ราคาของล็อตที่ขาย
 --   → กำไรที่ยังไม่ขายโชว์ได้ แต่ห้ามเข้า P&L เด็ดขาด (ย้ำจาก D-111)
 --
---   **ฐานข้อมูลยังไม่มีจำนวนหน่วยและไม่มีตารางล็อตเลย** (ไม่มีคอลัมน์ quantity
---   ที่ไหนในสคีมา) → สัดส่วนฝั่ง DB จึงวัดด้วย **เงิน**:
+--   **ฐานข้อมูลยังไม่มีจำนวนหน่วยที่ผูกกับใบ และไม่มีตารางล็อตเลย**
+--   มีแต่ `assets.units` (ยอดคงเหลือรายทรัพย์) ซึ่ง **ใช้บังคับสัดส่วนไม่ได้**
+--   เพราะเป็นคอลัมน์ที่แก้มือได้ ไม่มีอะไรผูกกับใบที่ลง และไม่มี trigger ตัวใด
+--   ปรับมันตอนขาย → ด่านที่อ้างมันคือด่านที่ปลดได้ด้วยการแก้ค่าเดียว
+--   → สัดส่วนฝั่ง DB จึงวัดด้วย **เงิน**:
 --       สัดส่วนที่ขายออก = ต้นทุนที่ตัดออก ÷ ต้นทุนก่อนขาย
 --   ซึ่ง **เท่ากับสัดส่วนจำนวนหน่วยพอดีเมื่อคิดต้นทุนแบบถัวเฉลี่ย** เพราะทุกหน่วย
 --   มีต้นทุนต่อหน่วยเท่ากัน (ถ้าเป็น FIFO สองสัดส่วนนี้จะไม่เท่ากัน — อีกเหตุผล
@@ -83,25 +86,44 @@ create or replace function fn_asset_ledger_parts(
 language sql stable set search_path = '' as $fn$
   with l as (
     select c.code,
+           /**
+            * บรรทัดนี้เป็น "ต้นทุนของทรัพย์" หรือไม่ — **อ่านจากตารางกฎ ไม่ใช่รายชื่อรหัส**
+            *
+            * บัญชีสินทรัพย์ที่ **ไม่ใช่** ต้นทุนของทรัพย์:
+            *   - เงินสด/เงินฝาก 11xx (เป็นอีกขาของรายการเดียวกัน)
+            *   - บัญชีลูกหนี้-เจ้าหนี้ที่ตารางกฎใช้เป็น `accrual_coa_code`
+            *     (1200 ลูกหนี้ค่าเช่า · 1210 ลูกหนี้ดอกเบี้ย · 1220 ลูกหนี้อื่น)
+            *     ฟอร์มผูกทรัพย์กับรายการค่าเช่าด้วย (ซึ่งถูก · D-112 ข้อ 4 ต้องการ)
+            *     → ถ้านับเป็นต้นทุน **ต้นทุนคอนโดจะบวมเท่าค่าเช่าที่ตั้งค้างทุกเดือน**
+            *     แล้วยุบกลับตอนเก็บเงินได้ = ต้นทุนแกว่งตามลูกหนี้ โดยไม่มีอะไรฟ้อง
+            *   - 1800 ภาษีถูกหัก ณ ที่จ่ายรอเครดิต (เป็นเครดิตภาษีของผู้ถือ
+            *     ไม่ใช่ต้นทุนของทรัพย์ · engine ไม่ผูกทรัพย์กับบรรทัดนี้อยู่แล้ว
+            *     แต่ด่านต้องไม่พึ่งว่า engine จำได้)
+            */
+           (c.type::text = 'asset'
+            and c.code !~ '^11[0-9][0-9]$'
+            and c.code <> '1800'
+            and not exists (select 1 from sri_os.txn_types ty2
+                             where ty2.accrual_coa_code = c.code)) as is_cost_account,
            c.type::text as kind,
-           lx.debit,
-           lx.credit,
+           v.debit,
+           v.credit,
            exists (
              select 1 from sri_os.txn_types ty
-              where ty.code = t.txn_type_code
+              where ty.code = v.txn_type_code
                 and '3400' in (ty.dr_coa_code, ty.cr_coa_code)
            ) as is_revaluation
-      from sri_os.transaction_lines lx
-      join sri_os.transactions t on t.id = lx.transaction_id
-      join sri_os.chart_of_accounts c on c.id = lx.coa_id
-     where lx.asset_id = p_asset
-       and t.status = 'posted'
-       and (p_exclude_txn is null or t.id <> p_exclude_txn)
+      -- **อ่านผ่าน v_ledger_posted ไม่ใช่ตารางฐาน** (D-098) — รายการที่ยกเลิกแล้ว
+      -- ต้องไม่นับเป็นต้นทุน และ guard ของ 20261020000001 พังทันทีถ้าฟังก์ชัน
+      -- แบบ set-returning อ่านตารางฐานตรงๆ (วิวนี้กรอง status = 'posted' ให้แล้ว)
+      from sri_os.v_ledger_posted v
+      join sri_os.chart_of_accounts c on c.id = v.coa_id
+     where v.line_asset_id = p_asset
+       and (p_exclude_txn is null or v.transaction_id <> p_exclude_txn)
   )
   select
     coalesce(sum(
-      case when not is_revaluation
-                and ((kind = 'asset' and code !~ '^11[0-9][0-9]$') or code = '3400')
+      case when not is_revaluation and (is_cost_account or code = '3400')
            then debit - credit else 0 end), 0),
     coalesce(sum(case when code = '3400' then credit - debit else 0 end), 0)
     from l;
@@ -255,7 +277,10 @@ begin
     end if;
 
     -- ---------- (ค) ขายหมดแล้วส่วนเกินทุนต้องเหลือศูนย์พอดี ----------
-    if round(v_after, 2) = 0 and round(v_safter, 2) <> 0 then
+    -- เฉพาะใบที่ **ตัดต้นทุนออกจริง** (v_removed > 0) — ไม่ใช่ทุกใบที่แตะทรัพย์
+    -- ที่ต้นทุนเป็นศูนย์อยู่แล้ว (เช่น ค่าเช่าค้างรับของทรัพย์ที่ยกยอดมาเฉพาะมูลค่า
+    -- ยังไม่ได้ลงใบซื้อ) ไม่งั้นด่านจะปฏิเสธรายการที่ไม่เกี่ยวกับการขายเลย
+    if v_removed > 0 and round(v_after, 2) = 0 and round(v_safter, 2) <> 0 then
       raise exception 'ทรัพย์ "%" ไม่มีต้นทุนคงเหลือแล้ว (ขายหมด) แต่ยังมีส่วนเกินทุนจากการตีราคาค้างอยู่ % บาท — ต้องล้างออกให้เหลือศูนย์พอดีในใบเดียวกับการขาย ไม่งั้นส่วนเกินทุนค้างในส่วนของเจ้าของตลอดไปทั้งที่ทรัพย์ไม่อยู่แล้ว และบัญชีทรัพย์ไม่กลับเป็นศูนย์ (ทรัพย์ผีในงบดุล)',
         v_name, round(v_safter, 2);
     end if;
@@ -320,8 +345,7 @@ language sql stable set search_path = '' as $fn$
        limit 1
     ) v on true
     cross join lateral sri_os.fn_asset_ledger_parts(a.id) p
-   where p.cost_basis <> 0 or p.surplus <> 0
-     and true
+   where (p.cost_basis <> 0 or p.surplus <> 0)
      and abs(round(p.surplus - (v.value - p.cost_basis), 2)) > 0.01;
 $fn$;
 

@@ -475,3 +475,117 @@ describe("ขายจริง — ล้างส่วนเกินทุ�
     expect(net(lines, "1100")).toBe(1_500_000);
   });
 });
+
+/**
+ * **ขายบางส่วน — ล้างส่วนเกินทุนตามสัดส่วน** (D-112 ข้อ 1 · ลูกพี่ตัดสิน 24/10)
+ *
+ * ฉากเดียวกับที่ผู้ตรวจวัดกำไรปลอมได้: ซื้อ 10 หน่วย 1,000,000 → ตีขึ้น 460,000
+ * → ขาย 3 หน่วย (ต้นทุนถัวเฉลี่ย 300,000) → ต้องล้าง 3400 เพียง **30% = 138,000**
+ * ถ้าล้างทั้งก้อน ต้นทุนคงเหลือจะเหลือ 240,000 แทน 700,000 แล้วการขายครั้งถัดไป
+ * โชว์ "กำไร" งอกมา 460,000 ที่ไม่มีอยู่จริง
+ *
+ * ตัวเลขชุดนี้ต้องตรงกับฝั่ง DB ตัวต่อตัว (supabase/tests/zz_asset_cost_basis_test.sql)
+ */
+describe("ขายบางส่วน — ล้างส่วนเกินทุนตามสัดส่วน (D-112)", () => {
+  const partial = (over: Record<string, unknown> = {}): PostingInput => ({
+    typeKey: "invest_sell",
+    subCode: "inv.sell_securities",
+    amount: 450_000,
+    ownerId: "thanakorn",
+    bankAccountId: "b4",
+    assetId: "stock1",
+    contactId: "c1",
+    disposal: {
+      costBasis: 300_000,
+      salePrice: 450_000,
+      assetCostBefore: 1_000_000,
+      priorSurplus: 460_000,
+      ...over,
+    },
+  });
+
+  it("ขาย 3 ใน 10 หน่วย → ล้าง 3400 แค่ 138,000 (30%) ไม่ใช่ 460,000", () => {
+    const lines = allLines(buildPosting(partial()));
+    assertBalanced(lines);
+    expect(net(lines, REVALUATION_SURPLUS_COA)).toBe(138_000);
+    expect(net(lines, REVALUATION_SURPLUS_COA)).not.toBe(460_000);
+    // บัญชีทรัพย์ถูกตัดออก = ต้นทุนที่ขาย 300,000 + ส่วนที่ตีไว้ตามสัดส่วน 138,000
+    expect(net(lines, "1700")).toBe(-438_000);
+  });
+
+  it("กำไรยังคิดจากต้นทุนถัวเฉลี่ยของหน่วยที่ขาย ไม่ใช่จากมูลค่าที่ตีไว้", () => {
+    const gain = allLines(buildPosting(partial())).filter(
+      (l) => statementOf(l.coaCode).statement === "PL"
+    );
+    expect(gain).toHaveLength(1);
+    expect(gain[0].credit).toBe(150_000);
+  });
+
+  it("ส่งยอดที่ล้างมาเองไม่ตรงสัดส่วน → **ปฏิเสธ** พร้อมบอกยอดที่ถูก", () => {
+    let thrown: unknown;
+    try {
+      buildPosting(partial({ unrealizedAdjustment: 460_000 }));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, "ล้างทั้งก้อนตอนขายบางส่วนต้องถูกปฏิเสธ").toBeInstanceOf(PostingError);
+    expect((thrown as Error).message).toMatch(/138000/);
+    expect((thrown as Error).message).toMatch(/สัดส่วน/);
+  });
+
+  it("ส่งยอดที่ตรงสัดส่วนมาด้วยก็ได้ (ยืนยันกันเอง) → ลงได้ปกติ", () => {
+    const lines = allLines(buildPosting(partial({ unrealizedAdjustment: 138_000 })));
+    expect(net(lines, REVALUATION_SURPLUS_COA)).toBe(138_000);
+  });
+
+  it("ส่งมาตัวเดียว (ขาดต้นทุนทั้งก้อน หรือขาดส่วนเกินที่ค้าง) → ปฏิเสธ ไม่ใช่เดา", () => {
+    for (const disposal of [
+      { costBasis: 300_000, salePrice: 450_000, priorSurplus: 460_000 },
+      { costBasis: 300_000, salePrice: 450_000, assetCostBefore: 1_000_000 },
+    ]) {
+      let thrown: unknown;
+      try {
+        buildPosting({ ...partial(), disposal } as PostingInput);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(PostingError);
+      expect((thrown as Error).message).toMatch(/คู่กัน/);
+    }
+  });
+
+  it("ขายหมด (ต้นทุนที่ขาย = ต้นทุนทั้งก้อน) → ล้างส่วนเกินทั้งก้อนพอดี", () => {
+    const lines = allLines(
+      buildPosting({
+        ...partial(),
+        amount: 1_500_000,
+        disposal: {
+          costBasis: 1_000_000,
+          salePrice: 1_500_000,
+          assetCostBefore: 1_000_000,
+          priorSurplus: 460_000,
+        },
+      })
+    );
+    assertBalanced(lines);
+    expect(net(lines, REVALUATION_SURPLUS_COA)).toBe(460_000);
+    expect(net(lines, "1700")).toBe(-1_460_000);
+  });
+
+  it("เคยตีราคาลง → ล้างตามสัดส่วนในทิศกลับกัน", () => {
+    const lines = allLines(buildPosting(partial({ priorSurplus: -460_000 })));
+    assertBalanced(lines);
+    expect(net(lines, REVALUATION_SURPLUS_COA)).toBe(-138_000);
+    expect(net(lines, "1700")).toBe(-162_000);
+  });
+
+  it("ส่วนเกินทุนค้างอยู่แต่ไม่มีต้นทุนในสมุด → ปฏิเสธ (ใบซื้อหายไป)", () => {
+    let thrown: unknown;
+    try {
+      buildPosting(partial({ assetCostBefore: 0 }));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PostingError);
+  });
+});

@@ -13,7 +13,7 @@ import { buildPosting as buildPostingWith, buildPostingDraft as buildPostingDraf
 import { PostingError, type PostingInput, type PostingLine } from "../types";
 import { WHT_COA, isCashAccount } from "@/lib/rules/coa";
 import { statementOf } from "@/lib/rules/statements";
-import { whtEligibleSubs } from "@/lib/rules/tx-rules";
+import { TX_TYPES, whtEligibleSubs } from "@/lib/rules/tx-rules";
 import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 const buildPosting = (i: PostingInput) => buildPostingWith(i, TEST_RESOLVER);
@@ -96,13 +96,45 @@ describe("คู่บัญชีสามบรรทัด: เงินส�
     const eligible = whtEligibleSubs();
     expect(eligible.length).toBeGreaterThan(1);
     for (const s of eligible) {
+      // **อ่านประเภทจากตารางกฎ ไม่ใช่สมมติว่าเป็น "income"** — หมวดที่หักได้
+      // มีทั้งฝั่งรายได้และฝั่ง "รับชำระค้างรับ" (ลงทุน/ขาย-รับคืน) ตาม D-111 ข้อ 1
+      // ถ้าสมมติประเภทไว้ตัวเดียว เคสนี้จะพังทันทีที่เส้นทางที่สองเปิด
+      // แล้วเราจะไม่ได้ทดสอบมันเลย
+      const key = TX_TYPES.find((t) => t.subs.some((x) => x.code === s.code))!.key;
       const lines = allLines(
-        buildPosting(rent({ typeKey: "income", subCode: s.code, amount: 10_000, wht: { rate: 3, amount: 300 } }))
+        buildPosting(rent({ typeKey: key, subCode: s.code, amount: 10_000, wht: { rate: 3, amount: 300 } }))
       );
       assertBalanced(lines);
       expect(net(lines, WHT_COA), `${s.code} ยอดภาษีไม่ได้ลง 1800`).toBe(300);
-      expect(net(lines, s.cr), `${s.code} รายได้ไม่เต็มจำนวน`).toBe(-10_000);
+      expect(net(lines, s.cr), `${s.code} เงินได้ไม่เต็มจำนวน`).toBe(-10_000);
+      expect(net(lines, "1100"), `${s.code} เงินสดต้องเป็นยอดสุทธิ`).toBe(9_700);
     }
+  });
+
+  /**
+   * **ข้อ 3 ของผู้ตรวจ** — ค่าเช่าที่ตั้งค้างรับไว้แล้วถูกหักภาษีตอนผู้เช่าจ่าย
+   *
+   * ลูกหนี้ต้องปิด **ยอดเต็ม** 100,000 ด้วยเงินสด 95,000 + ภาษี 5,000
+   * ถ้าปิดแค่ 95,000 ลูกหนี้จะค้าง 5,000 ตลอดไป เพราะไม่มีใครมาจ่ายส่วนนั้นอีก
+   */
+  it("รับชำระค่าเช่าค้างรับที่ถูกหักภาษี → ปิดลูกหนี้ยอดเต็ม ไม่เหลือเศษ", () => {
+    const lines = allLines(
+      buildPosting(
+        rent({
+          typeKey: "invest_sell",
+          subCode: "inv.collect_rent",
+          amount: 100_000,
+          wht: { rate: 5, amount: 5_000, certificateNo: "WHT-2569-0009" },
+        })
+      )
+    );
+    assertBalanced(lines);
+    expect(lines).toHaveLength(3);
+    expect(net(lines, "1100"), "เงินสดต้องเป็นยอดสุทธิที่เข้าบัญชีจริง").toBe(95_000);
+    expect(net(lines, WHT_COA), "ภาษีที่ถูกหักเป็นสินทรัพย์รอเครดิต").toBe(5_000);
+    expect(net(lines, "1200"), "ลูกหนี้ค่าเช่าต้องถูกปิดยอดเต็ม").toBe(-100_000);
+    // **ไม่มีบรรทัดรายได้** — รายได้รับรู้ไปแล้วตอนตั้งค้าง ถ้ามีจะนับซ้ำ
+    expect(lines.filter((l) => statementOf(l.coaCode).statement === "PL")).toEqual([]);
   });
 
   it("ไม่ส่งข้อมูลการหักภาษีมาเลย = ลงเงินสดเต็มจำนวนตามปกติ (ค่าตั้งต้นที่ถูก)", () => {
