@@ -72,7 +72,12 @@ import { isCashAccount } from "@/lib/rules/coa";
 import { BASE_CURRENCY } from "@/lib/rules/currency";
 import { INTERCOMPANY_RULES, type IntercompanyNature } from "@/lib/rules/intercompany";
 import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf, cashflowLineOfLeg } from "@/lib/rules/statements";
-import { findSub, isFxCashSub, type CashflowSection } from "@/lib/rules/tx-rules";
+import {
+  findSub,
+  isFxCashSub,
+  isOpeningBalanceSub,
+  type CashflowSection,
+} from "@/lib/rules/tx-rules";
 import { assertBalanced, assertIsoDate, round2 } from "./guards";
 import type { TxnStatus } from "./reversal";
 import { PostingError, type PostingLine } from "./types";
@@ -649,6 +654,26 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       (sum, l) => sum + Math.round(round2(l.debit) * 100) - Math.round(round2(l.credit) * 100),
       0
     );
+
+    /**
+     * **ยอดยกมา = ยอดเงินสดต้นงวด ไม่ใช่กระแสเงินสดของงวด**
+     *
+     * ใบตั้งต้นระบบมักลงวันเดียวกับวันตัดยอด ซึ่งอยู่ **ในงวดแรก** → ถ้านับเป็น
+     * ของงวด งวดแรกจะโชว์เงินสดรับก้อนใหญ่ที่ไม่มีอยู่จริง (และถ้าโยนเข้า
+     * cfCategory `none` ก็จะดังเป็น `cashOutsideStatement` ทุกเดือนแรกของทุกชุด
+     * ข้อมูล = ด่านที่ดังโดยไม่มีอะไรผิด แล้วคนจะเริ่มเพิกเฉยต่อ anomaly)
+     *
+     * ตัดสินจาก **ตารางกฎ** (`isOpeningBalanceSub()` อ่านคู่บัญชีที่แตะกำไรสะสม)
+     * ไม่ใช่รายชื่อรหัสหมวดที่นี่ — หมวดยอดยกมาตัวใหม่ถูกครอบเองทันที
+     */
+    const openingSub = (() => {
+      const sub = findSub(t.subCode)?.sub;
+      return sub ? isOpeningBalanceSub(sub) : false;
+    })();
+    if (openingSub) {
+      computedOpeningSatang += cashSatang;
+      continue;
+    }
 
     /* ---- เส้นทางกระทบยอด: บรรทัด 11xx ทั้งหมด ไม่สนใจ cfCategory/subCode ----
        ลงวันที่ด้วย `cashDate ?? docDate` = วันที่ยอดเงินสดในงบดุลขยับจริง

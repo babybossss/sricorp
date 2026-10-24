@@ -722,6 +722,67 @@ describe("งวดว่าง", () => {
  * ถ้าปล่อยเป็น anomaly งบจะไม่กระทบยอดทุกเดือนที่ค่าเงินขยับ = ปิดเดือนไม่ได้
  * ทั้งที่ไม่มีอะไรผิด (Money Invariant 5)
  */
+describe("ยอดยกมา (ตั้งต้นระบบ) — เป็นยอดเงินสดต้นงวด ไม่ใช่กระแสเงินสดของงวด", () => {
+  /**
+   * ใบตั้งต้นระบบลงวันเดียวกับวันตัดยอด ซึ่ง **อยู่ในงวดแรก** → ถ้านับเป็นของงวด
+   * งบจะโชว์ "เงินสดรับ" ก้อนใหญ่ที่ไม่มีอยู่จริง หรือ (ถ้าโยนเข้า cfCategory none)
+   * จะดังเป็น `cashOutsideStatement` ทุกครั้งที่นำเข้าข้อมูลตั้งต้น
+   * = ด่านที่ดังโดยไม่มีอะไรผิด แล้วคนจะเริ่มเพิกเฉยต่อ anomaly
+   */
+  const opening = (over: Partial<CashflowTxn> = {}) =>
+    tx({
+      txnId: "t-open",
+      subCode: "opn.cash",
+      docDate: "2026-01-01",
+      cashDate: "2026-01-01",
+      lines: [ln(CASH, 1_000_000, 0, "none"), ln("3300", 0, 1_000_000, "none")],
+      ...over,
+    });
+
+  it("เงินสดยกมาไปอยู่ **ยอดต้นงวด** · สามส่วนไม่ขยับ · ไม่ใช่ anomaly · กระทบยอดลง", () => {
+    const st = run([opening(), rentIn()]);
+    expect(st.netChange, "สามส่วนต้องมีแต่ค่าเช่า").toBe(50_000);
+    expect(st.openingCash, "ยอดยกมาคือเงินสดต้นงวด").toBe(1_000_000);
+    expect(st.closingCash).toBe(1_050_000);
+    expect(st.anomalies, "การนำเข้ายอดตั้งต้นไม่ใช่ความผิดปกติ").toEqual([]);
+    expect(st.reconciled).toBe(true);
+    expect(st.difference).toBe(0);
+    expect(st.fxEffect, "ไม่ใช่เรื่องอัตราแลกเปลี่ยน").toBe(0);
+  });
+
+  it("ยอดยกมาฝั่งที่ไม่มีเงินสด (ลูกหนี้/เจ้าหนี้ยกมา) ไม่กระทบงบเลย", () => {
+    const st = run([
+      opening({
+        txnId: "t-open-recv",
+        subCode: "opn.receivable_rent",
+        cashDate: null,
+        lines: [ln("1200", 80_000, 0, "none"), ln("3300", 0, 80_000, "none")],
+      }),
+      rentIn(),
+    ]);
+    expect(st.netChange).toBe(50_000);
+    expect(st.openingCash).toBe(0);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("**MUTATION** ถ้าหมวดยอดยกมาไม่ถูกยกเว้น → งวดแรกมีเงินสดรับปลอม 1,000,000", () => {
+    // จำลองสภาพก่อนแก้: ใช้หมวดอื่นที่ cfCategory none กับบรรทัดเดียวกัน
+    // (ตัวที่ตัดสินคือหมวดในตารางกฎ ไม่ใช่รูปของบรรทัด)
+    const st = run([opening({ subCode: "trf.internal" }), rentIn()]);
+    expect(st.openingCash, "ยอดไม่ได้ไปอยู่ต้นงวด").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.reconciled, "กระทบยอดไม่ลงเพราะ 1,000,000 ลอยอยู่").toBe(false);
+  });
+
+  it("ยอดยกมาที่ลงวันก่อนงวด ก็ยังเป็นยอดต้นงวด (นับครั้งเดียว ไม่ซ้ำ)", () => {
+    const st = run([opening({ docDate: "2025-12-31", cashDate: "2025-12-31" }), rentIn()]);
+    expect(st.openingCash).toBe(1_000_000);
+    expect(st.netChange).toBe(50_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
 describe("อัตราแลกเปลี่ยนของบัญชีเงินฝากสกุลต่างประเทศ", () => {
   it("แปลงค่าสิ้นเดือน: ยอดบาทขยับ แต่ไม่เข้าสามส่วน · ไม่ใช่ anomaly · กระทบยอดลง", () => {
     const st = run([

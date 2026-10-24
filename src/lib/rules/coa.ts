@@ -252,3 +252,18 @@ export const REALISED_FX_LOSS = "5930";
 export function isFxTranslationAccount(code: string): boolean {
   return code === FX_TRANSLATION_DIFF_COA;
 }
+
+/**
+ * **กำไรสะสม** — ขาคู่ของ "ยอดยกมา" ตอนตั้งต้นระบบ
+ *
+ * ยอดยกมาคือผลของอดีตที่เกิดก่อนระบบ จึงไม่ใช่รายได้/ค่าใช้จ่ายของงวดใดเลย
+ * ขาคู่ต้องเป็นส่วนของเจ้าของ และต้องอ่านรหัสจากที่นี่ที่เดียว — ตารางกฎกับ
+ * เครื่องยนต์ห้ามพิมพ์ `'3300'` เอง (รหัสที่พิมพ์สองที่คือรหัสที่วันหนึ่งจะไม่ตรงกัน
+ * แล้วยอดยกมาทั้งก้อนจะไปโผล่ผิดบรรทัดในงบดุลโดยที่ทุกใบยังสมดุล)
+ */
+export const RETAINED_EARNINGS_COA = "3300";
+
+/** บรรทัดนี้คือขาคู่ของยอดยกมาหรือไม่ — ถามที่เดียว */
+export function isRetainedEarningsAccount(code: string): boolean {
+  return code === RETAINED_EARNINGS_COA;
+}
