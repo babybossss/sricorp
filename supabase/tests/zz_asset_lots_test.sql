@@ -415,9 +415,10 @@ begin
     delete from sri_os.asset_lots where id = %L $q$, v_lot),
     'ลบล็อตที่ลงไว้แล้วไม่ได้');
 
+  -- ตารางการขายออกมีข้อความของตัวเอง (ไม่มีคอลัมน์ร่องรอยการกลับรายการ)
   perform pg_temp.must_fail_like('L5 แก้ส่วนที่ขายออก', $q$
     update sri_os.asset_lot_consumptions set cost_thb = 1 where cost_thb = 18000 $q$,
-    'แก้ล็อตที่ลงไว้แล้วไม่ได้');
+    'ไม่ได้ (กฎเหล็กข้อ 1)');
 
   if sri_os.fn_asset_units('00000000-0000-0000-0000-0000000aa002') <> 10 then
     raise exception 'FAIL: L5 — ทะเบียนถูกแก้ได้ (จำนวนเปลี่ยนเป็น %)',
