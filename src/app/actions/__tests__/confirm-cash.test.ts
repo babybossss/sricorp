@@ -6,6 +6,7 @@ import { postEntry } from "../post-entry";
 import { confirmCash, type ConfirmCashItem } from "../confirm-cash";
 import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
 import type { PostingInput } from "@/lib/ledger/types";
+import { findSub } from "@/lib/rules/tx-rules";
 
 /** ตั้งค้างรับค่าเช่า (ยังไม่ได้รับเงิน) ของธนากร — เส้นทางเดียวกับที่ฟอร์มส่ง */
 const accrual = (amount = 12000, over: Partial<PostingInput> = {}): PostingInput => ({
@@ -251,5 +252,150 @@ describe("error จาก DB ต้องถึงผู้ใช้", () => {
     expect(out.results[0]).toMatchObject({ ok: false, message: "บันทึกรายการไม่ได้: งวดนี้ปิดแล้ว" });
     ctx.db.control.rpcError = null;
     expect(await outstandingOf(id)).toBe(12000);
+  });
+});
+
+/** ผู้ใช้ล้างลูกหนี้เองด้วยการลงใบรับชำระ (ไม่ผ่านแท็บยืนยัน → ไม่มีเลขอ้างอิง -clr-n) */
+async function collectRentByHand(amount: number, over: Partial<PostingInput> = {}) {
+  const found = findSub("inv.collect_rent")!;
+  const out = await postEntry({
+    input: {
+      typeKey: found.type.key,
+      subCode: "inv.collect_rent",
+      amount,
+      ownerId: OWNER.tk,
+      bankAccountId: BANK.tk,
+      assetId: ASSET,
+      contactId: CONTACT,
+      ...over,
+    },
+    docDate: "20/10/2026",
+    cashDate: "20/10/2026",
+  });
+  if (!out.ok) throw new Error(`ลงใบรับชำระเองไม่ได้: ${out.message}`);
+}
+
+describe("ลูกหนี้ถูกลดนอกแท็บ (ลงใบรับชำระเอง) — เงินสดผีต้องเกิดไม่ได้", () => {
+  it("ล้างครบด้วยใบใหม่เอง → ลูกหนี้เป็นศูนย์ → รายการหายจากรายการค้าง และกดยืนยันซ้ำไม่ได้", async () => {
+    const id = await postAccrual(100000);
+    await collectRentByHand(100000);
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(100000);
+
+    // รายการค้างต้องหายไปแม้ไม่มีเลขอ้างอิง -clr-n เลย
+    expect(await outstandingOf(id)).toBe(0);
+
+    const before = ctx.db.rpcCalls.length;
+    const again = await confirmCash({ items: [item(id, { amount: "100000" })] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.message).toMatch(/ปิดครบแล้ว/);
+    // เงินสดผีต้องไม่เกิด: ไม่เขียนอะไรเพิ่ม ลูกหนี้ไม่ติดลบ เงินสดไม่เพิ่มเป็น 200,000
+    expect(ctx.db.rpcCalls).toHaveLength(before);
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(100000);
+  });
+
+  it("ล้างบางส่วนเอง → ยอดค้างที่โชว์ = ยอดคงเหลือจริง (ไม่ใช่ยอดเต็ม) และล้างได้ไม่เกินนั้น", async () => {
+    const id = await postAccrual(100000);
+    await collectRentByHand(40000);
+    expect(ctx.db.balance("1200")).toBe(60000);
+    expect(await outstandingOf(id)).toBe(60000);
+
+    const over = await confirmCash({ items: [item(id, { amount: "60000.01" })] });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.message).toMatch(/เกินยอดค้างคงเหลือ/);
+    expect(ctx.db.balance("1200")).toBe(60000);
+
+    const ok = await confirmCash({ items: [item(id, { amount: "60000" })] });
+    expect(ok.ok).toBe(true);
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(100000); // 40,000 เอง + 60,000 ผ่านแท็บ = ไม่เกินยอดจริง
+  });
+
+  it("ผสม: ล้างผ่านแท็บ 30,000 + ลงเอง 50,000 → เหลือ 20,000 พอดี", async () => {
+    const id = await postAccrual(100000);
+    await confirmCash({ items: [item(id, { amount: "30000" })] });
+    await collectRentByHand(50000);
+    expect(ctx.db.balance("1200")).toBe(20000);
+    expect(await outstandingOf(id)).toBe(20000);
+  });
+
+  it("หลายใบค้างในกลุ่มเดียวกัน: ลดนอกแท็บถูกหักจากใบเก่าสุดก่อน (FIFO) และยอดรวมค้าง = ยอดจริงของบัญชี", async () => {
+    const older = await postAccrual(10000);
+    const newer = await postAccrual(20000);
+    await collectRentByHand(10000);
+    expect(await outstandingOf(older)).toBe(0);
+    expect(await outstandingOf(newer)).toBe(20000);
+    expect(ctx.db.balance("1200")).toBe(20000);
+  });
+
+  it("ยอดคงเหลือสูงกว่ายอดตามเลขอ้างอิง (มียอดอื่นในบัญชีเดียวกัน) ไม่ทำให้ยอดค้างเกินยอดตั้งค้าง", async () => {
+    const id = await postAccrual(1000);
+    expect(await outstandingOf(id)).toBe(1000);
+    expect(ctx.db.balance("1200")).toBe(1000);
+  });
+});
+
+describe("ล้างยอดค้างที่ผู้เช่าหักภาษี ณ ที่จ่าย — ลูกหนี้ต้องปิดด้วยยอดเต็ม", () => {
+  const wht = { rate: "5", amount: "5,000.00", certificateNo: "WHT-001" };
+  const revenue = () => revenueCredited();
+
+  it("ค้าง 100,000 ผู้เช่าจ่าย 95,000 + ใบหัก 5,000 → ลูกหนี้ 1200 เป็นศูนย์ · เงินสด 95,000 · 1800 = 5,000 · รายได้นับครั้งเดียว", async () => {
+    const id = await postAccrual(100000);
+    const out = await confirmCash({ items: [item(id, { amount: "100,000.00", wht })] });
+    expect(out.ok, JSON.stringify(out)).toBe(true);
+
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(95000);
+    expect(ctx.db.balance("1800")).toBe(5000);
+    expect(revenue()).toBe(100000);
+    // ส่ง wht_* ที่หัวรายการด้วย (ไม่งั้น DB ปฏิเสธทั้งใบ) และเก็บเลขอ้างอิงการล้างไว้
+    const last = ctx.db.rpcCalls[ctx.db.rpcCalls.length - 1];
+    expect(last).toMatchObject({ wht_rate: 5, wht_amount: 5000, wht_certificate_no: "WHT-001", source_ref: `${id}-clr-1` });
+
+    // **ไม่มีเศษค้างเท่าภาษี**: ประวัติการล้างนับยอดเต็ม 100,000 ไม่ใช่ขาเงินสด 95,000
+    expect(await outstandingOf(id)).toBe(0);
+    const hist = (await pendingNow()).find((p) => p.id === id)!;
+    expect(hist.postedClearings).toEqual([{ id: `${id}-clr-1`, amount: 100000 }]);
+    expect(hist.clearedOutside).toBe(0); // ไม่ใช่ 5,000 ที่ถูกอนุมานว่า "ลดนอกแท็บ"
+    const again = await confirmCash({ items: [item(id, { amount: "5,000.00", expectedClearedCount: 1 })] });
+    expect(again.ok).toBe(false);
+    expect(ctx.db.balance("1100")).toBe(95000);
+  });
+
+  it("ปิดด้วยยอดสุทธิ 95,000 ที่ระบุว่าถูกหัก 5% → ปฏิเสธ (ลูกหนี้จะค้างเท่าภาษีตลอดไป)", async () => {
+    const id = await postAccrual(100000);
+    const out = await confirmCash({ items: [item(id, { amount: "95,000.00", wht })] });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.message).toMatch(/ยอดเต็ม/);
+    expect(ctx.db.balance("1200")).toBe(100000);
+  });
+
+  it("ข้อมูลภาษีที่ส่งมาไม่ครบ (ไม่มีอัตรา/ยอด) → ปฏิเสธทั้งคำขอ ไม่ล้างเป็นไม่หักภาษี", async () => {
+    const id = await postAccrual(100000);
+    const out = await confirmCash({ items: [item(id, { amount: "100000", wht: { rate: "", amount: "" } })] });
+    expect(out.ok).toBe(false);
+    expect(ctx.db.balance("1200")).toBe(100000);
+    expect(ctx.db.balance("1100")).toBe(0);
+  });
+
+  it("หมวดค้างจ่าย (ค่าใช้จ่าย) หักภาษีไม่ได้ → ปฏิเสธ", async () => {
+    const id = await postAccrual(8600, { typeKey: "expense", subCode: "exp.common" });
+    const out = await confirmCash({ items: [item(id, { amount: "8600", wht: { rate: "3", amount: "258" } })] });
+    expect(out.ok).toBe(false);
+    expect(ctx.db.balance("2100")).toBe(-8600);
+  });
+
+  it("ล้างเป็นงวด งวดแรกถูกหัก 5% (50,000 หัก 2,500) แล้วงวดสอง 50,000 ไม่หัก → ลูกหนี้ศูนย์", async () => {
+    const id = await postAccrual(100000);
+    const first = await confirmCash({ items: [item(id, { amount: "50,000", wht: { rate: "5", amount: "2500" } })] });
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(ctx.db.balance("1200")).toBe(50000);
+    expect(await outstandingOf(id)).toBe(50000);
+    const second = await confirmCash({ items: [item(id, { amount: "50,000", expectedClearedCount: 1 })] });
+    expect(second.ok).toBe(true);
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(97500);
+    expect(ctx.db.balance("1800")).toBe(2500);
   });
 });

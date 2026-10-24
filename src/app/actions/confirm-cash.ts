@@ -13,12 +13,13 @@ import {
   toPostEntryPayload,
   type PostEntryPayload,
 } from "@/lib/db/post-entry";
-import { clearingRefFor } from "@/lib/db/pending-accruals";
+import { clearedOutsideEntry, clearingRefFor } from "@/lib/db/pending-accruals";
 import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
+import { routePostingInput } from "@/lib/db/clearing-route";
 import { buildClearing } from "@/lib/ledger/clearing";
-import { allLines } from "@/lib/ledger/posting";
-import { PostingError, type ClearingInput, type PostingInput } from "@/lib/ledger/types";
-import { accrualCheck, clearingSubsFor, findSub } from "@/lib/rules/tx-rules";
+import { buildPosting } from "@/lib/ledger/posting";
+import { PostingError, type ClearingInput } from "@/lib/ledger/types";
+import { accrualCheck, findSub } from "@/lib/rules/tx-rules";
 import { dmyToIso, parseAmountOrNull } from "@/lib/format";
 
 /**
@@ -53,6 +54,11 @@ export type ConfirmCashItem = {
   /** path ของสลิปที่อัปโหลดแล้ว */
   slips: string[];
   clearingSubCode?: string;
+  /**
+   * ผู้จ่ายหักภาษี ณ ที่จ่ายไว้ (ข้อความดิบตามที่ผู้ใช้พิมพ์จากใบรับรอง)
+   * `amount` ของรายการต้องเป็น **ยอดเต็มก่อนหักภาษี** — ลูกหนี้ปิดด้วยยอดเต็ม = เงินสดสุทธิ + ภาษีที่ถูกหัก
+   */
+  wht?: { rate: string; amount: string; certificateNo?: string };
   /** จำนวนการล้างที่ browser เห็นอยู่ตอนกด — ต้องตรงกับ DB */
   expectedClearedCount: number;
 };
@@ -109,7 +115,7 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
   const problems: string[] = [];
   for (const it of items) {
     const sourceId = it.sourceId.toLowerCase();
-    const read = await readPendingAccruals(supabase, refState.ref.coaCodeById, sourceId);
+    const read = await readPendingAccruals(supabase, refState.ref.coaCodeById);
     if (!read.ok) return refuse(`${read.error} — ยังไม่ได้บันทึกอะไร`);
     const src = read.items.find((p) => p.id.toLowerCase() === sourceId);
     const label = src?.memo ?? sourceId;
@@ -121,6 +127,17 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
       problems.push(
         `${label} — ข้อมูลเปลี่ยนไปแล้ว (ฐานข้อมูลมีการยืนยันแล้ว ${src.postedClearings.length} ครั้ง แต่หน้าจอเห็น ${it.expectedClearedCount} ครั้ง) ` +
           "รายการนี้อาจถูกยืนยันไปแล้ว — โหลดหน้าใหม่ตรวจก่อน ห้ามกดซ้ำ"
+      );
+      continue;
+    }
+
+    // ลูกหนี้/เจ้าหนี้ของใบนี้เหลือศูนย์แล้ว — ไม่ว่าจะถูกล้างด้วยวิธีไหน (แท็บนี้ ลงใบรับชำระเอง ตัดหนี้สูญ)
+    // กดซ้ำจะทำให้ลูกหนี้ติดลบและเงินสดเพิ่มที่ไม่เคยเข้าบัญชี → ปฏิเสธก่อนถึง engine
+    if (!(src.outstanding > 0)) {
+      problems.push(
+        `${label} — ลูกหนี้/เจ้าหนี้ของรายการนี้ปิดครบแล้ว` +
+          (src.clearedOutside > 0 ? ` (รวม ${src.clearedOutside.toLocaleString("en-US")} บาทที่ถูกลดด้วยการลงรายการเอง)` : "") +
+          " — ยืนยันซ้ำจะทำให้เงินสดเพิ่มสองเท่า"
       );
       continue;
     }
@@ -138,8 +155,8 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
       subCode: src.subCode,
       ownerId: src.ownerId,
       accruedAmount: src.accruedAmount,
-      // ประวัติจาก DB เท่านั้น — ห้ามใช้ที่ browser ส่งมา
-      postedClearings: src.postedClearings,
+      // ประวัติจาก DB เท่านั้น — ห้ามใช้ที่ browser ส่งมา · รวมยอดที่ถูกลดนอกแท็บ (อนุมานจากยอดคงเหลือจริงของบัญชีพัก)
+      postedClearings: [...src.postedClearings, ...clearedOutsideEntry(src)],
       // อ่านไม่ออก = NaN ให้ engine ปฏิเสธ ไม่ปัดเป็น 0
       amount: parseAmountOrNull(String(it.amount ?? "")) ?? Number.NaN,
       bankAccountId: it.bankAccountId,
@@ -152,20 +169,50 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
     };
 
     try {
-      const result = buildClearing(input, resolver);
-      const route = clearingRouteOf(src.subCode, it.clearingSubCode);
-      const cash = allLines(result).find((l) => l.bankAccountId);
-      const post: PostingInput = {
-        typeKey: route.typeKey,
-        subCode: route.code,
-        amount: cash ? cash.debit || cash.credit : input.amount,
+      // ตรวจยอดค้างคงเหลือ · เลขอ้างอิง · มิติบังคับ · หลักฐานนิติบุคคล — ด่านของการล้างอยู่ที่ engine ตัวนี้เสมอ
+      const cleared = buildClearing(input, resolver);
+
+      let wht: { rate: number; amount: number; certificateNo?: string } | undefined;
+      if (it.wht !== undefined) {
+        const rate = parseAmountOrNull(String(it.wht?.rate ?? ""));
+        const withheld = parseAmountOrNull(String(it.wht?.amount ?? ""));
+        if (rate === null || withheld === null) {
+          throw new PostingError("ระบุว่าถูกหักภาษี ณ ที่จ่ายแต่อัตราหรือยอดภาษีอ่านไม่ออก — ต้องกรอกทั้งสองช่องจากใบรับรอง");
+        }
+        wht = { rate, amount: withheld, certificateNo: it.wht?.certificateNo?.trim() || undefined };
+      }
+
+      const post = routePostingInput({
+        sourceSubCode: src.subCode,
+        chosen: it.clearingSubCode,
         ownerId: src.ownerId,
+        // ยอดเต็มที่ปิดลูกหนี้ — ไม่ใช่เงินที่เข้าบัญชี
+        amount: input.amount,
         bankAccountId: it.bankAccountId,
         assetId: src.assetId ?? undefined,
         contactId: src.contactId ?? undefined,
         memo: `ยืนยันเงินเข้า-ออกจริง · ${src.memo ?? findSub(src.subCode)?.sub.label ?? src.subCode}`,
         attachments,
-      };
+        wht,
+      });
+      if (!post) throw new PayloadError(`ไม่พบทางล้างของหมวด ${src.subCode}`);
+
+      // ถูกหักภาษี → บรรทัดเงินสดแตกเป็น เงินสดสุทธิ + 1800 ซึ่ง buildClearing ไม่รู้จัก จึงให้ buildPosting
+      // ของทางล้างประกอบบรรทัดแทน (engine ตัวจริงเช่นกัน ไม่ใช่หน้าจอ) แล้วเช็คว่า **ปิดบัญชีพักด้วยยอดเต็ม**
+      // เท่ากับที่ buildClearing อนุมัติไว้ — ปิดด้วยยอดสุทธิ ลูกหนี้จะค้างเท่าภาษีตลอดไป
+      const result = wht ? buildPosting(post, resolver) : cleared;
+      if (wht) {
+        const account = accrualCheck(findSub(src.subCode)!.sub);
+        const closed = result.transactions
+          .flatMap((t) => t.lines)
+          .filter((l) => account.ok && l.coaCode === account.account)
+          .reduce((t, l) => t + Math.abs(l.debit - l.credit), 0);
+        if (Math.abs(closed - input.amount) > 0.005) {
+          throw new PayloadError(
+            `ใบล้างที่ถูกหักภาษีปิดบัญชีพักได้ ${closed} แต่ยอดที่อนุมัติให้ล้างคือ ${input.amount} — ยอดต้องเป็นยอดเต็มก่อนหักภาษี`
+          );
+        }
+      }
       const payload = toPostEntryPayload(post, result, {
         docDate: dateIso,
         cashDate: dateIso,
@@ -218,20 +265,4 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
     };
   }
   return { ok: true, results };
-}
-
-/**
- * ประเภท/หมวดของใบล้าง — อ่านจากตารางกฎ (`clearingSubsFor`) ไม่เขียนรหัสหมวดเอง
- * เรียกหลัง `buildClearing()` ผ่านแล้วเท่านั้น (engine ปฏิเสธเคสกำกวมไปก่อนแล้ว) จึงไม่มีการหยิบตัวแรกเมื่อมีหลายทาง
- */
-function clearingRouteOf(subCode: string, chosen?: string) {
-  const sub = findSub(subCode)?.sub;
-  const check = sub ? accrualCheck(sub) : undefined;
-  if (!sub || !check?.ok) throw new PayloadError(`ไม่พบทางล้างของหมวด ${subCode}`);
-  const routes = clearingSubsFor(check.account, sub.cashflow);
-  const route = chosen ? routes.find((r) => r.code === chosen) : routes.length === 1 ? routes[0] : undefined;
-  if (!route) throw new PayloadError(`เลือกทางล้างของหมวด ${subCode} ไม่ได้`);
-  const type = findSub(route.code)?.type;
-  if (!type) throw new PayloadError(`ไม่พบประเภทของทางล้าง ${route.code}`);
-  return { code: route.code, typeKey: type.key };
 }

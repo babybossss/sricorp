@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
@@ -87,10 +87,16 @@ describe("toPostEntryPayload · แปลงผลของ engine เป็น�
   });
 
   it("ทุกช่องที่ส่งต้องอยู่ในรายการที่ RPC รับ (อ่านจาก migration จริง) — ช่องที่ RPC ไม่รู้จัก = ปฏิเสธทั้งใบ", () => {
-    const sql = readFileSync(
-      path.join(process.cwd(), "supabase/migrations/20261008000011_post_entry_hardening.sql"),
-      "utf8"
-    );
+    // รุ่นล่าสุดของ fn_post_entry = ไฟล์ migration ท้ายสุด (เรียงชื่อ) ที่นิยาม c_header — ไม่ใช่ไฟล์ที่ pin ชื่อไว้
+    // (เคยอ่าน 20261008000011 ทั้งที่ประตูถูกเขียนทับเพื่อรับช่อง wht_* ไปแล้ว เทสต์จึงตรวจกับสัญญาที่ตายแล้ว)
+    const dir = path.join(process.cwd(), "supabase/migrations");
+    const latest = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .filter((f) => /c_header\s+constant text\[\]/.test(readFileSync(path.join(dir, f), "utf8")))
+      .pop();
+    if (!latest) throw new Error("หา migration ที่นิยามช่องของ fn_post_entry ไม่เจอ — เทสต์นี้ต้องไม่ผ่านด้วยชุดว่าง");
+    const sql = readFileSync(path.join(dir, latest), "utf8");
     const arr = (name: string): string[] => {
       const m = new RegExp(`${name}\\s+constant text\\[\\] := array\\[([^\\]]+)\\]`).exec(sql);
       if (!m) throw new Error(`อ่านรายการช่อง ${name} จาก migration ไม่ได้ — เทสต์นี้ต้องไม่ผ่านด้วยชุดว่าง`);
@@ -100,6 +106,7 @@ describe("toPostEntryPayload · แปลงผลของ engine เป็น�
     const txn_ = arr("c_txn");
     const line_ = arr("c_line");
     expect(header_.length).toBeGreaterThan(5);
+    expect(header_).toContain("wht_rate"); // ประตูรุ่นล่าสุดต้องรับช่องภาษีหัก ณ ที่จ่าย
 
     const input: PostingInput = { ...rent, memo: "ค่าเช่า", attachments: ["a/b/c.pdf"] };
     const p = toPostEntryPayload(input, buildPosting(input, TEST_RESOLVER), header);

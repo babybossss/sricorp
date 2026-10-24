@@ -215,3 +215,39 @@ describe("postEntry · ตั้งค้างรับ-ค้างจ่า�
     expect(ctx.db.rpcCalls).toHaveLength(before);
   });
 });
+
+describe("postEntry · ผู้เช่าหักภาษี ณ ที่จ่าย (D-111)", () => {
+  const withWht = { rate: 5, amount: 5000, certificateNo: "WHT-001" };
+
+  it("ค่าเช่า 100,000 หัก 5,000: เงินเข้า 95,000 + ภาษีรอเครดิต 5,000 รายได้เต็ม 100,000 และส่ง wht_* ที่หัวรายการ", async () => {
+    const out = await postEntry(req({}, { amount: 100000, wht: withWht }));
+    expect(out.ok, JSON.stringify(out)).toBe(true);
+    expect(ctx.db.rpcCalls[0]).toMatchObject({ wht_rate: 5, wht_amount: 5000, wht_certificate_no: "WHT-001" });
+    expect(ctx.db.balance("1100")).toBe(95000);
+    expect(ctx.db.balance("1800")).toBe(5000);
+    expect(ctx.db.balance("4200")).toBe(-100000);
+  });
+
+  it("กรอกยอดสุทธิ 95,000 ในช่องจำนวนเงิน → engine ปฏิเสธ ไม่ลงรายได้ต่ำกว่าจริง", async () => {
+    await refused(req({}, { amount: 95000, wht: withWht }), /ยอดเต็ม/);
+  });
+
+  it("ส่งข้อมูลภาษีมากับหมวดที่หักไม่ได้ (รายจ่าย) → ปฏิเสธ ไม่เมินทิ้ง", async () => {
+    await refused(
+      req({}, { typeKey: "expense", subCode: "exp.common", amount: 100000, wht: withWht }),
+      /ถูกหักภาษี ณ ที่จ่ายไม่ได้/
+    );
+  });
+
+  it("ข้อมูลภาษีไม่ครบ (ไม่มียอด / ไม่มีอัตรา) → ปฏิเสธ ไม่เดา", async () => {
+    await refused(req({}, { amount: 100000, wht: { rate: 5, amount: 0 } }), /ภาษี/);
+    await refused(req({}, { amount: 100000, wht: { rate: 0, amount: 5000 } }), /อัตรา/);
+  });
+
+  it("ตั้งค้างพร้อมถูกหักภาษีไม่ได้ (ยังไม่มีใครหัก)", async () => {
+    await refused(
+      req({ cashDate: "" }, { amount: 100000, notYetPaid: true, bankAccountId: undefined, wht: withWht }),
+      /ยังไม่ได้รับเงิน/
+    );
+  });
+});

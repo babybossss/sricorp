@@ -65,7 +65,8 @@ export const okReference = (): ReferenceState => ({ ok: true, ref: referenceFixt
 
 const HEADER = [
   "txn_type_code", "doc_date", "cash_date", "doc_no", "memo", "attachments", "asset_id", "contact_id", "contract_id",
-  "owner_reason", "funding_source", "source", "source_ref", "reverses_id", "transactions",
+  "owner_reason", "funding_source", "source", "source_ref", "reverses_id", "wht_rate", "wht_amount",
+  "wht_certificate_no", "transactions",
 ];
 const TXN = ["owner_id", "counter_owner_id", "intercompany_nature", "lines"];
 const LINE = ["coa_code", "bank_account_id", "asset_id", "debit", "credit", "cf_category", "memo"];
@@ -105,6 +106,12 @@ export function createFakeDb() {
       }
       if (Math.round((dr - cr) * 100) !== 0) throw new Error("Money Invariant 1: ไม่สมดุล");
     }
+    // ด่านของ DB: ใบที่มีบรรทัด 1800 (ภาษีถูกหัก) ต้องมี wht_amount/wht_rate ที่หัวรายการ และต้องส่งคู่กัน
+    const has1800 = txns.some((t) => ((t.lines as Record<string, unknown>[]) ?? []).some((l) => l.coa_code === "1800"));
+    if (has1800 && (p.wht_amount == null || p.wht_rate == null)) {
+      throw new Error("ใบนี้มีบรรทัดภาษีถูกหัก ณ ที่จ่าย แต่หัวรายการไม่ได้บันทึก wht_amount/wht_rate");
+    }
+    if ((p.wht_rate == null) !== (p.wht_amount == null)) throw new Error("ต้องส่ง wht_rate และ wht_amount คู่กัน");
     if (hasCash && !p.cash_date) throw new Error("ไม่มี cash_date ทั้งที่มีบรรทัดเงินสด");
     if (!hasCash && p.cash_date) throw new Error("มี cash_date ทั้งที่ไม่มีบรรทัดเงินสด");
 
@@ -163,6 +170,7 @@ export function createFakeDb() {
         preds.push((r) => (r as never)[c] !== v);
         return q;
       },
+      in: (c: string, vals: unknown[]) => (preds.push((r) => vals.includes((r as never)[c])), q),
       limit: (n: number) => ((cap = n), q),
       then: (resolve: (v: { data: LedgerViewRow[]; error: null }) => unknown) =>
         resolve({ data: rows.filter((r) => preds.every((p) => p(r))).slice(0, cap), error: null }),

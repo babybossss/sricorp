@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { loadReference } from "./reference";
 import type { LedgerViewRow } from "./ledger-entries";
-import { derivePendingAccruals, type PendingAccrual } from "./pending-accruals";
+import { accrualAccountCodes, derivePendingAccruals, type PendingAccrual } from "./pending-accruals";
 
 /** คอลัมน์ของ `v_ledger_posted` ที่ต้องใช้ — เขียนชื่อตรงๆ ไม่ใช้ `*` (คอลัมน์ใหม่ต้องไม่ไหลเข้าเองเงียบๆ) */
 const COLUMNS =
@@ -35,26 +35,35 @@ async function fetchRows(
 }
 
 /**
- * ยอดค้างทั้งหมด + ประวัติการล้างจริง จาก DB — ใช้ทั้งหน้า "ยืนยันรับ-จ่าย" และตอนกดยืนยัน
- * (`onlySourceId` = อ่านเฉพาะรายการเดียว สำหรับตอนกดยืนยัน: ประวัติต้องสดจาก DB เสมอ ไม่เชื่อสิ่งที่ browser ส่งมา)
+ * ยอดค้างทั้งหมด + ประวัติการล้างจริง + ยอดคงเหลือจริงของบัญชีพัก จาก DB
+ *
+ * อ่านทุกต้นทางเสมอ แม้ตอนกดยืนยันรายการเดียว: การตัดสินว่าต้นทางไหนถูกลดนอกแท็บ (FIFO ต่อผู้ถือ+บัญชีพัก)
+ * ต้องเห็นต้นทางข้างเคียงทั้งหมด ถ้าอ่านเฉพาะใบเดียวจะไม่รู้ยอดรวมของกลุ่ม
  */
 export async function readPendingAccruals(
   db: Db,
-  coaCodeById: Record<string, string>,
-  onlySourceId?: string
+  coaCodeById: Record<string, string>
 ): Promise<{ ok: true; items: PendingAccrual[] } | { ok: false; error: string }> {
-  const [cand, clr, rev] = await Promise.all([
-    fetchRows(db, (q) => (onlySourceId ? q.eq("transaction_id", onlySourceId) : q.is("cash_date", null))),
-    fetchRows(db, (q) => q.like("source_ref", onlySourceId ? `${onlySourceId}-clr-%` : "%-clr-%")),
+  const accountIds = Object.entries(coaCodeById)
+    .filter(([, code]) => accrualAccountCodes().includes(code))
+    .map(([id]) => id);
+  if (accountIds.length === 0) {
+    return { ok: false, error: "หา id ของบัญชีลูกหนี้/เจ้าหนี้ในผังบัญชีไม่เจอ — ปฏิเสธแทนที่จะแสดงยอดค้างที่ตรวจกับยอดจริงไม่ได้" };
+  }
+  const [cand, clr, rev, acc] = await Promise.all([
+    fetchRows(db, (q) => q.is("cash_date", null)),
+    fetchRows(db, (q) => q.like("source_ref", "%-clr-%")),
     fetchRows(db, (q) => q.not("reverses_id", "is", null)),
+    fetchRows(db, (q) => q.in("coa_id", accountIds)),
   ]);
-  for (const r of [cand, clr, rev]) if ("error" in r) return { ok: false, error: `อ่านยอดค้างไม่สำเร็จ (${r.error})` };
-  const c = cand as { rows: LedgerViewRow[] };
-  const k = clr as { rows: LedgerViewRow[] };
-  const v = rev as { rows: LedgerViewRow[] };
+  for (const r of [cand, clr, rev, acc]) if ("error" in r) return { ok: false, error: `อ่านยอดค้างไม่สำเร็จ (${r.error})` };
+  const rows = (r: unknown) => (r as { rows: LedgerViewRow[] }).rows;
   return {
     ok: true,
-    items: derivePendingAccruals({ candidates: c.rows, clearings: k.rows, reversals: v.rows }, coaCodeById),
+    items: derivePendingAccruals(
+      { candidates: rows(cand), clearings: rows(clr), reversals: rows(rev), accountLines: rows(acc) },
+      coaCodeById
+    ),
   };
 }
 

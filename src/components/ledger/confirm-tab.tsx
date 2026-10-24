@@ -17,10 +17,13 @@ import { useReference, useResolver } from "@/components/reference/reference-prov
 import { bankChoices, bankDirectionLabel } from "@/components/form/bank-field";
 import { findSub } from "@/lib/rules/tx-rules";
 import { confirmCash } from "@/app/actions/confirm-cash";
-import type { PendingAccrual } from "@/lib/db/pending-accruals";
+import { clearedOutsideEntry, type PendingAccrual } from "@/lib/db/pending-accruals";
 import type { PendingAccrualsState } from "@/lib/db/pending-accruals-server";
 import { prepareImageForUpload, uploadAttachmentFromBrowser } from "@/lib/storage/browser";
 import { safeDisplayName } from "@/lib/storage/path";
+import { routeAllowsWht } from "@/lib/db/clearing-route";
+import { EMPTY_WHT, type WhtDraft } from "@/components/form/wht-value";
+import { checkWhtRow } from "./confirm-wht";
 import { ClearingPreview } from "./clearing-preview";
 import {
   accruedAmountText,
@@ -53,7 +56,8 @@ function rowOf(p: PendingAccrual, ownerName: string, assetName: string | undefin
     typeKey: p.typeKey,
     subCode: p.subCode,
     accruedAmount: p.accruedAmount,
-    postedClearings: p.postedClearings,
+    // ประวัติจาก DB + ยอดที่ถูกลดนอกแท็บ (ให้ engine เห็นยอดค้างคงเหลือจริงเดียวกับที่ server จะใช้)
+    postedClearings: [...p.postedClearings, ...clearedOutsideEntry(p)],
     assetId: p.assetId ?? undefined,
     contactId: p.contactId ?? undefined,
     attachments: p.attachments,
@@ -69,6 +73,7 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
   const resolver = useResolver();
 
   const [drafts, setDrafts] = React.useState<Record<string, RowDraft>>({});
+  const [whts, setWhts] = React.useState<Record<string, WhtDraft>>({});
   const [checked, setChecked] = React.useState<Record<string, boolean>>({});
   const [reviewing, setReviewing] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -91,6 +96,9 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
     [pending, ref.owners, ref.assets]
   );
 
+  // จำนวนครั้งที่ล้างผ่านแท็บ (ไม่รวมยอดที่ลดนอกแท็บ) — server เทียบกับ DB เพื่อกันล้างซ้ำ
+  const refCountOf = new Map(pending.ok ? pending.pending.map((p) => [p.id, p.postedClearings.length] as const) : []);
+
   if (!pending.ok) {
     return (
       <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
@@ -105,7 +113,12 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
     setDrafts((m) => ({ ...m, [r.id]: { ...(m[r.id] ?? initialDraft(r)), ...p } }));
 
   // ประวัติว่างเสมอ — `historyOf` ใช้ประวัติที่ติดมากับแถว (ซึ่งมาจาก DB) ไม่มีประวัติที่หน้าจอสะสมเอง
-  const checks = new Map(rows.map((r) => [r.id, checkRow(r, draftOf(r), {}, resolver)]));
+  const whtOf = (r: PendingCashRow): WhtDraft => whts[r.id] ?? EMPTY_WHT;
+  // หักภาษีได้เฉพาะทางล้างที่ตารางกฎยอมให้หัก และต้องติ๊กเอง — ค่าที่ค้างอยู่เมื่อทางล้างเปลี่ยนไม่ถูกส่ง
+  const whtOn = (r: PendingCashRow) => routeAllowsWht(r.subCode, draftOf(r).clearingSubCode || undefined) && whtOf(r).on;
+  const checks = new Map(
+    rows.map((r) => [r.id, whtOn(r) ? checkWhtRow(r, draftOf(r), whtOf(r), resolver) : checkRow(r, draftOf(r), {}, resolver)])
+  );
   // ติ๊กค้างไว้แต่ engine ไม่ให้ผ่านแล้ว (เช่น บัญชีหลุด) = ไม่นับว่าเลือก
   const isOn = (r: PendingCashRow) => !!checked[r.id] && !!checks.get(r.id)?.canConfirm;
   const selected = rows.filter(isOn);
@@ -151,7 +164,8 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
             bankAccountId: r.bankAccountId || d.bankAccountId,
             slips: d.slips,
             clearingSubCode: d.clearingSubCode || undefined,
-            expectedClearedCount: r.postedClearings.length,
+            wht: whtOn(r) ? { rate: whtOf(r).rate, amount: whtOf(r).amount, certificateNo: whtOf(r).certificateNo } : undefined,
+            expectedClearedCount: refCountOf.get(r.id) ?? 0,
           };
         }),
       });
@@ -160,6 +174,7 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
         // ล้างค่าที่ยืนยันแล้วออกจากฟอร์ม แล้วให้ DB เป็นคนบอกว่ารายการไหนยังค้าง
         setChecked((m) => Object.fromEntries(Object.entries(m).map(([id, v]) => [id, okIds.has(id.toLowerCase()) ? false : v])));
         setDrafts((m) => Object.fromEntries(Object.entries(m).filter(([id]) => !okIds.has(id.toLowerCase()))));
+        setWhts((m) => Object.fromEntries(Object.entries(m).filter(([id]) => !okIds.has(id.toLowerCase()))));
         router.refresh();
       }
       if (!outcome.ok) {
@@ -193,7 +208,7 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
     const draft = draftOf(r);
     const dir = directionOf(r);
     const choices = clearingChoicesOf(r);
-    const done = r.postedClearings.length;
+    const done = refCountOf.get(r.id) ?? 0;
     const banks = ref.banks
       .filter((b) => b.isActive || b.id === draft.bankAccountId)
       .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -214,6 +229,47 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
                 ))}
               </Select>
             </Field>
+          ) : null}
+          {routeAllowsWht(r.subCode, draft.clearingSubCode || undefined) ? (
+            <div className="mt-2 flex flex-col gap-2 rounded border border-line bg-canvas p-3">
+              <label className="flex min-h-control items-start gap-2.5 text-base">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={whtOf(r).on}
+                  onChange={(e) => setWhts((m) => ({ ...m, [r.id]: { ...whtOf(r), on: e.target.checked } }))}
+                />
+                <span className="leading-[26px]">
+                  ผู้จ่ายหักภาษี ณ ที่จ่ายไว้
+                  <span className="block text-sm text-ink-600">
+                    ติ๊กแล้ว “ยอดที่ยืนยันครั้งนี้” ต้องเป็น <b>ยอดเต็มก่อนหักภาษี</b> (ลูกหนี้ปิดด้วยยอดเต็ม)
+                  </span>
+                </span>
+              </label>
+              {whtOf(r).on ? (
+                <div className="grid grid-cols-1 gap-3">
+                  <Field label="อัตราที่ถูกหัก (%)" required>
+                    <Input
+                      inputMode="decimal"
+                      value={whtOf(r).rate}
+                      onChange={(e) => setWhts((m) => ({ ...m, [r.id]: { ...whtOf(r), rate: e.target.value } }))}
+                    />
+                  </Field>
+                  <Field label="ยอดภาษีที่ถูกหัก (บาท)" required>
+                    <Input
+                      inputMode="decimal"
+                      value={whtOf(r).amount}
+                      onChange={(e) => setWhts((m) => ({ ...m, [r.id]: { ...whtOf(r), amount: e.target.value } }))}
+                    />
+                  </Field>
+                  <Field label="เลขที่ใบรับรอง" hint="นิติบุคคลต้องมี">
+                    <Input
+                      value={whtOf(r).certificateNo}
+                      onChange={(e) => setWhts((m) => ({ ...m, [r.id]: { ...whtOf(r), certificateNo: e.target.value } }))}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
           ) : null}
           {!check.canConfirm ? (
             <div className="mt-1 text-sm leading-6 text-warn-fg">ยังยืนยันไม่ได้ — {check.blockedReason}</div>

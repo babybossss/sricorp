@@ -306,6 +306,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         </Field>
       </div>
 
+      {/* ผู้จ่ายหักภาษี ณ ที่จ่าย — โชว์เฉพาะหมวดที่ตารางกฎยอมให้หักได้ และเงินเคลื่อนจริง */}
+      {api.whtEligible ? <WhtSection api={api} /> : null}
+
       {/* โอนระหว่างบัญชี — ต้องมีปลายทาง และถ้าข้ามผู้ถือต้องบอกว่าเป็นอะไร */}
       {requires("transferTarget") ? <TransferSection api={api} narrow={narrow} /> : null}
 
@@ -344,6 +347,44 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
 
       {/* สรุปว่าจะลงบัญชีอย่างไร อยู่ล่างสุดเสมอ — อ่านหลังกรอกครบ ไม่ใช่คั่นกลางฟอร์ม */}
       {sub ? <ImpactPreview subCode={sub.code} accrued={draft.notYetPaid} /> : null}
+    </div>
+  );
+}
+
+/**
+ * ผู้จ่ายหักภาษี ณ ที่จ่ายไว้ (เช่น ผู้เช่าที่เป็นนิติบุคคลหัก 5% ของค่าเช่า)
+ *
+ * จำนวนเงินด้านบนต้องเป็น **ยอดเต็มก่อนหักภาษี** (เช่น 100,000) ไม่ใช่ยอดที่เข้าบัญชี (95,000) —
+ * ระบบแยกให้เองเป็น เงินเข้าบัญชีสุทธิ + ภาษีรอเครดิต · รายได้ต้องรับรู้เต็มจำนวน
+ */
+function WhtSection({ api }: { api: TxFormApi }) {
+  const { draft, patch } = api;
+  const w = draft.wht;
+  const set = (p: Partial<typeof w>) => patch({ wht: { ...w, ...p } });
+  return (
+    <div className="flex flex-col gap-3 rounded-card border border-line bg-canvas p-4">
+      <label className="flex min-h-control items-start gap-2.5 text-base">
+        <Checkbox className="mt-0.5" checked={w.on} onChange={(e) => set({ on: e.target.checked })} />
+        <span className="leading-[26px]">
+          ผู้จ่ายหักภาษี ณ ที่จ่ายไว้
+          <span className="block text-sm text-ink-600">
+            ติ๊กเมื่อเงินที่เข้าบัญชีน้อยกว่ายอดเต็มเพราะถูกหักภาษี · ช่อง “จำนวนเงิน” ด้านบนต้องกรอกเป็น <b>ยอดเต็มก่อนหักภาษี</b>
+          </span>
+        </span>
+      </label>
+      {w.on ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="อัตราที่ถูกหัก (%)" required hint="เช่น 5">
+            <Input value={w.rate} onChange={(e) => set({ rate: e.target.value })} inputMode="decimal" />
+          </Field>
+          <Field label="ยอดภาษีที่ถูกหัก (บาท)" required hint="ตามใบรับรองการหักภาษี">
+            <AmountInput value={w.amount} onChange={(e) => set({ amount: e.target.value })} placeholder="0.00" />
+          </Field>
+          <Field label="เลขที่ใบรับรอง" hint="นิติบุคคลต้องมี">
+            <Input value={w.certificateNo} onChange={(e) => set({ certificateNo: e.target.value })} />
+          </Field>
+        </div>
+      ) : null}
     </div>
   );
 }

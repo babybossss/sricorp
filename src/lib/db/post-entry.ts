@@ -41,6 +41,10 @@ export type PostEntryPayload = {
   contact_id?: string;
   /** ใบล้างยอดค้างใช้เก็บเลขอ้างอิงการยืนยัน `<id รายการต้นทาง>-clr-<n>` — ที่มาของประวัติการล้าง */
   source_ref?: string;
+  /** ภาษีหัก ณ ที่จ่าย (D-111) — ต้องส่งคู่กันทั้งอัตราและยอด · ใบที่มีบรรทัด 1800 แต่หัวรายการว่าง DB ปฏิเสธทั้งใบ */
+  wht_rate?: number;
+  wht_amount?: number;
+  wht_certificate_no?: string;
   source: "manual";
   transactions: PostEntryTransaction[];
 };
@@ -80,6 +84,10 @@ export function toPostEntryPayload(
     asset_id: blank(input.assetId),
     contact_id: blank(input.contactId),
     source_ref: blank(header.sourceRef),
+    // ส่งเมื่อ input บอกว่าถูกหักภาษีเท่านั้น (engine ตรวจแล้วว่าสอดคล้องกับบรรทัด 1800 ที่สร้าง)
+    wht_rate: input.wht ? input.wht.rate : undefined,
+    wht_amount: input.wht ? input.wht.amount : undefined,
+    wht_certificate_no: blank(input.wht?.certificateNo),
     source: "manual",
     transactions: result.transactions.map((t) => ({
       owner_id: t.ownerId,

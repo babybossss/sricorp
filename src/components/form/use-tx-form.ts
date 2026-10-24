@@ -7,6 +7,7 @@ import {
   isValidPair,
   canAccrueFromForm,
   accrualCheck,
+  whtCheck,
   type TxTypeKey,
   type SubCategory,
 } from "@/lib/rules/tx-rules";
@@ -23,6 +24,7 @@ import { notWiredReason } from "@/lib/db/post-entry";
 import { showsBankField } from "./bank-field";
 import { EMPTY_CASH_FIELDS, cashFieldsFor, type CashFields } from "./cash-fields";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
+import { EMPTY_WHT, type WhtDraft } from "./wht-value";
 import {
   EMPTY_DISPOSAL,
   EMPTY_REPAYMENT,
@@ -55,6 +57,8 @@ export type TxDraft = CashFields & {
   disposal: DisposalValue;
   /** Backlog ข้อ 5 — แยกเงินต้น/ดอกเบี้ย (เมื่อบังคับ principalInterestSplit) */
   repayment: RepaymentValue;
+  /** ผู้จ่ายหักภาษี ณ ที่จ่ายไว้ (เฉพาะหมวดที่ตารางกฎยอมให้หักได้และเงินเคลื่อนจริง) */
+  wht: WhtDraft;
 };
 
 /**
@@ -82,6 +86,7 @@ const freshDraft = (): TxDraft => ({
   loanTerms: EMPTY_LOAN_TERMS,
   disposal: EMPTY_DISPOSAL,
   repayment: EMPTY_REPAYMENT,
+  wht: EMPTY_WHT,
 });
 
 /** ค่า "ยังไม่ได้รับ-จ่าย" ตั้งต้น — อ้างจากฟอร์มเปล่าที่เดียว ไม่เขียนซ้ำ */
@@ -214,6 +219,12 @@ export function useTxForm() {
   const moneyMoved = showsBankField(sub) && !(draft.notYetPaid && canAccrue);
   /** หมวดที่เส้นทางบันทึกยังต่อไม่ครบ (สัญญากู้ · ขายทรัพย์) — บอกเหตุผล ไม่ใช่บันทึกครึ่งเดียว */
   const notWired = notWiredReason(sub);
+  /**
+   * หักภาษี ณ ที่จ่ายได้ไหม — ถามตารางกฎ (`whtCheck`) ไม่ไล่ชื่อหมวด · ต้องมีเงินเคลื่อนจริงด้วย
+   * (ตั้งค้างแล้วยังไม่มีใครหัก — engine ปฏิเสธอยู่แล้ว ที่นี่แค่ไม่เปิดช่องให้กรอก)
+   */
+  const whtEligible = !!sub && whtCheck(sub).ok && moneyMoved;
+  const whtOn = whtEligible && draft.wht.on;
 
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);
 
@@ -238,6 +249,7 @@ export function useTxForm() {
     if (!dmyToIso(draft.docDate)) out.push("วันที่เอกสาร (วว/ดด/ปปปป)");
     if (moneyMoved && !dmyToIso(draft.cashDate)) out.push("วันที่เงินเข้า/ออกจริง (วว/ดด/ปปปป)");
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
+    if (whtOn && (!draft.wht.rate.trim() || !draft.wht.amount.trim())) out.push("อัตราและยอดภาษีที่ถูกหัก (จากใบรับรอง)");
     if (requires("asset") && !draft.assetId) out.push("โปรเจค (ทรัพย์)");
     if (requires("transferTarget")) {
       if (!draft.transferToBankId) out.push("บัญชีปลายทาง");
@@ -260,7 +272,7 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner, moneyMoved]);
+  }, [draft, requires, isCrossOwner, moneyMoved, whtOn]);
 
   const reset = React.useCallback(() => {
     setDraft(freshDraft());
@@ -346,8 +358,16 @@ export function useTxForm() {
           : undefined,
       transferToBankAccountId: draft.transferToBankId || undefined,
       intercompanyNature: draft.intercompanyNature || undefined,
+      // ส่งเมื่อติ๊กว่าถูกหักและหมวดนี้หักได้เท่านั้น — ค่าที่ค้างจากหมวดอื่นไม่หลุดไปกับรายการ
+      wht: whtOn
+        ? {
+            rate: parseAmount(draft.wht.rate),
+            amount: parseAmount(draft.wht.amount),
+            certificateNo: draft.wht.certificateNo.trim() || undefined,
+          }
+        : undefined,
     };
-  }, [draft, sub, canAccrue, disposal, repayment.split]);
+  }, [draft, sub, canAccrue, disposal, repayment.split, whtOn]);
 
   /**
    * เหตุที่ engine จะปฏิเสธถ้ากดบันทึกตอนนี้
@@ -418,6 +438,7 @@ export function useTxForm() {
     canPost,
     notWired,
     moneyMoved,
+    whtEligible,
     submitting,
     submit,
     step,
