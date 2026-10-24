@@ -13,7 +13,14 @@
  * ผังบัญชีและหมวดย่อยตรวจทานกับของจริงใน SRI_Transaction_ERP.xlsx (ชีท Setup)
  */
 
-import { coa, coaLabel, isCashAccount, type CoaAccount } from "./coa";
+import {
+  coa,
+  coaLabel,
+  isCashAccount,
+  isRevaluationSurplusAccount,
+  WHT_COA,
+  type CoaAccount,
+} from "./coa";
 
 export type TxTypeKey =
   | "income"
@@ -1052,6 +1059,84 @@ export const TX_TYPES: TxType[] = [
           "ค่าใช้จ่ายรับรู้ไปแล้วตอนตั้งค่าเผื่อ หมวดนี้จึงไม่แตะกำไรขาดทุน · " +
           "ตัดได้ไม่เกินค่าเผื่อคงเหลือ ถ้าไม่พอให้ไปตั้งค่าเผื่อเพิ่มก่อน (DB ปฏิเสธ)",
       },
+
+      /* ---------------------------------------------------------------- *
+       * ตีราคาทรัพย์ฝั่งลงทุนตามราคาตลาด (D-111 ข้อ 2 · ลูกพี่ veto 24/10)
+       *
+       * **ไม่แตะงบกำไรขาดทุนเลยแม้แต่บรรทัดเดียว** — คู่บัญชีเป็น
+       * ทรัพย์ (asset) ↔ ส่วนเกินทุนจากการตีราคา (equity) ทั้งสองขาอยู่ในงบดุล
+       * `effectsOf()` จึงคืน `pl: undefined` และ `affectsPL()` เป็น false โดยโครงสร้าง
+       * ไม่ใช่เพราะมีใครจำได้ว่าต้องไม่แสดง
+       *
+       * **ขาขึ้นและขาลงเป็นคู่กลับรายการของกันและกัน** (dr/cr สลับข้างเป๊ะ)
+       * ซึ่งเป็นสิ่งที่ `planRevaluation()` ใช้กลับรายการของเดือนก่อนทุกเดือน
+       * แทนการลงส่วนต่างทับกันไปเรื่อยๆ — ถ้าขาดข้างใดข้างหนึ่ง การตีราคาจะกลับทิศ
+       * ไม่ได้ และยอดจะบวมขึ้นทุกเดือน (บทเรียนข้อ 7 ในอีกรูป)
+       *
+       * แยกตามบัญชีทรัพย์ (หลักทรัพย์ 1700 · ทองคำ-คริปโต 1720) ด้วยเหตุผลเดียวกับ
+       * `inv.buy_securities` / `inv.buy_commodity`: ใช้บัญชีเดียวกันแล้วแยกสองหมวดใหญ่
+       * ออกจากกันในรายงานไม่ได้เลย
+       * ---------------------------------------------------------------- */
+      {
+        code: "adj.revalue_securities_up",
+        label: "ตีราคาหลักทรัพย์ขึ้น (ยังไม่ขาย)",
+        en: "Revalue securities up",
+        plain:
+          "มูลค่าเงินลงทุนในหลักทรัพย์เพิ่มขึ้น และส่วนเกินทุนจากการตีราคาในส่วนของเจ้าของเพิ่มขึ้น — ไม่เข้างบกำไรขาดทุน และไม่มีเงินเข้าออกบัญชี",
+        cash: "none",
+        cashflow: "none",
+        dr: "1700",
+        cr: "3400",
+        requires: ["asset", "revaluation"],
+        caution:
+          "กำไรจากการตีราคาไม่ใช่กำไรที่เกิดขึ้นจริง ห้ามนำไปจ่ายปันผล · " +
+          "เดือนถัดไปต้องกลับรายการของเดือนนี้ก่อนลงยอดใหม่ ไม่ใช่ลงทับกัน",
+      },
+      {
+        code: "adj.revalue_securities_down",
+        label: "ตีราคาหลักทรัพย์ลง (ยังไม่ขาย)",
+        en: "Revalue securities down",
+        plain:
+          "ส่วนเกินทุนจากการตีราคาลดลง และมูลค่าเงินลงทุนในหลักทรัพย์ลดลง — ไม่เข้างบกำไรขาดทุน และไม่มีเงินเข้าออกบัญชี",
+        cash: "none",
+        cashflow: "none",
+        dr: "3400",
+        cr: "1700",
+        requires: ["asset", "revaluation"],
+        caution:
+          "ขาดทุนจากการตีราคายังไม่เกิดขึ้นจริง จึงไม่เป็นค่าใช้จ่าย · " +
+          "ยอดส่วนเกินทุนติดลบได้ (ทรัพย์ต่ำกว่าทุน) และต้องแสดงในวงเล็บ",
+      },
+      {
+        code: "adj.revalue_commodity_up",
+        label: "ตีราคาทองคำ/คริปโตขึ้น (ยังไม่ขาย)",
+        en: "Revalue gold & alternative assets up",
+        plain:
+          "มูลค่าทองคำและสินทรัพย์ทางเลือกเพิ่มขึ้น และส่วนเกินทุนจากการตีราคาในส่วนของเจ้าของเพิ่มขึ้น — ไม่เข้างบกำไรขาดทุน และไม่มีเงินเข้าออกบัญชี",
+        cash: "none",
+        cashflow: "none",
+        dr: "1720",
+        cr: "3400",
+        requires: ["asset", "revaluation"],
+        caution:
+          "คริปโตแกว่งแรงมาก ยอดส่วนเกินทุนจะกลับทิศได้ทุกเดือน · " +
+          "เดือนถัดไปต้องกลับรายการของเดือนนี้ก่อนลงยอดใหม่",
+      },
+      {
+        code: "adj.revalue_commodity_down",
+        label: "ตีราคาทองคำ/คริปโตลง (ยังไม่ขาย)",
+        en: "Revalue gold & alternative assets down",
+        plain:
+          "ส่วนเกินทุนจากการตีราคาลดลง และมูลค่าทองคำและสินทรัพย์ทางเลือกลดลง — ไม่เข้างบกำไรขาดทุน และไม่มีเงินเข้าออกบัญชี",
+        cash: "none",
+        cashflow: "none",
+        dr: "3400",
+        cr: "1720",
+        requires: ["asset", "revaluation"],
+        caution:
+          "ขาดทุนจากการตีราคายังไม่เกิดขึ้นจริง จึงไม่เป็นค่าใช้จ่าย · " +
+          "ตอนขายจริงถึงรับรู้กำไร/ขาดทุนเข้างบกำไรขาดทุน พร้อมล้างส่วนเกินทุนของทรัพย์ชิ้นนั้นออก",
+      },
     ],
   },
 ];
@@ -1433,4 +1518,125 @@ export function accrualCheck(sub: SubCategory): AccrualCheck {
  */
 export function canAccrueFromForm(sub: SubCategory): boolean {
   return accrualCheck(sub).ok;
+}
+
+/* ------------------------------------------------------------------ *
+ * ภาษีหัก ณ ที่จ่าย (D-111 ข้อ 1)
+ * ------------------------------------------------------------------ */
+
+/**
+ * หมวดนี้ถูกหัก ณ ที่จ่ายได้ไหม — **คำนวณจากคู่บัญชี ไม่ใช่ธงที่พิมพ์มือรายหมวด**
+ *
+ * เงื่อนไขมาจากความหมายของเหตุการณ์ตรงๆ: มีคนจ่าย **รายได้** ให้เรา
+ * แล้วหักภาษีไว้ส่วนหนึ่งก่อนโอน จึงต้องเป็นหมวดที่
+ *   1. เงินเข้า (`cash: "in"`) — ไม่มีใครหักภาษีจากเงินที่เราจ่ายออก
+ *      (การที่ **เรา** เป็นผู้หักตอนจ่าย เป็นหนี้สินรอนำส่ง = คนละเรื่อง ยังไม่อยู่ในขอบเขต)
+ *   2. ขาเดบิตเป็นเงินสด — ยอดที่เข้าบัญชีคือยอดสุทธิที่ต้องถูกแยกออกเป็นสองขา
+ *   3. ขาเครดิตเป็นบัญชี **รายได้** — ภาษีหัก ณ ที่จ่ายผูกกับเงินได้
+ *      การรับคืนเงินต้น/มัดจำ/ลูกหนี้ ไม่ใช่เงินได้ จึงไม่มีการหัก
+ *   4. กระแสเงินสดหมวดดำเนินงาน — ให้ทางล้าง (`inv.wht_refund`) อยู่หมวดเดียวกัน
+ *
+ * ทำแบบคำนวณเพราะหมวดรายได้ตัวใหม่ในอนาคตจะรองรับเองทันที
+ * ธงที่ติ๊กรายหมวดคือของที่ **ลืมติ๊กได้** แล้วผู้ใช้จะกรอกยอดสุทธิเป็นรายได้แทน
+ * ซึ่งเป็นข้อผิดที่ทั้งใบยังสมดุลและไม่มีอะไรฟ้อง
+ *
+ * สำเนาฝั่ง DB คือ `fn_txn_type_can_withhold()` ซึ่งอ่านสามฟิลด์เดียวกันจาก
+ * `txn_types` (`cash_direction` · `dr_coa_code` · `cr_coa_code` · `cf_group`)
+ * และมีเทสต์ฝั่ง SQL ยืนยันว่าตอบตรงกับกฎนี้ทุกแถว
+ */
+export function canWithholdTax(sub: SubCategory): boolean {
+  return (
+    sub.cash === "in" &&
+    sub.cashflow === "operating" &&
+    isCashAccount(sub.dr) &&
+    coa(sub.cr).type === "income"
+  );
+}
+
+/** เหตุผลที่หมวดนี้ถูกหักภาษี ณ ที่จ่ายไม่ได้ — คำนวณที่เดียว เหมือน `accrualCheck()` */
+export type WhtCheck = { ok: true; account: string } | { ok: false; why: string };
+
+export function whtCheck(sub: SubCategory): WhtCheck {
+  if (!canWithholdTax(sub)) {
+    const reasons: string[] = [];
+    if (sub.cash !== "in") reasons.push(`ทิศเงินเป็น "${cashDirectionLabel(sub.cash)}" ไม่ใช่เงินเข้า`);
+    if (!isCashAccount(sub.dr)) reasons.push("ขาเดบิตไม่ใช่เงินสด จึงไม่มียอดสุทธิให้แยก");
+    if (coa(sub.cr).type !== "income") {
+      reasons.push(`ขาเครดิตเป็น ${coaLabel(sub.cr)} ซึ่งไม่ใช่บัญชีรายได้ — ภาษีหัก ณ ที่จ่ายหักจากเงินได้เท่านั้น`);
+    }
+    if (sub.cashflow !== "operating") reasons.push(`กระแสเงินสดเป็นหมวด${CF_TH[sub.cashflow]} ไม่ใช่ดำเนินงาน`);
+    return {
+      ok: false,
+      why: reasons.join(" · "),
+    };
+  }
+  return { ok: true, account: WHT_COA };
+}
+
+/** ทุกหมวดที่ถูกหักภาษี ณ ที่จ่ายได้ — ใช้ในเทสต์และหน้าตารางกฎ */
+export function whtEligibleSubs(): SubCategory[] {
+  return TX_TYPES.flatMap((t) => t.subs).filter(canWithholdTax);
+}
+
+/* ------------------------------------------------------------------ *
+ * ตีราคาทรัพย์ (D-111 ข้อ 2)
+ * ------------------------------------------------------------------ */
+
+/**
+ * หมวดนี้คือรายการตีราคาหรือไม่ — **ตัดสินจากคู่บัญชี** (แตะ 3400)
+ *
+ * มีสองตัวที่ตอบคำถามนี้โดยตั้งใจ และต้องตอบตรงกันเสมอ:
+ *   - รูปของคู่บัญชี (ตัวนี้) ซึ่งฝั่ง SQL ตรวจได้จาก `txn_types.dr/cr_coa_code`
+ *   - ธง `requires: "revaluation"` ซึ่งเป็นตัวที่ engine ใช้แยกสาขา
+ * เทสต์บังคับให้สองตัวเท่ากันทุกหมวด — ถ้าต่างกัน แปลว่าด่านฝั่ง DB กับฝั่งโค้ด
+ * กำลังคุมหมวดคนละชุด ซึ่งคือรูที่เงียบที่สุด
+ */
+export function isRevaluationSub(sub: SubCategory): boolean {
+  return (
+    isRevaluationSurplusAccount(sub.dr) || isRevaluationSurplusAccount(sub.cr)
+  );
+}
+
+/** บัญชีทรัพย์ของหมวดตีราคานี้ — คือขาที่ไม่ใช่ส่วนเกินทุน */
+export function revaluationAssetCoa(sub: SubCategory): string {
+  if (!isRevaluationSub(sub)) {
+    throw new Error(`หมวด ${sub.code} ไม่ใช่รายการตีราคา จึงไม่มีบัญชีทรัพย์ฝั่งตีราคา`);
+  }
+  return isRevaluationSurplusAccount(sub.dr) ? sub.cr : sub.dr;
+}
+
+/** ตีขึ้น = ทรัพย์อยู่ฝั่งเดบิต · ตีลง = ทรัพย์อยู่ฝั่งเครดิต */
+export type RevaluationDirection = "up" | "down";
+
+export function revaluationDirection(sub: SubCategory): RevaluationDirection {
+  return isRevaluationSurplusAccount(sub.cr) ? "up" : "down";
+}
+
+/**
+ * หมวดตีราคาของบัญชีทรัพย์นี้ ในทิศนี้ — **ถามตารางกฎ ไม่ใช่ประกอบรหัสหมวดเป็นสตริง**
+ *
+ * คืน `undefined` ถ้าไม่มี เพื่อให้ผู้เรียกปฏิเสธด้วยข้อความของตัวเอง
+ * (ทรัพย์ที่ลงบัญชี 1500 อสังหาฯ ยังไม่มีหมวดตีราคา — ขอบเขตเฟสนี้คือฝั่งลงทุน)
+ */
+export function revaluationSubFor(
+  assetCoa: string,
+  direction: RevaluationDirection
+): SubCategory | undefined {
+  return TX_TYPES.flatMap((t) => t.subs).find(
+    (s) =>
+      isRevaluationSub(s) &&
+      revaluationAssetCoa(s) === assetCoa &&
+      revaluationDirection(s) === direction
+  );
+}
+
+/** บัญชีทรัพย์ทุกตัวที่ตีราคาได้ในวันนี้ — ใช้ปฏิเสธแบบบอกทางเลือกที่มีจริง */
+export function revaluableAssetCoas(): string[] {
+  return [
+    ...new Set(
+      TX_TYPES.flatMap((t) => t.subs)
+        .filter(isRevaluationSub)
+        .map(revaluationAssetCoa)
+    ),
+  ];
 }
