@@ -646,7 +646,19 @@ language sql stable set search_path = '' as $fn$
         when exists (select 1 from pg_auth_members m
                       join pg_roles r on r.oid = m.member
                       join pg_roles g on g.oid = m.roleid
-                     where g.rolname = 'sri_os_column_reader')
+                     where g.rolname = 'sri_os_column_reader'
+                       -- **ยกเว้น role ระดับผู้ดูแล** — ตั้งแต่ PG16 ผู้ที่สร้าง role
+                       -- ถูกใส่เป็นสมาชิกโดยอัตโนมัติ และสมาชิกภาพนั้น **ถอนเองไม่ได้**
+                       -- (ผู้ให้สิทธิ์เป็นคนละคนกับผู้รัน → `REVOKE` ได้แค่ WARNING)
+                       -- วัดจากของจริงบน Supabase 24/10: ด่านนี้แดงทั้งที่ไม่มีใครผิด
+                       --
+                       -- ยกเว้นได้โดยไม่ลดความเข้ม เพราะ role พวกนี้ **อ่านข้อมูลได้อยู่แล้ว**
+                       -- ทางอื่น (เป็นเจ้าของตาราง · superuser · ข้าม RLS) การเป็นสมาชิก
+                       -- จึงไม่ได้ให้สิทธิ์อะไรเพิ่ม · สิ่งที่ด่านนี้ต้องกันคือ role ของ
+                       -- **ผู้ใช้แอป** (authenticated · anon) ซึ่งไม่เข้าข้อยกเว้นนี้
+                       and not (r.rolsuper or r.rolcreaterole or r.rolbypassrls
+                                or r.oid = (select nspowner from pg_namespace
+                                             where nspname = 'sri_os')))
              then 'มี role อื่นเป็นสมาชิกของ sri_os_column_reader → ใช้สิทธิ์ของมันได้โดยไม่ผ่านฟังก์ชัน'
         else null end as problem
     ) x
