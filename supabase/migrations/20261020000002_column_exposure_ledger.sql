@@ -465,7 +465,18 @@ language sql stable set search_path = '' as $fn$
         when exists (select 1 from pg_auth_members m
                       join pg_roles r on r.oid = m.member
                       join pg_roles g on g.oid = m.roleid
-                     where g.rolname = 'sri_os_column_reader')
+                     where g.rolname = 'sri_os_column_reader'
+                       -- **ต้องตรงกับ 20261020000000 เป๊ะ** — ไฟล์นี้ `create or replace`
+                       -- ทับฟังก์ชันเดียวกัน ถ้าสองที่ไม่เหมือนกัน ตัวที่รันทีหลังชนะ
+                       -- แล้วการแก้ที่ไฟล์แรกจะหายไปเงียบๆ (D-104)
+                       --
+                       -- ยกเว้น role ระดับผู้ดูแล: ตั้งแต่ PG16 ผู้สร้าง role ถูกใส่เป็น
+                       -- สมาชิกอัตโนมัติและถอนเองไม่ได้ · role พวกนี้อ่านข้อมูลได้อยู่แล้ว
+                       -- จากการเป็นเจ้าของตาราง การเป็นสมาชิกจึงไม่ให้สิทธิ์อะไรเพิ่ม
+                       -- สิ่งที่ด่านนี้ต้องกันคือ role ของผู้ใช้แอป (authenticated · anon)
+                       and not (r.rolsuper or r.rolcreaterole or r.rolbypassrls
+                                or r.oid = (select nspowner from pg_namespace
+                                             where nspname = 'sri_os')))
              then 'มี role อื่นเป็นสมาชิกของ sri_os_column_reader → ใช้สิทธิ์ของมันได้โดยไม่ผ่านฟังก์ชัน'
         else null end as problem
     ) x
