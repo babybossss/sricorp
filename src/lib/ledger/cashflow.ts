@@ -69,6 +69,7 @@
  */
 
 import { isCashAccount } from "@/lib/rules/coa";
+import { BASE_CURRENCY } from "@/lib/rules/currency";
 import { INTERCOMPANY_RULES, type IntercompanyNature } from "@/lib/rules/intercompany";
 import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf, cashflowLineOfLeg } from "@/lib/rules/statements";
 import { findSub, isFxCashSub, type CashflowSection } from "@/lib/rules/tx-rules";
@@ -101,6 +102,15 @@ export type CashflowSourceLine = {
   debit: number;
   credit: number;
   cfCategory: CashflowSection;
+  /**
+   * สกุลเงินของบรรทัด (`transaction_lines.currency`) · `null` = บรรทัดบาทตรงๆ
+   *
+   * **บังคับให้ส่งมาเสมอ (ค่าว่างต้องเป็น `null` ที่ส่งมาตรงๆ)** เพราะบรรทัดนี้
+   * เป็นตัวตัดสินว่าเงินสดที่ขยับเป็น **ผลของอัตราแลกเปลี่ยน** หรือเป็นเงินที่
+   * หายไปจากงบ · ถ้าคีย์หายแล้วตีความว่า "ไม่มีสกุล" เงียบๆ บรรทัดเงินตราจริง
+   * จะกลายเป็น anomaly ทุกเดือน และเราจะเริ่มเพิกเฉยต่อ anomaly
+   */
+  currency: string | null;
 };
 
 /**
@@ -354,11 +364,30 @@ function assertLine(raw: unknown, txnId: string, index: number): CashflowSourceL
     fail(`${where} มี cfCategory ที่ไม่รู้จัก: ${JSON.stringify(o.cfCategory)}`);
   }
 
+  /**
+   * สกุลเงินต้องส่งมาเสมอ — คีย์ที่หายไปคือ **ข้อมูลไม่ครบ** ไม่ใช่ "ไม่มีสกุล"
+   * (รูปเดียวกับ `cashDate` / `counterOwnerId` ที่ต้องส่ง `null` มาตรงๆ)
+   *
+   * ค่านี้เป็นตัวตัดสินว่าเงินสดที่ขยับโดยไม่เข้างบเป็นผลของอัตราแลกเปลี่ยน
+   * (ถูกต้อง · IAS 7.28) หรือเป็นเงินที่หายไปจากงบ (ความผิดปกติที่ต้องดัง)
+   * เดาแทนไม่ได้ เพราะเดาผิดด้านหนึ่งคือปิดเสียงด่าน อีกด้านคือปิดงบไม่ได้
+   */
+  if (!has(o, "currency")) {
+    fail(
+      `${where} ไม่มี currency — ต้องส่ง null มาตรงๆ ถ้าเป็นบรรทัดบาท · ` +
+        "ค่านี้ตัดสินว่าเงินสดที่ขยับโดยไม่เข้างบเป็นผลของอัตราแลกเปลี่ยนหรือเงินที่หายไปจากงบ"
+    );
+  }
+  if (o.currency !== null && typeof o.currency !== "string") {
+    fail(`${where} มี currency ที่ไม่ใช่สกุลเงิน: ${JSON.stringify(o.currency)}`);
+  }
+
   return {
     coaCode,
     debit: satangOf(has(o, "debit") ? o.debit : undefined, `เดบิตของ${where}`) / 100,
     credit: satangOf(has(o, "credit") ? o.credit : undefined, `เครดิตของ${where}`) / 100,
     cfCategory,
+    currency: (o.currency as string | null) ?? null,
   };
 }
 
@@ -736,7 +765,24 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
          */
         if (satang !== 0) {
           const sub = findSub(t.subCode)?.sub;
-          if (sub && isFxCashSub(sub)) {
+          /**
+           * **ต้องมีเงินตราจริงในใบนั้นด้วย ไม่ใช่แค่หมวดเป็นหมวดค่าเงิน**
+           *
+           * เช็คแค่หมวด (`isFxCashSub`) คือรูที่ผู้ตรวจจับได้ (BLOCK ข้อ 2):
+           * ใบแปลงค่าที่ลงบน **บัญชีบาท** ก็เป็นหมวดค่าเงินเหมือนกัน → ยอด
+           * 1,000,000 บาทที่โผล่จากอากาศถูกกลืนเข้า `fxEffect` แล้วงบขึ้น
+           * `reconciled: true` **ปิดเสียงด่าน `cashOutsideStatement`** ซึ่งเป็น
+           * ตัวจับความผิดปกติที่สร้างมาเพื่อจับเรื่องนี้พอดี
+           *
+           * ผลกระทบของอัตราแลกเปลี่ยนเกิดได้เฉพาะกับเงินสดที่เป็นเงินตราจริง
+           * จึงต้องมีบรรทัดเงินสดที่ **มีสกุลที่ไม่ใช่บาท** อยู่ในใบนั้น
+           * (ด่านฝั่ง DB บังคับว่าบรรทัดของบัญชีเงินตราต้องมีสกุลกำกับ และ
+           *  บรรทัดของบัญชีบาทต้องไม่มี — สองด่านนี้จึงตรงกันเสมอ)
+           */
+          const hasForeignCash = t.lines.some(
+            (l) => isCashAccount(l.coaCode) && l.currency !== null && l.currency !== BASE_CURRENCY
+          );
+          if (sub && isFxCashSub(sub) && hasForeignCash) {
             fxEffectSatang += satang;
           } else {
             note(
@@ -745,7 +791,12 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
               t.subCode,
               satang,
               `รายการ ${t.txnId} มีเงินสดเคลื่อนสุทธิ ${toBaht(satang)} บาท ` +
-                'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ'
+                'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ' +
+                (sub && isFxCashSub(sub)
+                  ? " · หมวดนี้เป็นหมวดอัตราแลกเปลี่ยนแต่ **ไม่มีบรรทัดเงินสดสกุลต่างประเทศ** " +
+                    "ในใบนี้เลย จึงไม่ใช่ผลของอัตราแลกเปลี่ยน (ยอดบาทของบัญชีบาทไม่ขยับตามอัตรา) " +
+                    "— ใบแบบนี้คือเงินสดที่โผล่มาจากอากาศ"
+                  : "")
             );
           }
         }

@@ -17,7 +17,16 @@ import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 const buildPostingDraft = (input: PostingInput) => buildPostingDraftWith(input, TEST_RESOLVER);
 import { isCashAccount } from "@/lib/rules/coa";
-import { TX_TYPES, findSub, canAccrueFromForm, movesCash } from "@/lib/rules/tx-rules";
+import {
+  TX_TYPES,
+  findSub,
+  canAccrueFromForm,
+  movesCash,
+  isFxTranslationSub,
+  isFxRealisingSub,
+  type SubCategory,
+} from "@/lib/rules/tx-rules";
+import { isFxTranslationAccount } from "@/lib/rules/coa";
 
 const base = {
   amount: 12000,
@@ -33,7 +42,55 @@ const base = {
  * fixture ที่ยัดบัญชีให้ทุกหมวดจึงไม่ใช่ "ข้อมูลครบ" แต่เป็นข้อมูลที่ขัดกับหมวด
  */
 const bankFor = (s: { cash: string; dr: string; cr: string }) =>
-  movesCash(s as Parameters<typeof movesCash>[0]) ? "b4" : undefined;
+  fxBankFor(s as SubCategory) ?? (movesCash(s as Parameters<typeof movesCash>[0]) ? "b4" : undefined);
+
+/* ---------------- เงินตราต่างประเทศ (FCD) ตอนไล่ทั้งตารางกฎ ----------------
+ *
+ * หมวดค่าเงินบังคับข้อมูลที่หมวดอื่นไม่มี และ **ยอดบาทต้องมาจากอัตราพอดี**
+ * ตัวเลขชุดนี้จึงเลือกให้ลงตัวกับ `amount` 12,000 บาท:
+ *   แปลงค่า: 10,000 USD × (37.70 − 36.50) = 12,000
+ *   แลกเงิน:    320 USD × 37.50           = 12,000
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `fx-posting.test.ts` ครบทุกช่อง
+ * (บทเรียนข้อ 3 — ชุดที่ส่งครบเสมอไม่เคยแตะเส้นทางข้อมูลขาด)
+ */
+const fxBankFor = (s: SubCategory) => (isFxTranslationSub(s) || isFxRealisingSub(s) ? "b4usd" : undefined);
+
+const fxTranslationFor = (s: SubCategory) =>
+  isFxTranslationSub(s)
+    ? isFxTranslationAccount(s.cr)
+      ? {
+          currency: "USD",
+          balanceOriginal: 10_000,
+          bookRateToThb: 36.5,
+          bookRateDate: "2026-10-31",
+          newRateToThb: 37.7,
+          newRateDate: "2026-11-30",
+        }
+      : {
+          // ยอดบาทลด — อัตราใหม่ต่ำกว่าอัตราตามบัญชี
+          currency: "USD",
+          balanceOriginal: 10_000,
+          bookRateToThb: 37.7,
+          bookRateDate: "2026-10-31",
+          newRateToThb: 36.5,
+          newRateDate: "2026-11-30",
+        }
+    : undefined;
+
+const fxConversionFor = (s: SubCategory) =>
+  isFxRealisingSub(s)
+    ? {
+        currency: "USD",
+        amountOriginal: 320,
+        balanceOriginalBefore: 320,
+        bookRateToThb: 36.5,
+        bookRateDate: "2026-10-31",
+        dealRateToThb: 37.5,
+        dealRateDate: "2026-12-31",
+        unrealizedBefore: 0,
+      }
+    : undefined;
+
 
 /**
  * ข้อมูลตีราคาของหมวดที่บังคับ (D-111 ข้อ 2) — ตอนไล่ทั้งตารางกฎ
@@ -66,6 +123,8 @@ describe("Money Invariant 1 — ทุกรายการต้องสมด
             : undefined,
           transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
           revaluation: revaluationFor(s),
+          fxTranslation: fxTranslationFor(s),
+          fxConversion: fxConversionFor(s),
         };
         const r = buildPosting(input);
         expect(totalDebit(allLines(r)), `${s.code} debit=credit`).toBe(totalCredit(allLines(r)));
@@ -90,6 +149,8 @@ describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
           repayment: s.requires?.includes("principalInterestSplit") ? { principal: 9000, interest: 3000 } : undefined,
           transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
           revaluation: revaluationFor(s),
+          fxTranslation: fxTranslationFor(s),
+          fxConversion: fxConversionFor(s),
         });
         for (const l of allLines(r)) {
           if (isCashAccount(l.coaCode)) {

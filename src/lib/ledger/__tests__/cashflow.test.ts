@@ -31,8 +31,10 @@ const ln = (
   coaCode: string,
   debit: number,
   credit: number,
-  cfCategory: CashflowSection
-): CashflowSourceLine => ({ coaCode, debit, credit, cfCategory });
+  cfCategory: CashflowSection,
+  /** สกุลเงินของบรรทัด — ค่าตั้งต้นคือบรรทัดบาท (`null`) เหมือนรายการเดิมทุกใบ */
+  currency: string | null = null
+): CashflowSourceLine => ({ coaCode, debit, credit, cfCategory, currency });
 
 const tx = (over: Partial<CashflowTxn> = {}): CashflowTxn => ({
   txnId: "t-1",
@@ -727,7 +729,8 @@ describe("อัตราแลกเปลี่ยนของบัญชี�
       tx({
         txnId: "t-fx",
         subCode: "trf.fx_translate_up",
-        lines: [ln(CASH, 5_000, 0, "none"), ln("3410", 0, 5_000, "none")],
+        // บรรทัดเงินสดของบัญชี **สกุลต่างประเทศ** จึงมีสกุลกำกับ (ด่าน DB บังคับ)
+        lines: [ln(CASH, 5_000, 0, "none", "USD"), ln("3410", 0, 5_000, "none", "USD")],
       }),
     ]);
     expect(st.netChange, "สามส่วนต้องมีแต่ค่าเช่า").toBe(50_000);
@@ -745,8 +748,8 @@ describe("อัตราแลกเปลี่ยนของบัญชี�
         txnId: "t-conv",
         subCode: "trf.fx_convert",
         lines: [
-          ln(CASH, 375_000, 0, "none"),
-          ln(CASH, 0, 370_000, "none"),
+          ln(CASH, 375_000, 0, "none"), // บาทเข้าบัญชีบาท → ไม่มีสกุลกำกับ
+          ln(CASH, 0, 370_000, "none", "USD"), // เงินตราออกจากบัญชี FCD
           ln("4330", 0, 5_000, "none"),
         ],
       }),
@@ -764,7 +767,7 @@ describe("อัตราแลกเปลี่ยนของบัญชี�
       tx({
         txnId: "t-fx-down",
         subCode: "trf.fx_translate_down",
-        lines: [ln("3410", 4_000, 0, "none"), ln(CASH, 0, 4_000, "none")],
+        lines: [ln("3410", 4_000, 0, "none", "USD"), ln(CASH, 0, 4_000, "none", "USD")],
       }),
     ]);
     expect(st.netChange).toBe(50_000);
@@ -786,6 +789,47 @@ describe("อัตราแลกเปลี่ยนของบัญชี�
     expect(st.fxEffect, "หมวดที่ไม่ใช่เรื่องค่าเงินห้ามถูกนับเป็นผลกระทบอัตราแลกเปลี่ยน").toBe(0);
     expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
     expect(st.reconciled).toBe(false);
+  });
+
+  /**
+   * **ผู้ตรวจ BLOCK ข้อ 2 ที่ระดับงบ** — เคสนี้ต้องมี ไม่งั้นด่านถูกปิดเสียงเงียบๆ
+   *
+   * ใบแปลงค่าที่ลงบน **บัญชีบาท** เป็นหมวดค่าเงินเหมือนกัน ถ้าเช็คแค่หมวด
+   * (`isFxCashSub`) ยอดที่โผล่จากอากาศจะถูกกลืนเข้า `fxEffect` แล้วงบขึ้น
+   * `reconciled: true` ทั้งที่เงินสดเพิ่มมา 1,000,000 บาทโดยไม่มีที่มา
+   * — ผู้ตรวจวัดได้บนฐานข้อมูลจริง: บัญชีบาทจาก −36,500 เป็น 963,500
+   *
+   * ตัวตัดสินคือ **บรรทัดนั้นมีสกุลที่ไม่ใช่บาทหรือไม่** ไม่ใช่ชื่อหมวด
+   */
+  it("แปลงค่าบน **บัญชีบาท** (ไม่มีสกุลกำกับ) → ห้ามกลืนเข้า fxEffect ต้องดังเป็น anomaly", () => {
+    const st = run([
+      tx({
+        txnId: "t-fx-thb",
+        subCode: "trf.fx_translate_up",
+        // ไม่มีสกุลบนบรรทัดใดเลย = บัญชีบาท → ยอดบาทไม่ควรขยับเพราะอัตราแลกเปลี่ยน
+        lines: [ln(CASH, 1_000_000, 0, "none"), ln("3410", 0, 1_000_000, "none")],
+      }),
+    ]);
+    expect(st.fxEffect, "บัญชีบาทไม่มีผลกระทบจากอัตราแลกเปลี่ยน").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.anomalies[0]?.message).toMatch(/ไม่มีบรรทัดเงินสดสกุลต่างประเทศ/);
+    expect(st.reconciled, "เงินสด 1,000,000 ที่ไม่มีที่มาต้องทำให้กระทบยอดไม่ลง").toBe(false);
+  });
+
+  it("หมวดค่าเงินที่มีเงินตราจริงบางบรรทัด → ยังเข้า fxEffect ตามเดิม (ด่านไม่แน่นเกิน)", () => {
+    const st = run([
+      tx({
+        txnId: "t-fx-mixed",
+        subCode: "trf.fx_convert",
+        lines: [
+          ln(CASH, 370_500, 0, "none"),
+          ln(CASH, 0, 370_000, "none", "USD"),
+          ln("4330", 0, 500, "none"),
+        ],
+      }),
+    ]);
+    expect(st.fxEffect).toBe(500);
+    expect(st.anomalies).toEqual([]);
   });
 
   it("ไม่มีรายการค่าเงินเลย → fxEffect เป็น 0 (ไม่ใช่ undefined)", () => {

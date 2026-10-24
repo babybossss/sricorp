@@ -11,15 +11,31 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { accrualCheck, movesCash, whtCheck, type SubCategory } from "@/lib/rules/tx-rules";
-import { fxCheck, toThb } from "@/lib/rules/currency";
-import { coa, coaLabel, isCashAccount, CASH_COA, REVALUATION_SURPLUS_COA } from "@/lib/rules/coa";
+import {
+  accrualCheck,
+  movesCash,
+  whtCheck,
+  isFxTranslationSub,
+  isFxRealisingSub,
+  type SubCategory,
+} from "@/lib/rules/tx-rules";
+import { fxCheck, toThb, BASE_CURRENCY } from "@/lib/rules/currency";
+import {
+  coa,
+  coaLabel,
+  isCashAccount,
+  isFxTranslationAccount,
+  CASH_COA,
+  REVALUATION_SURPLUS_COA,
+  FX_TRANSLATION_DIFF_COA,
+} from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
 // สมการสัดส่วนส่วนเกินทุนอยู่ที่เดียว (D-112) — ตัวเดียวกับที่ด่านฝั่ง DB ใช้
 import { surplusToReverseFor } from "./average-cost";
 import {
   PostingError,
+  type BankInfo,
   type LedgerResolver,
   type PostingInput,
   type PostingLine,
@@ -29,6 +45,8 @@ import {
 import {
   assertBalanced,
   assertBankBelongsTo,
+  MISSING_BANK_MESSAGE,
+  bankOf,
   bankOwner,
   assertCashAccountsActive,
   assertCashLinesHaveAccount,
@@ -102,6 +120,119 @@ function assertRequirements(sub: SubCategory, input: PostingInput): void {
       `หมวด "${sub.label}" ต้องแยกเงินต้นกับดอกเบี้ย ไม่งั้นดอกเบี้ยจะปนกับเงินต้นและหายจากงบกำไรขาดทุน`
     );
   }
+
+  /**
+   * ---------- เงินตราต่างประเทศ (FCD) ----------
+   *
+   * ตัดสินจาก **คู่บัญชีในตารางกฎ** (`isFxTranslationSub` อ่าน 3410 ·
+   * `isFxRealisingSub` อ่าน 4330/5930) ไม่ใช่รหัสหมวด — หมวดค่าเงินตัวใหม่
+   * จะถูกครอบเองทันที และจะไม่ตกไปเส้นทางโอนธรรมดาที่ไม่สร้างบรรทัดผลต่างเลย
+   * (ซึ่งคือสิ่งที่ผู้ตรวจจับได้: แลกที่ 36.50 ขาดทุน 5,000 แต่งบโชว์ 0)
+   */
+  if (isFxTranslationSub(sub) && !input.fxTranslation) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ต้องระบุสกุลเงิน ยอดเงินตราคงเหลือ อัตราตามบัญชี และอัตราสิ้นงวด — ` +
+        "การแปลงค่าที่ไม่บอกอัตราทั้งสองตัวคือยอดบาทที่ไม่มีใครตรวจย้อนได้ว่ามาจากไหน " +
+        "และระบบจะไม่มีทางรู้ว่าส่วนต่างที่ลงไปถูกหรือผิด"
+    );
+  }
+  if (isFxRealisingSub(sub) && !input.fxConversion) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ต้องระบุจำนวนเงินตราที่แลก อัตราตามบัญชี อัตราที่แลกได้จริง ` +
+        "ยอดคงเหลือก่อนแลก และผลต่างที่ค้างอยู่ — ขาดข้อใดข้อหนึ่งแปลว่าคิดกำไร/ขาดทุน " +
+        "หรือยอดที่ต้องล้างออกไม่ได้ แล้วผลต่างจะค้างอยู่ในส่วนของเจ้าของและถูกนับซ้ำ"
+    );
+  }
+  /**
+   * ส่งข้อมูลเงินตรามากับหมวดที่ไม่ใช่เรื่องค่าเงิน → **ปฏิเสธ ไม่ใช่เมินทิ้ง**
+   * (รูปเดียวกับ `input.wht` กับบัญชีธนาคารบนหมวดที่ไม่มีขาเงินสด)
+   * เมินทิ้งแปลว่าผู้ใช้กรอกอัตรามาแล้วระบบลงยอดโดยไม่ใช้อัตรานั้นเลย
+   */
+  if (input.fxTranslation && !isFxTranslationSub(sub)) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ไม่ใช่การแปลงค่าเงินฝากสกุลต่างประเทศ (ตารางกฎไม่ได้ให้แตะ ` +
+        `${coaLabel(FX_TRANSLATION_DIFF_COA)}) จึงรับข้อมูลการแปลงค่าไม่ได้`
+    );
+  }
+  if (input.fxConversion && !isFxRealisingSub(sub)) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ไม่ใช่การแลกเงินตราเป็นบาท (ตารางกฎไม่ได้ประกาศบัญชีกำไร/ขาดทุน ` +
+        "อัตราแลกเปลี่ยน) จึงรับข้อมูลการแลกเงินไม่ได้ — ถ้าเป็นการย้ายเงินตราระหว่างบัญชี " +
+        "สกุลเดียวกัน ให้ใช้หมวดโอนปกติ"
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * เงินตราต่างประเทศ — ตัวช่วยที่ใช้ร่วมกันสองเส้นทาง
+ * ------------------------------------------------------------------ */
+
+/**
+ * บัญชีที่ต้องเป็น **เงินฝากสกุลต่างประเทศจริง** ของสกุลที่ระบุ
+ *
+ * ไม่ส่งสกุลมา = **ไม่รู้** ห้ามตีเป็นบาท (ดู `BankInfo.currency`) · บัญชีบาท
+ * ลงเส้นทางค่าเงินไม่ได้เลย เพราะยอดบาทของบัญชีบาทไม่ขยับตามอัตราแลกเปลี่ยน
+ * การยอมให้ลง = **สร้างเงินสดขึ้นมาจากอากาศ** (ผู้ตรวจวัดได้ +1,000,000 บาท
+ * บนบัญชีบาท และยอดนั้นไปซ่อนอยู่ในบรรทัดผลกระทบอัตราแลกเปลี่ยนของงบกระแสเงินสด)
+ */
+function assertFcdAccount(
+  resolve: LedgerResolver,
+  bankAccountId: string | undefined,
+  currency: string,
+  what: string
+): BankInfo {
+  /**
+   * ยังไม่เลือกบัญชี → ใช้ **ข้อความเดียวกับด่านรวม** (`MISSING_BANK_MESSAGE`)
+   * ไม่ใช่ข้อความของเส้นทางนี้เอง — ผู้ใช้ที่ยังไม่เลือกบัญชีควรเห็นประโยคเดียวกัน
+   * ทุกหมวด และข้อความนี้ถูกตรึงไว้ในเทสต์ที่ไล่ทั้งตารางกฎ (accrual-no-bank)
+   */
+  if (!bankAccountId) throw new PostingError(MISSING_BANK_MESSAGE);
+  const b = bankOf(resolve, bankAccountId);
+  if (!b.currency) {
+    throw new PostingError(
+      `ไม่ทราบสกุลเงินของบัญชี "${b.name}" จึงลง${what}ไม่ได้ — ` +
+        "บัญชีที่ไม่บอกสกุลจะถูกนับเป็นบาททั้งก้อน ซึ่งเป็นตัวเลขที่ผิดทั้งงวด · " +
+        "ต้องตั้งค่าสกุลเงินของบัญชี (bank_accounts.currency) ก่อน"
+    );
+  }
+  if (b.currency === BASE_CURRENCY) {
+    throw new PostingError(
+      `บัญชี "${b.name}" เป็นบัญชีบาท จึงลง${what}ไม่ได้ — ยอดบาทของบัญชีบาท ` +
+        "ไม่เปลี่ยนตามอัตราแลกเปลี่ยน ถ้ายอมให้ลงเท่ากับสร้างเงินสดขึ้นมาจากอากาศ " +
+        "และยอดนั้นจะไปซ่อนในบรรทัดผลกระทบของอัตราแลกเปลี่ยนในงบกระแสเงินสด"
+    );
+  }
+  if (b.currency !== currency) {
+    throw new PostingError(
+      `บัญชี "${b.name}" เป็นบัญชีสกุล ${b.currency} แต่รายการระบุสกุล ${currency} — ` +
+        "สกุลของรายการต้องเป็นสกุลของบัญชีที่เงินตราอยู่จริง (อ่านจากบัญชี ไม่ใช่จากช่องที่กรอก)"
+    );
+  }
+  return b;
+}
+
+/** อัตราที่ใช้ได้จริง — ผ่านชุดสกุลเงินชุดเดียวของระบบ (`currency.ts`) */
+function checkedRate(currency: string, rate: number, label: string): number {
+  const fx = fxCheck({ currency, thbPerUnit: rate });
+  if (!fx.ok) throw new PostingError(`${label} — ${fx.why}`);
+  if (fx.rate.currency === BASE_CURRENCY) {
+    throw new PostingError(
+      `${label} — บาทไม่มีอัตราแลกเปลี่ยนกับตัวเอง เส้นทางนี้ใช้กับสกุลต่างประเทศเท่านั้น`
+    );
+  }
+  return fx.rate.thbPerUnit;
+}
+
+/** วันของอัตรา — ไม่มี = ไม่รู้ว่าอัตราไหน (FK ฝั่ง DB บังคับว่าต้องมีแถวใน `fx_rates`) */
+function checkedRateDate(v: string | undefined, label: string): string {
+  const d = blankToUndefined(v);
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    throw new PostingError(
+      `${label} ต้องเป็นวันที่รูปแบบ YYYY-MM-DD ที่มีอยู่ในตารางอัตราแลกเปลี่ยน — ` +
+        "อัตราที่ไม่มีวันกำกับตรวจย้อนไม่ได้ว่าใช้อัตราของวันไหน"
+    );
+  }
+  return d;
 }
 
 /**
@@ -317,7 +448,294 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
   const summary: string[] = [sub.plain];
   const transactions: PostingTransaction[] = [];
 
-  if (sub.requires?.includes("transferTarget")) {
+  if (isFxTranslationSub(sub)) {
+    /* ---------- แปลงค่าเงินฝากสกุลต่างประเทศสิ้นงวด (FCD) ----------
+     *
+     * **จำนวนเงินตราไม่เปลี่ยน** เปลี่ยนแต่ยอดบาท → ผลต่างเข้าส่วนของเจ้าของ (3410)
+     * ไม่เข้า P&L เลย (ลูกพี่สั่งตรงๆ: กำไรค่าเงินที่ยังไม่ได้แลกไม่ใช่กำไรจริง)
+     *
+     * ยอดบาทไม่ได้เชื่อจากช่องที่ผู้ใช้กรอก — engine คิดจาก
+     * `ยอดเงินตรา × (อัตราใหม่ − อัตราตามบัญชี)` แล้วเทียบกับ `amount`
+     * ไม่ตรง = ปฏิเสธ · ทิศอ่านจากคู่บัญชีในตารางกฎ (ขาไหนคือ 3410) ไม่ใช่รหัสหมวด
+     */
+    const tr = input.fxTranslation!;
+    const fcd = assertFcdAccount(
+      resolve,
+      bankAccountId,
+      tr.currency,
+      "การแปลงค่าเงินฝากสกุลต่างประเทศ"
+    );
+    const currency = fcd.currency as string;
+    const balance = money(tr.balanceOriginal, "ยอดเงินตราคงเหลือในบัญชี");
+    if (balance <= 0) {
+      throw new PostingError(
+        "ยอดเงินตราคงเหลือต้องมากกว่า 0 — บัญชีที่ไม่มีเงินตราอยู่ไม่มีอะไรให้แปลงค่า · " +
+          "ค่านี้ต้องอ่านจากสมุดที่ post แล้วจริง ไม่ใช่จากหน้าจอ"
+      );
+    }
+    const bookRate = checkedRate(currency, tr.bookRateToThb, "อัตราตามบัญชี");
+    const bookRateDate = checkedRateDate(tr.bookRateDate, "วันของอัตราตามบัญชี");
+    const newRate = checkedRate(currency, tr.newRateToThb, "อัตราสิ้นงวด");
+    const newRateDate = checkedRateDate(tr.newRateDate, "วันของอัตราสิ้นงวด");
+
+    const thbBefore = toThb(balance, bookRate);
+    const thbAfter = toThb(balance, newRate);
+    const diff = round2(thbAfter - thbBefore);
+    // ขา 3410 อยู่ฝั่งเครดิต = ยอดบาทเพิ่ม · อยู่ฝั่งเดบิต = ยอดบาทลด
+    const up = isFxTranslationAccount(sub.cr);
+
+    if (diff === 0) {
+      throw new PostingError(
+        `อัตรา ${bookRate} กับ ${newRate} ให้ยอดบาทเท่ากัน (${thbAfter}) จึงไม่มีผลต่างให้ลง — ` +
+          "ลงรายการที่ไม่เปลี่ยนอะไรคือการเพิ่มใบเปล่าเข้าสมุด"
+      );
+    }
+    if (up !== diff > 0) {
+      throw new PostingError(
+        `หมวด "${sub.label}" ใช้กับการที่ยอดบาท${up ? "เพิ่ม" : "ลด"} แต่อัตราที่ระบุทำให้ยอดบาท` +
+          `${diff > 0 ? "เพิ่ม" : "ลด"} ${Math.abs(diff).toLocaleString("en-US")} บาท ` +
+          `(${balance.toLocaleString("en-US")} ${currency} จาก ${bookRate} เป็น ${newRate}) — ` +
+          "ต้องใช้หมวดให้ตรงทิศ ไม่ใช่กลับเครื่องหมายให้เอง เพราะผลต่างจะไปอยู่ผิดด้าน " +
+          "ของส่วนของเจ้าของแล้วยอดบาทของบัญชีจะวิ่งไปทางตรงข้ามกับอัตราจริง"
+      );
+    }
+    const magnitude = Math.abs(diff);
+    if (magnitude !== amount) {
+      throw new PostingError(
+        `ผลต่างจากการแปลงค่าคือ ${magnitude.toLocaleString("en-US")} บาท ` +
+          `(${balance.toLocaleString("en-US")} ${currency} × (${newRate} − ${bookRate})) ` +
+          `แต่กรอกยอดมา ${amount.toLocaleString("en-US")} — ยอดบาทต้องมาจากอัตรา ` +
+          "ไม่ใช่ตัวเลขที่พิมพ์แยกกัน (ด่านฝั่ง DB ปฏิเสธส่วนต่างแม้สตางค์เดียว)"
+      );
+    }
+
+    /**
+     * ทั้งสองขาแนบข้อมูลอัตราครบ — รวม **ขา 3410** (ผู้ตรวจ BLOCK ข้อ 1)
+     *
+     * ขา 3410 ไม่มีบัญชีธนาคารให้อ้าง (ด่าน DB ห้ามบัญชีธนาคารบนบรรทัดที่ไม่ใช่
+     * เงินสด) สกุลบนบรรทัดจึงเป็นตัวเดียวที่บอกว่าผลต่างก้อนนี้เป็นของสกุลไหน
+     * ถ้าปล่อยว่าง ด่าน "แลกหมดแล้วต้องล้างให้เหลือศูนย์" มองก้อนนั้นไม่เห็น
+     * แล้วกำไรก้อนเดียวถูกนับสองครั้ง (วัดได้: 3410 ค้าง 5,000 พร้อม 4330 รับรู้ 5,000)
+     *
+     * `amountOriginal: 0` เพราะ **ไม่มีเงินตราเคลื่อน** — ไม่ใช่ `undefined`
+     * เพราะ undefined แปลว่า "บรรทัดบาทตรงๆ" ซึ่งจะทำให้ข้อมูลอัตราหายทั้งใบ
+     */
+    const fx = { currency, amountOriginal: 0, fxRate: newRate, fxRateDate: newRateDate };
+    const memo =
+      `แปลงค่า ${balance.toLocaleString("en-US")} ${currency} ` +
+      `จากอัตรา ${bookRate} (${bookRateDate}) เป็น ${newRate} (${newRateDate})`;
+
+    const cashLine = line({
+      coaCode: CASH_COA,
+      bankAccountId: fcd.id,
+      cfCategory: sub.cashflow,
+      memo,
+      ...fx,
+      ...(up ? { debit: magnitude } : { credit: magnitude }),
+    });
+    const diffLine = line({
+      coaCode: FX_TRANSLATION_DIFF_COA,
+      cfCategory: sub.cashflow,
+      memo,
+      ...fx,
+      ...(up ? { credit: magnitude } : { debit: magnitude }),
+    });
+    const lines: PostingLine[] = up ? [cashLine, diffLine] : [diffLine, cashLine];
+
+    // ด่านเดียวกับที่รายการตีราคาใช้ — กันการ "เผลอแก้คู่บัญชีวันหลัง" ให้ไปแตะ P&L
+    assertNoProfitAndLoss(lines, `การแปลงค่าเงินฝากสกุลต่างประเทศ "${sub.label}"`);
+
+    transactions.push({ ownerId: input.ownerId, lines });
+    summary.push(
+      `ยอดบาทของบัญชี "${fcd.name}" ${up ? "เพิ่ม" : "ลด"} ${magnitude.toLocaleString("en-US")} บาท ` +
+        `(${thbBefore.toLocaleString("en-US")} → ${thbAfter.toLocaleString("en-US")}) ` +
+        `โดยจำนวนเงินตรายังเป็น ${balance.toLocaleString("en-US")} ${currency} เท่าเดิม`
+    );
+    summary.push(
+      `ผลต่างลงที่ ${coaLabel(FX_TRANSLATION_DIFF_COA)} ในส่วนของเจ้าของ **ไม่เข้างบกำไรขาดทุน** — ` +
+        "กำไร/ขาดทุนค่าเงินรับรู้ตอนแลกเป็นบาทจริงเท่านั้น และห้ามนำยอดนี้ไปจ่ายปันผล"
+    );
+    summary.push(
+      "ไม่ใช่กระแสเงินสดของงวด — ไปอยู่บรรทัดผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด (IAS 7.28)"
+    );
+  } else if (isFxRealisingSub(sub)) {
+    /* ---------- แลกเงินตราเป็นบาทจริง — จุดที่กำไร/ขาดทุนค่าเงิน "เกิดขึ้นจริง" ----------
+     *
+     * ใบเดียวทำสองเรื่องพร้อมกัน (รูปเดียวกับใบขายทรัพย์ที่ล้าง 3400):
+     *   1. ตัดเงินตราออกตาม **อัตราตามบัญชี** · รับบาทตาม **อัตราที่แลกได้จริง**
+     *   2. **ล้างผลต่างที่ค้างใน 3410 ตามสัดส่วนที่แลกออก** แล้วรวมเข้ากำไร/ขาดทุน
+     *
+     * ก่อนแก้เส้นทางนี้ไม่มีอยู่: หมวดนี้มีธง `transferTarget` จึงตกไปเส้นทาง
+     * โอนธรรมดาที่สร้างแค่สองบรรทัดเงินสดเท่ากัน → **ไม่มีบรรทัดกำไร/ขาดทุน
+     * ไม่มีบรรทัดล้าง 3410 และไม่มีข้อมูลอัตราเลย** การแลกที่ 36.50 ซึ่งขาดทุน
+     * 5,000 บาทจึงแสดงผลเป็น 0 (ผู้ตรวจ BLOCK ข้อ 3)
+     */
+    const cv = input.fxConversion!;
+    const fcd = assertFcdAccount(resolve, bankAccountId, cv.currency, "การแลกเงินตราเป็นบาท");
+    const currency = fcd.currency as string;
+
+    const to = blankToUndefined(input.transferToBankAccountId);
+    if (!to) {
+      throw new PostingError("การแลกเงินตราเป็นบาทต้องระบุบัญชีบาทที่รับเงินเข้า");
+    }
+    if (to === fcd.id) {
+      throw new PostingError("แลกเงินเข้าบัญชีเดียวกับบัญชีที่เงินตราออกไม่ได้");
+    }
+    // อ่านสกุลและผู้ถือ **จากบัญชีปลายทางเอง** ไม่เชื่อฟิลด์ที่ผู้ใช้เว้นได้ (บทเรียนข้อ 2)
+    const dest = bankOf(resolve, to);
+    if (!dest.currency) {
+      throw new PostingError(
+        `ไม่ทราบสกุลเงินของบัญชีปลายทาง "${dest.name}" จึงบันทึกการแลกเงินไม่ได้ — ` +
+          "ปลายทางที่ไม่บอกสกุลอาจเป็นบัญชีเงินตราอีกใบ ซึ่งไม่ใช่การแลกเป็นบาท"
+      );
+    }
+    if (dest.currency !== BASE_CURRENCY) {
+      throw new PostingError(
+        `บัญชีปลายทาง "${dest.name}" เป็นบัญชีสกุล ${dest.currency} ไม่ใช่บัญชีบาท — ` +
+          "การย้ายเงินตราไปอีกบัญชีของสกุลเดียวกันยังไม่ใช่การแลกเงิน จึงยังไม่รับรู้กำไร/ขาดทุน " +
+          "ให้ใช้หมวดโอนระหว่างบัญชีตัวเอง · กำไร/ขาดทุนค่าเงินรับรู้ตอนได้บาทจริงเท่านั้น"
+      );
+    }
+    if (dest.ownerId !== input.ownerId) {
+      throw new PostingError(
+        `บัญชีปลายทาง "${dest.name}" เป็นของ ${ownerOf(resolve, dest.ownerId).name} — ` +
+          "การแลกเงินตราต้องเข้าบัญชีบาทของผู้ถือเดียวกัน เพราะใบนี้ล้างผลต่างที่ค้างอยู่ " +
+          "ของผู้ถือนั้นพร้อมกัน · ถ้าจะส่งเงินให้ผู้ถืออื่น ให้แลกเป็นบาทก่อน แล้วโอนเป็นอีกรายการ"
+      );
+    }
+
+    const amountOriginal = money(cv.amountOriginal, "จำนวนเงินตราที่แลก");
+    if (amountOriginal <= 0) {
+      throw new PostingError("จำนวนเงินตราที่แลกต้องมากกว่า 0");
+    }
+    const before = money(cv.balanceOriginalBefore, "ยอดเงินตราคงเหลือก่อนแลก");
+    if (amountOriginal > before) {
+      throw new PostingError(
+        `แลกออก ${amountOriginal.toLocaleString("en-US")} ${currency} มากกว่ายอดคงเหลือ ` +
+          `${before.toLocaleString("en-US")} ${currency} — เงินตราติดลบไม่ได้ ` +
+          "(ด่านฝั่ง DB ปฏิเสธอยู่ดี) · ถ้ามีเงินเข้าที่ยังไม่ลง ต้องลงใบนั้นก่อน"
+      );
+    }
+
+    const bookRate = checkedRate(currency, cv.bookRateToThb, "อัตราตามบัญชี");
+    const bookRateDate = checkedRateDate(cv.bookRateDate, "วันของอัตราตามบัญชี");
+    const dealRate = checkedRate(currency, cv.dealRateToThb, "อัตราที่แลกได้จริง");
+    const dealRateDate = checkedRateDate(cv.dealRateDate, "วันของอัตราที่แลกได้จริง");
+
+    const thbOut = toThb(amountOriginal, bookRate); // ยอดตามบัญชีที่ตัดออกจากบัญชีเงินตรา
+    const thbIn = toThb(amountOriginal, dealRate); // บาทที่ได้รับจริง
+    if (thbIn !== amount) {
+      throw new PostingError(
+        `บาทที่ได้รับต้องเท่ากับ ${amountOriginal.toLocaleString("en-US")} ${currency} × ` +
+          `${dealRate} = ${thbIn.toLocaleString("en-US")} บาท แต่กรอกยอดมา ` +
+          `${amount.toLocaleString("en-US")} — ยอดบาทต้องมาจากอัตราที่แลกได้จริง ` +
+          "ไม่ใช่ตัวเลขที่พิมพ์แยกกัน"
+      );
+    }
+
+    /**
+     * ผลต่างที่ต้องล้างออก = **สัดส่วนที่แลกออก × ผลต่างทั้งก้อน**
+     * สมการเดียวกับ D-112 (`surplusToReverseFor()`) ที่ด่านฝั่ง DB ใช้ตัวต่อตัว
+     * แลกหมด → ล้างทั้งก้อนพอดี ไม่เหลือเศษค้างใน 3410 (ด่าน DB บังคับข้อนี้)
+     */
+    const released = surplusToReverseFor({
+      priorSurplus: cv.unrealizedBefore,
+      costBefore: before,
+      costRemoved: amountOriginal,
+    });
+    // กำไรที่รับรู้จริง = บาทที่ได้ − ยอดตามบัญชีที่ตัดออก + ผลต่างที่เคยตั้งไว้แล้ว
+    const realised = round2(thbIn - thbOut + released);
+
+    if (!sub.gainCoa || !sub.lossCoa) {
+      throw new PostingError(
+        `หมวด "${sub.label}" ไม่ได้ระบุบัญชีกำไรและขาดทุนอัตราแลกเปลี่ยนไว้ครบในตารางกฎ`
+      );
+    }
+
+    const dealLabel = `${amountOriginal.toLocaleString("en-US")} ${currency} @ ${dealRate}`;
+    const lines: PostingLine[] = [
+      line({
+        coaCode: CASH_COA,
+        bankAccountId: dest.id,
+        debit: thbIn,
+        cfCategory: sub.cashflow,
+        memo: `รับบาทจากการแลก ${dealLabel}`,
+      }),
+      line({
+        coaCode: CASH_COA,
+        bankAccountId: fcd.id,
+        credit: thbOut,
+        cfCategory: sub.cashflow,
+        currency,
+        amountOriginal,
+        fxRate: bookRate,
+        fxRateDate: bookRateDate,
+        memo: `ตัดเงินตราออกตามอัตราตามบัญชี ${bookRate}`,
+      }),
+    ];
+
+    if (released !== 0) {
+      // ล้างผลต่างของสกุลนี้ออกจากส่วนของเจ้าของ — ขานี้ต้องมีสกุลกำกับเสมอ
+      const magnitude = Math.abs(released);
+      lines.push(
+        line({
+          coaCode: FX_TRANSLATION_DIFF_COA,
+          cfCategory: sub.cashflow,
+          currency,
+          amountOriginal: 0,
+          fxRate: dealRate,
+          fxRateDate: dealRateDate,
+          memo:
+            released > 0
+              ? "ล้างผลต่างอัตราแลกเปลี่ยนที่เคยตั้งไว้ (ยอดบาทเคยเพิ่ม)"
+              : "ล้างผลต่างอัตราแลกเปลี่ยนที่เคยตั้งไว้ (ยอดบาทเคยลด)",
+          ...(released > 0 ? { debit: magnitude } : { credit: magnitude }),
+        })
+      );
+    }
+
+    if (realised > 0) {
+      lines.push(
+        line({ coaCode: sub.gainCoa, credit: realised, memo: `กำไรจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง` })
+      );
+    } else if (realised < 0) {
+      lines.push(
+        line({
+          coaCode: sub.lossCoa,
+          debit: Math.abs(realised),
+          memo: `ขาดทุนจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง`,
+        })
+      );
+    }
+
+    transactions.push({ ownerId: input.ownerId, lines });
+
+    summary.push(
+      `แลก ${dealLabel} ได้ ${thbIn.toLocaleString("en-US")} บาท · ` +
+        `ตัดเงินตราออกตามอัตราตามบัญชี ${bookRate} = ${thbOut.toLocaleString("en-US")} บาท`
+    );
+    if (released !== 0) {
+      summary.push(
+        `ล้างผลต่างที่ค้างในส่วนของเจ้าของ ${released.toLocaleString("en-US")} บาทออกพร้อมกัน ` +
+          `(${cv.unrealizedBefore.toLocaleString("en-US")} × ${amountOriginal}/${before} ` +
+          "ตามสัดส่วนที่แลกออก) — ไม่ล้างคือนับซ้ำกับกำไรที่รับรู้"
+      );
+    }
+    if (realised === 0) {
+      summary.push("แลกได้เท่ากับยอดตามบัญชีพอดี ไม่มีกำไรหรือขาดทุนที่ต้องรับรู้");
+    } else {
+      summary.push(
+        `${realised > 0 ? "กำไร" : "ขาดทุน"}จากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง ` +
+          `${Math.abs(realised).toLocaleString("en-US")} บาท เข้างบกำไรขาดทุนที่ ` +
+          `${coaLabel(realised > 0 ? sub.gainCoa : sub.lossCoa)} — ` +
+          "นี่คือจุดเดียวที่กำไร/ขาดทุนค่าเงินเป็นของจริง"
+      );
+    }
+    summary.push(
+      "เงินไม่ได้เข้าออกกิจการ แค่เปลี่ยนสกุล จึงไม่ใช่กระแสเงินสดของงวด — " +
+        "ส่วนที่ทำให้ยอดบาทรวมขยับไปอยู่บรรทัดผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด (IAS 7.28)"
+    );
+  } else if (sub.requires?.includes("transferTarget")) {
     // ---------- โอนระหว่างบัญชี ----------
     // ดูจากธงในตารางกฎ ไม่ใช่รหัสหมวด — หมวดโอนตัวที่สองในอนาคตจะได้ไม่ตกไปเส้นทางปกติ
     // ซึ่งจะเดบิตและเครดิตบัญชีเงินสดเดียวกัน กลายเป็นรายการว่างที่สมดุลผ่านทุกด่าน

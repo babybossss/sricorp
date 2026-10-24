@@ -21,6 +21,7 @@ import {
 } from "@/lib/rules/tx-rules";
 import {
   PostingError,
+  type BankInfo,
   type LedgerResolver,
   type OwnerInfo,
   type PostingLine,
@@ -152,11 +153,13 @@ export function assertNoProfitAndLoss(lines: PostingLine[], what: string): void 
  * ข้อความต้องชี้ไปที่ "ยังไม่เลือกบัญชี" ไม่ใช่ไปโผล่เป็นเรื่องผู้ถือหรือบัญชีปิด
  * ซึ่งชี้ผิดจุดและทำให้ผู้ใช้แก้ไม่ถูก
  */
+export const MISSING_BANK_MESSAGE = "ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก";
+
 export function assertCashLinesHaveAccount(transactions: PostingTransaction[]): void {
   for (const t of transactions) {
     for (const l of t.lines) {
       if (isCashAccount(l.coaCode) && !l.bankAccountId) {
-        throw new PostingError("ต้องระบุบัญชีธนาคารที่เงินเข้าหรือออก");
+        throw new PostingError(MISSING_BANK_MESSAGE);
       }
     }
   }
@@ -250,9 +253,19 @@ export function ownerOf(resolve: LedgerResolver, ownerId: string): OwnerInfo {
 }
 
 export function bankOwner(resolve: LedgerResolver, bankAccountId: string): string {
+  return bankOf(resolve, bankAccountId).ownerId;
+}
+
+/**
+ * บัญชีธนาคารที่ต้องมีอยู่จริง — หาไม่เจอคือข้อมูลไม่ครบ **ปฏิเสธ ห้ามเดา**
+ *
+ * ปากทางเดียวสำหรับทุกเส้นทางที่ต้องรู้คุณสมบัติของบัญชี (ผู้ถือ · สกุลเงิน ·
+ * สถานะเปิดใช้) เพื่อให้ข้อความตอนหาไม่เจอเหมือนกันหมด
+ */
+export function bankOf(resolve: LedgerResolver, bankAccountId: string): BankInfo {
   const b = resolve.bankAccount(bankAccountId);
   if (!b) throw new PostingError(`ไม่พบบัญชีธนาคาร: ${bankAccountId}`);
-  return b.ownerId;
+  return b;
 }
 
 /**

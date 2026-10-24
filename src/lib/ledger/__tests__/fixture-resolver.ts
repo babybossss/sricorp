@@ -41,14 +41,34 @@ const OWNERS: OwnerInfo[] = [
 ];
 
 const BANK_ACCOUNTS: BankInfo[] = [
-  { id: "b1", name: "SRI - SCB", ownerId: "corp", isActive: true },
-  { id: "b2", name: "SRI - BBL (ปิดแล้ว)", ownerId: "corp", isActive: false },
-  { id: "b4", name: "ธนากร - BBL", ownerId: "thanakorn", isActive: true },
-  { id: "b4b", name: "ธนากร - SCB", ownerId: "thanakorn", isActive: true },
-  { id: "b4c", name: "ธนากร - TTB (ปิดแล้ว)", ownerId: "thanakorn", isActive: false },
-  { id: "b5", name: "ธนวินท์ - KBANK", ownerId: "thanawin", isActive: true },
-  { id: "b6", name: "ธนวินท์ - BBL (ปิดแล้ว)", ownerId: "thanawin", isActive: false },
+  { id: "b1", name: "SRI - SCB", ownerId: "corp", isActive: true, currency: "THB" },
+  { id: "b2", name: "SRI - BBL (ปิดแล้ว)", ownerId: "corp", isActive: false, currency: "THB" },
+  { id: "b4", name: "ธนากร - BBL", ownerId: "thanakorn", isActive: true, currency: "THB" },
+  { id: "b4b", name: "ธนากร - SCB", ownerId: "thanakorn", isActive: true, currency: "THB" },
+  { id: "b4c", name: "ธนากร - TTB (ปิดแล้ว)", ownerId: "thanakorn", isActive: false, currency: "THB" },
+  { id: "b5", name: "ธนวินท์ - KBANK", ownerId: "thanawin", isActive: true, currency: "THB" },
+  { id: "b6", name: "ธนวินท์ - BBL (ปิดแล้ว)", ownerId: "thanawin", isActive: false, currency: "THB" },
+  /* ---- บัญชีเงินฝากสกุลต่างประเทศ (FCD · 20261025000004) ----
+   * `b4usd` ของ `thanakorn` คู่กับ `b4`/`b4b` ที่เป็นบัญชีบาทของคนเดียวกัน
+   *   (เส้นทางแลกเงินต้องมีบัญชีบาทปลายทางของผู้ถือเดียวกัน)
+   * `b5usd` ของ `thanawin` ไว้ให้เคสข้ามผู้ถือมีของให้ชนจริง
+   * **และบัญชีที่ "ไม่บอกสกุล" (`b4x`) ต้องมีในชุดนี้** ไม่งั้นเทสต์จะไม่เคยแตะ
+   *   เส้นทางข้อมูลไม่ครบ ซึ่งคือเหตุที่งาน FCD ถูก BLOCK รอบก่อน (บทเรียนข้อ 3)
+   */
+  { id: "b4usd", name: "ธนากร - SCB FCD (USD)", ownerId: "thanakorn", isActive: true, currency: "USD" },
+  { id: "b4jpy", name: "ธนากร - SCB FCD (JPY)", ownerId: "thanakorn", isActive: true, currency: "JPY" },
+  { id: "b5usd", name: "ธนวินท์ - KBANK FCD (USD)", ownerId: "thanawin", isActive: true, currency: "USD" },
+  { id: "b4x", name: "ธนากร - บัญชีที่ไม่บอกสกุล", ownerId: "thanakorn", isActive: true },
 ];
+
+/** บัญชีเงินตราที่เคสเงินตราอ้างถึงได้โดยไม่ต้องพิมพ์รหัสซ้ำ */
+export const FCD = {
+  usd: BANK_ACCOUNTS.find((b) => b.id === "b4usd")!,
+  jpy: BANK_ACCOUNTS.find((b) => b.id === "b4jpy")!,
+  otherOwnerUsd: BANK_ACCOUNTS.find((b) => b.id === "b5usd")!,
+  /** บัญชีที่ resolver ไม่บอกสกุล — ต้องถูกปฏิเสธ ไม่ใช่ถูกตีเป็นบาท */
+  unknownCurrency: BANK_ACCOUNTS.find((b) => b.id === "b4x")!,
+};
 
 /** บัญชีที่ปิดใช้งานแล้ว — อ้างชื่อในข้อความ error ได้โดยไม่ต้องพิมพ์ซ้ำในเทสต์ */
 export const CLOSED = {

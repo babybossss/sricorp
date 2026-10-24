@@ -123,6 +123,55 @@ describe("toPostEntryPayload · แปลงผลของ engine เป็น�
   });
 });
 
+describe("ข้อมูลสกุลเงินต่อบรรทัด (FCD) ต้องไปถึง DB ครบ หรือไม่มีเลย", () => {
+  /**
+   * `transaction_lines_fx_shape` ยอมแค่สองรูป: **ครบทั้งสี่** หรือ **ไม่มีเลย**
+   * ถ้าตัวแปลง payload ส่งคีย์ที่ค่าเป็น undefined ไปด้วย ประตูจะเห็นช่องที่
+   * "ส่งมาแต่ว่าง" แล้วปฏิเสธทั้งใบ · และถ้าตัดสี่ช่องนี้ทิ้ง ข้อมูลสกุลเดิมจะหาย
+   * ทั้งที่ engine สร้างมาให้ (ยอดบาทจะกลายเป็นตัวเลขที่ตรวจย้อนไม่ได้)
+   */
+  const fxConvert: PostingInput = {
+    typeKey: "transfer",
+    subCode: "trf.fx_convert",
+    amount: 365_000,
+    ownerId: "thanakorn",
+    bankAccountId: "b4usd",
+    transferToBankAccountId: "b4b",
+    fxConversion: {
+      currency: "USD",
+      amountOriginal: 10_000,
+      balanceOriginalBefore: 10_000,
+      bookRateToThb: 37,
+      bookRateDate: "2026-11-30",
+      dealRateToThb: 36.5,
+      dealRateDate: "2026-12-31",
+      unrealizedBefore: 0,
+    },
+  };
+
+  it("บรรทัดเงินตราส่งครบสี่ช่อง · บรรทัดบาท **ไม่มีคีย์เลย**", () => {
+    const p = toPostEntryPayload(fxConvert, buildPosting(fxConvert, TEST_RESOLVER), header);
+    const lines = p.transactions.flatMap((t) => t.lines);
+    const fcd = lines.find((l) => l.bank_account_id === "b4usd")!;
+    expect(fcd.currency).toBe("USD");
+    expect(fcd.amount_original).toBe(10_000);
+    expect(fcd.fx_rate).toBe(37);
+    expect(fcd.fx_rate_date).toBe("2026-11-30");
+
+    const baht = lines.find((l) => l.bank_account_id === "b4b")!;
+    for (const k of ["currency", "amount_original", "fx_rate", "fx_rate_date"]) {
+      expect(Object.keys(baht), `บรรทัดบาทต้องไม่มีคีย์ ${k}`).not.toContain(k);
+    }
+  });
+
+  it("บรรทัดขาดทุนอัตราแลกเปลี่ยนไปถึง payload (ไม่ถูกตัดทิ้งระหว่างแปลง)", () => {
+    const p = toPostEntryPayload(fxConvert, buildPosting(fxConvert, TEST_RESOLVER), header);
+    const loss = p.transactions.flatMap((t) => t.lines).find((l) => l.coa_code === "5930")!;
+    expect(loss.debit).toBe(5_000);
+    expect(Object.keys(loss)).not.toContain("currency");
+  });
+});
+
 describe("notWiredReason · หมวดที่เส้นทางบันทึกยังต่อไม่ครบต้องถูกกั้น (ไม่บันทึกครึ่งเดียว)", () => {
   const subs = TX_TYPES.flatMap((t) => t.subs);
 
@@ -141,6 +190,13 @@ describe("notWiredReason · หมวดที่เส้นทางบัน�
       (c) => c === FX_TRANSLATION_DIFF_COA || c === REALISED_FX_GAIN || c === REALISED_FX_LOSS
     );
 
+  /**
+   * **เหตุของด่านตอนนี้คือหน้าจอ ไม่ใช่เครื่องยนต์** — engine สร้างบรรทัดครบแล้ว
+   * (ขาผลต่าง · ขาล้าง 3410 ตามสัดส่วน · กำไร/ขาดทุนจริง · สกุล/อัตราต่อบรรทัด)
+   * และด่านฝั่ง DB อุดทั้งสามเคสที่ผู้ตรวจวัดได้ (20261025000005)
+   * แต่ฟอร์มยังไม่มีช่องให้กรอกอัตราและยอดที่ต้องอ่านจากสมุดจริง
+   * ปลดด่านนี้พร้อมกับตอนต่อช่องในฟอร์ม ไม่ใช่ก่อนหน้านั้น (บทเรียนข้อ 7)
+   */
   it("ทุกหมวดที่แตะ 3410 หรือบัญชีกำไร/ขาดทุน FX ที่เกิดจริง ถูกกั้น", () => {
     const fx = subs.filter(touchesFx);
     expect(fx.length, "ไม่มีหมวด FX เลย — ด่านนี้จะไม่ได้กั้นอะไร").toBeGreaterThan(0);

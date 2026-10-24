@@ -28,7 +28,16 @@ import {
 import { previewPosting } from "../preview";
 import { PostingError, type PostingInput } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
-import { TX_TYPES, canAccrueFromForm, movesCash } from "@/lib/rules/tx-rules";
+import {
+  TX_TYPES,
+  canAccrueFromForm,
+  movesCash,
+  findSub,
+  isFxTranslationSub,
+  isFxRealisingSub,
+  type SubCategory,
+} from "@/lib/rules/tx-rules";
+import { isFxTranslationAccount } from "@/lib/rules/coa";
 import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 /** fixture ของ engine เท่านั้น — ไม่ผูกกับข้อมูลจำลองของแอป */
@@ -52,8 +61,46 @@ const inputFor = (
     ? { principal: 9_000, interest: 3_000 }
     : undefined,
   transferToBankAccountId: requires?.includes("transferTarget") ? "b4b" : undefined,
+  /**
+   * ข้อมูลเงินตราก็เป็น "ข้อมูลครบ" ของหมวดค่าเงินเหมือนกัน — ถ้าไม่ส่งมา
+   * เคสในไฟล์นี้จะล้มด้วยเหตุ "ไม่ได้ส่งข้อมูลอัตรา" แทนที่จะล้มด้วยเหตุ
+   * "ไม่ได้ส่งบัญชี" ซึ่งคือสิ่งที่ไฟล์นี้ทดสอบ (และเทสต์จะผ่านด้วยเหตุผลผิดๆ)
+   */
+  fxTranslation: fxTranslationOf(code),
+  fxConversion: fxConversionOf(code),
   ...over,
 });
+
+/** หมวดค่าเงินในตารางกฎ — ค้นจากรหัสหมวดเพราะ `inputFor` รับมาแค่รหัส */
+const subOf = (code: string) => findSub(code)?.sub as SubCategory | undefined;
+const fxTranslationOf = (code: string) => {
+  const s = subOf(code);
+  return s && isFxTranslationSub(s)
+    ? {
+        currency: "USD",
+        balanceOriginal: 10_000,
+        bookRateToThb: isFxTranslationAccount(s.cr) ? 36.5 : 37.7,
+        bookRateDate: "2026-10-31",
+        newRateToThb: isFxTranslationAccount(s.cr) ? 37.7 : 36.5,
+        newRateDate: "2026-11-30",
+      }
+    : undefined;
+};
+const fxConversionOf = (code: string) => {
+  const s = subOf(code);
+  return s && isFxRealisingSub(s)
+    ? {
+        currency: "USD",
+        amountOriginal: 320,
+        balanceOriginalBefore: 320,
+        bookRateToThb: 36.5,
+        bookRateDate: "2026-10-31",
+        dealRateToThb: 37.5,
+        dealRateDate: "2026-12-31",
+        unrealizedBefore: 0,
+      }
+    : undefined;
+};
 
 const ALL = TX_TYPES.flatMap((t) => t.subs.map((s) => ({ t, s })));
 const ACCRUABLE = ALL.filter(({ s }) => canAccrueFromForm(s));
