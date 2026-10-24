@@ -187,7 +187,7 @@ values ('USD', '2026-10-31', 36.5, 'manual', 'ป้อนมือ เดือ
 -- W0 · โครงสร้าง — ไล่จาก catalog จริง ไม่ใช่ไล่ไฟล์
 -- ============================================================
 do $$
-declare r record; v text;
+declare r record; v text; v_lost text;
 begin
   for r in select p.proname, p.prosecdef, p.proconfig, p.oid from pg_proc p
             where p.oid in ('sri_os.fn_txn_type_can_withhold(text)'::regprocedure,
@@ -237,6 +237,27 @@ begin
    where pg_get_functiondef('sri_os.fn_post_entry(jsonb)'::regprocedure) not like '%' || x.k || '%';
   if v is not null then
     raise exception 'FAIL: ประตู fn_post_entry ไม่รู้จักช่อง % — ลงรายการที่ถูกหักภาษีไม่ได้เลย', v;
+  end if;
+
+  /**
+   * **คำอธิบายของประตูต้องครอบทุกกฎที่ไฟล์ก่อนหน้าเขียนไว้**
+   *
+   * `comment on` เป็นค่าเดียวต่อวัตถุ → ไฟล์ที่รันทีหลังทับของไฟล์ก่อนได้เงียบๆ
+   * รอบแรกของ 20261025000001 ทับย่อหน้ากฎ `cash_date` ของ 20261009000001 หายไป
+   * (เอกสารล้วน เงินไม่ผิด แต่เป็นแพทเทิร์นเดียวกับที่เคยทำให้ `create or replace`
+   *  ทับการแก้ของไฟล์ก่อนหน้าแล้วของจริงแดงซ้ำด้วยข้อความเดิม)
+   * เทสต์อยู่ที่นี่เพราะเทสต์รัน **หลัง migration ทุกไฟล์** จึงจับการทับจากไฟล์
+   * ในอนาคตได้ด้วย ต่างจาก guard ท้ายไฟล์ที่เห็นแค่สภาพตอนไฟล์นั้นรัน
+   */
+  select obj_description('sri_os.fn_post_entry(jsonb)'::regprocedure, 'pg_proc') into v;
+  if v is null then
+    raise exception 'FAIL: fn_post_entry ไม่มีคำอธิบายเลย';
+  end if;
+  select string_agg(x.k, ', ') into v_lost
+    from unnest(array['cash_date', 'wht_rate', 'trg_lines_rule_coa', 'fingerprint']) x(k)
+   where position(x.k in v) = 0;
+  if v_lost is not null then
+    raise exception 'FAIL: คำอธิบายของ fn_post_entry ขาดกฎที่ไฟล์ก่อนหน้าเขียนไว้ (%) — มีไฟล์ใหม่เขียน comment ทับของเดิมแทนที่จะต่อท้าย · ของที่หายไปคือที่ที่คนอ่าน \df+ ใช้ตัดสินว่ากฎอยู่ที่ไหน', v_lost;
   end if;
 
   if not (select relrowsecurity from pg_class where oid = 'sri_os.fx_rates'::regclass) then
