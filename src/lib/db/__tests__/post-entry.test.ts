@@ -1,0 +1,188 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { buildPosting } from "@/lib/ledger/posting";
+import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { TX_TYPES } from "@/lib/rules/tx-rules";
+import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
+import { PayloadError, humanizeDbError, notWiredReason, toPostEntryPayload } from "../post-entry";
+import { makeResolver } from "../resolver";
+import type { Reference } from "../reference-types";
+
+/** ข้อมูลที่ครบตามกฎของ inc.rent ฝั่งบุคคล (ทรัพย์ + ผู้ติดต่อ + บัญชี) */
+const rent: PostingInput = {
+  typeKey: "income",
+  subCode: "inc.rent",
+  amount: 12000,
+  ownerId: "thanakorn",
+  bankAccountId: "b4",
+  assetId: "asset-1",
+  contactId: "contact-1",
+};
+const header = { docDate: "2026-10-24", cashDate: "2026-10-24" as string | null };
+
+describe("toPostEntryPayload · แปลงผลของ engine เป็นคำขอของ fn_post_entry", () => {
+  it("ส่งบรรทัดที่ engine คืนมาครบ ไม่เพิ่มไม่ตัด และใช้ชื่อช่อง snake_case", () => {
+    const result = buildPosting(rent, TEST_RESOLVER);
+    const p = toPostEntryPayload(rent, result, header);
+
+    expect(p.txn_type_code).toBe("inc.rent");
+    expect(p.doc_date).toBe("2026-10-24");
+    expect(p.cash_date).toBe("2026-10-24");
+    expect(p.source).toBe("manual");
+    expect(p.asset_id).toBe("asset-1");
+    expect(p.contact_id).toBe("contact-1");
+    expect(p.transactions).toHaveLength(result.transactions.length);
+
+    const sent = p.transactions[0].lines.map((l) => [l.coa_code, l.debit, l.credit]);
+    const built = result.transactions[0].lines.map((l) => [l.coaCode, l.debit, l.credit]);
+    expect(sent).toEqual(built);
+    const dr = p.transactions[0].lines.reduce((t, l) => t + l.debit, 0);
+    const cr = p.transactions[0].lines.reduce((t, l) => t + l.credit, 0);
+    expect(dr).toBe(cr);
+  });
+
+  it("ข้ามผู้ถือ: engine คืนสองก้อน → ส่งครบทั้งสองก้อน พร้อมคู่และลักษณะรายการ (หนึ่ง transaction = หนึ่งผู้ถือ)", () => {
+    const input: PostingInput = {
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 20000,
+      ownerId: "thanakorn",
+      bankAccountId: "b4",
+      transferToBankAccountId: "b5",
+      intercompanyNature: "loan",
+    };
+    const result = buildPosting(input, TEST_RESOLVER);
+    expect(result.transactions.length).toBe(2);
+
+    const p = toPostEntryPayload(input, result, header);
+    expect(p.transactions).toHaveLength(2);
+    expect(p.transactions.map((t) => t.owner_id)).toEqual(result.transactions.map((t) => t.ownerId));
+    expect(p.transactions[0].counter_owner_id).toBe("thanawin");
+    expect(p.transactions[1].counter_owner_id).toBe("thanakorn");
+    expect(p.transactions.every((t) => t.intercompany_nature === "loan")).toBe(true);
+  });
+
+  it("ค้างรับ-ค้างจ่าย (ไม่มีบรรทัดเงินสด) → cash_date เป็น null แม้ฟอร์มมีวันที่ค้างอยู่", () => {
+    const input: PostingInput = { ...rent, bankAccountId: undefined, notYetPaid: true };
+    const result = buildPosting(input, TEST_RESOLVER);
+    const p = toPostEntryPayload(input, result, header);
+    expect(p.cash_date).toBeNull();
+  });
+
+  it("มีบรรทัดเงินสดแต่ไม่มี cash_date → ปฏิเสธ ไม่เดาเป็นวันที่เอกสาร", () => {
+    const result = buildPosting(rent, TEST_RESOLVER);
+    expect(() => toPostEntryPayload(rent, result, { docDate: "2026-10-24", cashDate: null })).toThrow(PayloadError);
+  });
+
+  it("ผลลัพธ์ว่าง → ปฏิเสธ ไม่ส่งคำขอเปล่า", () => {
+    expect(() => toPostEntryPayload(rent, { transactions: [], summary: [] }, header)).toThrow(PayloadError);
+  });
+
+  it("ช่องว่างไม่ถูกส่ง (memo ว่าง · ไฟล์แนบว่าง) — RPC ถือ null กับไม่ส่งเท่ากัน", () => {
+    const input = { ...rent, memo: "  ", attachments: [] };
+    const p = toPostEntryPayload(input, buildPosting(input, TEST_RESOLVER), header);
+    expect(p.memo).toBeUndefined();
+    expect(p.attachments).toBeUndefined();
+  });
+
+  it("ทุกช่องที่ส่งต้องอยู่ในรายการที่ RPC รับ (อ่านจาก migration จริง) — ช่องที่ RPC ไม่รู้จัก = ปฏิเสธทั้งใบ", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20261008000011_post_entry_hardening.sql"),
+      "utf8"
+    );
+    const arr = (name: string): string[] => {
+      const m = new RegExp(`${name}\\s+constant text\\[\\] := array\\[([^\\]]+)\\]`).exec(sql);
+      if (!m) throw new Error(`อ่านรายการช่อง ${name} จาก migration ไม่ได้ — เทสต์นี้ต้องไม่ผ่านด้วยชุดว่าง`);
+      return [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]);
+    };
+    const header_ = arr("c_header");
+    const txn_ = arr("c_txn");
+    const line_ = arr("c_line");
+    expect(header_.length).toBeGreaterThan(5);
+
+    const input: PostingInput = { ...rent, memo: "ค่าเช่า", attachments: ["a/b/c.pdf"] };
+    const p = toPostEntryPayload(input, buildPosting(input, TEST_RESOLVER), header);
+    for (const k of Object.keys(p)) expect(header_, `ช่องหัวรายการ ${k}`).toContain(k);
+    for (const t of p.transactions) {
+      for (const k of Object.keys(t)) expect(txn_, `ช่อง transaction ${k}`).toContain(k);
+      for (const l of t.lines) for (const k of Object.keys(l)) expect(line_, `ช่องบรรทัด ${k}`).toContain(k);
+    }
+  });
+});
+
+describe("notWiredReason · หมวดที่เส้นทางบันทึกยังต่อไม่ครบต้องถูกกั้น (ไม่บันทึกครึ่งเดียว)", () => {
+  const subs = TX_TYPES.flatMap((t) => t.subs);
+
+  it("ทุกหมวดที่ตารางกฎติดธง loanTerms หรือ capitalGain ถูกกั้น พร้อมเหตุผล", () => {
+    const flagged = subs.filter((s) => s.requires?.includes("loanTerms") || s.requires?.includes("capitalGain"));
+    expect(flagged.length).toBeGreaterThan(0);
+    for (const s of flagged) expect(notWiredReason(s), s.code).toMatch(/ยังบันทึกจริงไม่ได้/);
+  });
+
+  it("หมวดอื่นไม่ถูกกั้น (เช่น ค่าเช่า) และไม่รู้จักหมวดไม่ทำให้พัง", () => {
+    const free = subs.filter((s) => !s.requires?.includes("loanTerms") && !s.requires?.includes("capitalGain"));
+    expect(free.length).toBeGreaterThan(0);
+    for (const s of free) expect(notWiredReason(s), s.code).toBeNull();
+    expect(notWiredReason(undefined)).toBeNull();
+  });
+});
+
+describe("humanizeDbError · ข้อความจาก DB ต้องถึงผู้ใช้ ไม่ถูกกลืน", () => {
+  it("ข้อความไทยจากด่านของ DB ส่งต่อตามเดิมทั้งก้อน", () => {
+    const m = "บันทึกรายการไม่ได้: บัญชีนี้ปิดใช้งานแล้ว";
+    expect(humanizeDbError({ message: m, code: "P0001" })).toBe(m);
+  });
+
+  it("RLS ปฏิเสธ → บอกเรื่องสิทธิ์ และแนบข้อความเทคนิคไว้ให้ผู้ดูแล", () => {
+    const out = humanizeDbError({ message: 'new row violates row-level security policy for table "transactions"', code: "42501" });
+    expect(out).toMatch(/ไม่มีสิทธิ์/);
+    expect(out).toMatch(/row-level security/);
+  });
+
+  it("ขาดการเชื่อมต่อ → บอกว่ายังไม่ทราบผล ห้ามกดซ้ำโดยไม่ตรวจ", () => {
+    expect(humanizeDbError({ message: "TypeError: fetch failed" })).toMatch(/ยังไม่ทราบว่ารายการถูกบันทึกหรือไม่/);
+  });
+
+  it("error ที่ไม่รู้จัก → ไม่ใช่คำว่าสำเร็จ และบอกว่ายังไม่มีรายการถูกบันทึก", () => {
+    const out = humanizeDbError({ message: "something odd", code: "XX000" });
+    expect(out).toMatch(/ไม่รับรายการ/);
+    expect(out).not.toMatch(/สำเร็จ/);
+    expect(humanizeDbError(null)).toMatch(/ไม่รับรายการ/);
+  });
+});
+
+describe("makeResolver · resolver จากข้อมูลจริงใน DB กับ engine", () => {
+  const ref: Pick<Reference, "owners" | "banks"> = {
+    owners: [
+      { id: "o-person", code: "P", name: "ธนากร", policy: "personal_flexible", status: "active", color: null, sortOrder: 1 },
+      { id: "o-corp", code: "C", name: "SRI Corporation", policy: "corporate_strict", status: "active", color: null, sortOrder: 2 },
+    ],
+    banks: [
+      { id: "b-open", ownerId: "o-person", name: "ธนากร - BBL", bank: "BBL", last4: null, isActive: true, sortOrder: 1 },
+      { id: "b-closed", ownerId: "o-person", name: "ธนากร - TTB (ปิด)", bank: "TTB", last4: null, isActive: false, sortOrder: 2 },
+    ],
+  };
+  const resolver = makeResolver(ref);
+
+  it("หาไม่เจอคืน null (engine แปลงเป็น PostingError เอง)", () => {
+    expect(resolver.owner("nope")).toBeNull();
+    expect(resolver.bankAccount("nope")).toBeNull();
+  });
+
+  it("บัญชีที่ปิดแล้วยังหาเจอ แต่ isActive = false (D-092) และ engine ปฏิเสธการลงรายการใหม่", () => {
+    expect(resolver.bankAccount("b-closed")?.isActive).toBe(false);
+    const input: PostingInput = { ...rent, ownerId: "o-person", bankAccountId: "b-closed" };
+    expect(() => buildPosting(input, resolver)).toThrow(PostingError);
+  });
+
+  it("ผู้ถือที่ไม่มีใน DB ถูกปฏิเสธ ไม่ถูกเดา", () => {
+    const input: PostingInput = { ...rent, ownerId: "ghost", bankAccountId: "b-open" };
+    expect(() => buildPosting(input, resolver)).toThrow(PostingError);
+  });
+
+  it("บัญชีเปิด + ผู้ถือตรงกัน → ลงได้ และ policy มาจาก DB (บุคคลไม่บังคับไฟล์แนบ)", () => {
+    const input: PostingInput = { ...rent, ownerId: "o-person", bankAccountId: "b-open" };
+    expect(buildPosting(input, resolver).transactions).toHaveLength(1);
+  });
+});

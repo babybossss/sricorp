@@ -4,14 +4,18 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
-import { Button } from "@/components/ui/button";
 import { useApp } from "@/lib/store";
 import { STATUS_PILL, TYPE_PILL } from "@/lib/tone";
 import { money, signedMoney, plMoney } from "@/lib/format";
-import { LEDGER, STATUS_LABEL, PL_SERIES, CF_GROUPS, CF_ACCOUNTS, CASH_GROUPS, UNASSIGNED_CASH_ROWS } from "@/lib/mock/ledger";
-import { entityById, MONTHS } from "@/lib/mock/entities";
-import { findSub, getTxType } from "@/lib/rules/tx-rules";
-import { LedgerDrawer } from "./ledger-drawer";
+import { PL_SERIES, CF_GROUPS, CF_ACCOUNTS, CASH_GROUPS, UNASSIGNED_CASH_ROWS } from "@/lib/mock/ledger";
+import { MONTHS } from "@/lib/mock/entities";
+import { findSub, movesCash } from "@/lib/rules/tx-rules";
+import { useReference } from "@/components/reference/reference-provider";
+import { FAMILY_VIEW } from "@/lib/db/reference-types";
+import { cashNet } from "@/lib/db/ledger-entries";
+import type { LedgerListState } from "@/lib/db/ledger-entries-server";
+import { isoToDmy } from "@/lib/format";
+import { EntryDrawer } from "./entry-drawer";
 import { ConfirmTab } from "./confirm-tab";
 import { initialPosted, type PostedMap } from "./confirm-flow";
 
@@ -24,7 +28,7 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function LedgerTabs() {
+export function LedgerTabs({ ledger }: { ledger: LedgerListState }) {
   const [tab, setTab] = React.useState<TabKey>("list");
   // ประวัติการยืนยันเงินเข้า-ออกอยู่ที่นี่ ไม่ใช่ในแท็บ — แท็บถูกถอดเมื่อสลับ ถ้าเก็บไว้ในแท็บ
   // กลับมาแล้วประวัติหาย และกดยืนยันรายการเดิมซ้ำได้ (เงินสดเพิ่มสองเท่า)
@@ -49,60 +53,94 @@ export function LedgerTabs() {
         ))}
       </div>
 
-      {tab === "list" ? <ListTab /> : null}
-      {tab === "confirm" ? <ConfirmTab posted={posted} onPostedChange={setPosted} /> : null}
-      {tab === "pl" ? <PLTab /> : null}
-      {tab === "cf" ? <CFTab /> : null}
+      {tab === "list" ? <ListTab ledger={ledger} /> : null}
+      {tab === "confirm" ? (
+        <>
+          <MockNotice />
+          <ConfirmTab posted={posted} onPostedChange={setPosted} />
+        </>
+      ) : null}
+      {tab === "pl" ? (
+        <>
+          <MockNotice />
+          <PLTab />
+        </>
+      ) : null}
+      {tab === "cf" ? (
+        <>
+          <MockNotice />
+          <CFTab />
+        </>
+      ) : null}
     </div>
   );
 }
 
-function ListTab() {
+/**
+ * แท็บยังใช้ข้อมูลจำลอง — บอกผู้ใช้ตรงๆ ว่าตัวเลขไม่ใช่ของจริง
+ * (ตัวเลขจำลองที่หน้าตาเหมือนของจริงอันตรายกว่าหน้าที่ว่างเปล่า)
+ */
+function MockNotice() {
+  return (
+    <div className="rounded border border-warn bg-warn-bg p-[12px_16px] text-base leading-7 text-warn-fg">
+      <b>ตัวอย่างข้อมูลจำลอง</b> — แท็บนี้ยังไม่ได้ต่อกับฐานข้อมูล ตัวเลขด้านล่างไม่ใช่ตัวเลขจริงของบ้าน
+    </div>
+  );
+}
+
+function ListTab({ ledger }: { ledger: LedgerListState }) {
   const entityId = useApp((s) => s.entityId);
-  const month = useApp((s) => s.month);
-  const [openRow, setOpenRow] = React.useState<string | null>(null);
+  const ref = useReference();
+  const [openId, setOpenId] = React.useState<string | null>(null);
 
-  // มุมมอง "SRI Family" คือรวมทุกชื่อ — ไม่กรอง
-  const rows = entityId === "family" ? LEDGER : LEDGER.filter((r) => r.ownerId === entityId);
+  if (!ledger.ok) {
+    return (
+      <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+        โหลดรายการสมุดบัญชีจากฐานข้อมูลไม่สำเร็จ: {ledger.error}
+        <div className="mt-1 text-sm">ลองโหลดหน้านี้ใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ</div>
+      </div>
+    );
+  }
 
-  const totalIn = rows.reduce((t, r) => t + (r.inAmt ?? 0), 0);
-  const totalOut = rows.reduce((t, r) => t + (r.outAmt ?? 0), 0);
+  // มุมมอง "SRI Family" คือรวมทุกชื่อ — ไม่กรอง · ผู้ถือที่เลือกกรองตามเจ้าของรายการ (หรือฝั่งคู่ของรายการข้ามผู้ถือ)
+  const rows =
+    entityId === FAMILY_VIEW
+      ? ledger.entries
+      : ledger.entries.filter((e) => e.ownerId === entityId);
+
+  const nets = rows.map((e) => cashNet(e));
+  const totalIn = nets.reduce<number>((t, n) => t + (n !== null && n > 0 ? n : 0), 0);
+  const totalOut = nets.reduce<number>((t, n) => t + (n !== null && n < 0 ? -n : 0), 0);
+  const openEntry = openId ? ledger.entries.find((e) => e.id === openId) ?? null : null;
+
+  const ownerOf = (id: string) => ref.owners.find((o) => o.id === id);
+  const currentOwner = entityId === FAMILY_VIEW ? undefined : ownerOf(entityId);
 
   const filters = [
-    { label: "ช่วงวันที่", value: `${MONTHS[month]} 2026` },
-    { label: "ถือในชื่อ", value: entityById(entityId).name },
-    { label: "บัญชี", value: "ทุกบัญชี" },
-    { label: "กลุ่มรายการ", value: "ทั้งหมด" },
-    { label: "สถานะ", value: "ทั้งหมด" },
+    { label: "ช่วงวันที่", value: ledger.truncated ? "ล่าสุด (ยังมีเก่ากว่านี้)" : "ทั้งหมดที่บันทึกแล้ว" },
+    { label: "ถือในชื่อ", value: currentOwner?.name ?? "รวมทุกชื่อ" },
   ];
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2.5">
         {filters.map((f) => (
-          <button key={f.label} className="flex min-h-[48px] items-center gap-2 rounded-pill border border-line bg-surface px-3.5 text-sm text-ink-600 hover:border-ink-400">
+          <div key={f.label} className="flex min-h-[48px] items-center gap-2 rounded-pill border border-line bg-surface px-3.5 text-sm text-ink-600">
             <span className="text-ink-400">{f.label}</span>
             <b className="text-ink-900">{f.value}</b>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" className="h-4 w-4">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
+          </div>
         ))}
-        <div className="flex min-h-[48px] min-w-[220px] items-center gap-2 rounded border border-line bg-surface px-3.5">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#8792A2" strokeWidth="1.75" strokeLinecap="round" className="h-[18px] w-[18px]">
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
-          <input placeholder="ค้นหารายละเอียด / คู่ค้า" className="w-full border-none text-sm outline-none" />
-        </div>
-        <div className="ml-auto flex gap-2.5">
-          <Button variant="secondary" size="sm">นำเข้า Excel</Button>
-          <Button variant="secondary" size="sm">ส่งออก</Button>
-        </div>
+        <div className="text-sm text-ink-400">เปลี่ยนผู้ถือได้ที่ตัวสลับมุมมองด้านบน</div>
       </div>
 
+      {ledger.truncated ? (
+        <div className="rounded border border-warn bg-warn-bg p-[12px_16px] text-base leading-7 text-warn-fg">
+          แสดงเฉพาะรายการล่าสุด — ในฐานข้อมูลยังมีรายการเก่ากว่านี้อีก
+        </div>
+      ) : null}
+
       <TableShell>
-        <Table minWidth={1420}>
+        <Table minWidth={1180}>
           <thead>
             <tr>
               <Th className="whitespace-nowrap">วันที่เอกสาร</Th>
@@ -119,56 +157,71 @@ function ListTab() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => {
-              const holder = entityById(r.ownerId);
-              const type = getTxType(r.typeKey);
-              const sub = findSub(r.subCode)?.sub;
+            {rows.length === 0 ? (
+              <tr>
+                <Td colSpan={11} className="py-8 text-center text-ink-600">
+                  ยังไม่มีรายการในสมุดบัญชี{currentOwner ? `ของ ${currentOwner.name}` : ""} — กด “บันทึกรายการ” ด้านบนเพื่อเริ่มลงรายการ
+                </Td>
+              </tr>
+            ) : null}
+            {rows.map((e, i) => {
+              const owner = ownerOf(e.ownerId);
+              const found = findSub(e.subCode);
+              const asset = e.assetId ? ref.assets.find((a) => a.id === e.assetId) : undefined;
+              const net = nets[i];
+              const reversal = e.source === "reverse";
+              // ค้างรับ-ค้างจ่าย = หมวดที่เงินต้องเคลื่อน แต่รายการนี้ยังไม่มีบรรทัดเงินสด (อ่านจากตารางกฎ + บรรทัดที่บันทึก)
+              const accrued = net === null && !!found && movesCash(found.sub);
+              const status = reversal ? "off" : accrued ? "late" : "saved";
+              const statusLabel = reversal ? "กลับรายการ" : accrued ? "ค้างรับ/ค้างจ่าย" : "บันทึกแล้ว";
               return (
                 <tr
-                  key={r.id}
-                  onClick={() => setOpenRow(r.id)}
-                  className={cn("cursor-pointer border-l-[3px] hover:bg-brand-50", i % 2 ? "bg-[#FCFDFE]" : "bg-surface")}
-                  style={{ borderLeftColor: holder.color }}
+                  key={e.id}
+                  onClick={() => setOpenId(e.id)}
+                  className={cn("cursor-pointer border-l-[3px] hover:bg-brand-50", i % 2 ? "bg-canvas" : "bg-surface")}
+                  style={owner?.color ? { borderLeftColor: owner.color } : undefined}
                 >
-                  <Td className="whitespace-nowrap">{r.docDate}</Td>
-                  <Td className="whitespace-nowrap text-ink-600">{r.cashDate}</Td>
+                  <Td className="whitespace-nowrap">{isoToDmy(e.docDate)}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{e.cashDate ? isoToDmy(e.cashDate) : "—"}</Td>
                   <Td className="whitespace-nowrap">
-                    <Pill className={TYPE_PILL[type.tone]}>{type.label}</Pill>
+                    {found ? <Pill className={TYPE_PILL[found.type.tone]}>{found.type.label}</Pill> : "—"}
                   </Td>
-                  <Td className="whitespace-nowrap text-ink-600">{sub?.label ?? "—"}</Td>
-                  <Td className="whitespace-nowrap">{r.detail}</Td>
-                  <Td className="whitespace-nowrap text-ink-600">{r.assetName}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{found?.sub.label ?? e.subCode}</Td>
+                  <Td className="whitespace-nowrap">{e.memo ?? "—"}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{asset?.name ?? "—"}</Td>
                   <Td className="whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-pill" style={{ background: holder.color }} />
-                      {holder.name}
+                      <span className="h-2.5 w-2.5 rounded-pill bg-holder-group" style={owner?.color ? { background: owner.color } : undefined} />
+                      {owner?.name ?? "ผู้ถือที่ไม่รู้จัก"}
                     </span>
                   </Td>
                   <Td align="right" className="whitespace-nowrap font-semibold text-pos">
-                    {r.inAmt ? signedMoney(r.inAmt) : "–"}
+                    {net !== null && net > 0 ? signedMoney(net) : "–"}
                   </Td>
                   <Td align="right" className="whitespace-nowrap font-semibold text-neg">
-                    {r.outAmt ? money(-r.outAmt) : "–"}
+                    {net !== null && net < 0 ? money(net) : "–"}
                   </Td>
                   <Td className="whitespace-nowrap">
-                    <Pill className={STATUS_PILL[r.status]}>{STATUS_LABEL[r.status]}</Pill>
+                    <Pill className={STATUS_PILL[status]}>{statusLabel}</Pill>
                   </Td>
-                  <Td align="center" className="text-ink-600">{r.hasFile ? "📎" : "—"}</Td>
+                  <Td align="center" className="text-ink-600">{e.attachments.length ? `📎 ${e.attachments.length}` : "—"}</Td>
                 </tr>
               );
             })}
-            <tr className="bg-canvas font-semibold">
-              <Td colSpan={7} className="border-t border-line">รวม {rows.length} รายการในเดือนนี้</Td>
-              <Td align="right" className="border-t border-line text-pos">{signedMoney(totalIn)}</Td>
-              <Td align="right" className="border-t border-line text-neg">{money(-totalOut)}</Td>
-              <Td colSpan={2} className="border-t border-line" />
-            </tr>
+            {rows.length ? (
+              <tr className="bg-canvas font-semibold">
+                <Td colSpan={7} className="border-t border-line">รวม {rows.length} รายการ</Td>
+                <Td align="right" className="border-t border-line text-pos">{signedMoney(totalIn)}</Td>
+                <Td align="right" className="border-t border-line text-neg">{money(-totalOut)}</Td>
+                <Td colSpan={2} className="border-t border-line" />
+              </tr>
+            ) : null}
           </tbody>
         </Table>
       </TableShell>
-      <div className="text-sm text-ink-400">คลิกแถวเพื่อดูรายละเอียดและสิ่งที่ระบบบันทึกให้</div>
+      <div className="text-sm text-ink-400">คลิกแถวเพื่อดูบรรทัดบัญชีที่ระบบบันทึกจริง</div>
 
-      <LedgerDrawer rowId={openRow} onClose={() => setOpenRow(null)} />
+      <EntryDrawer entry={openEntry} onClose={() => setOpenId(null)} />
     </div>
   );
 }
