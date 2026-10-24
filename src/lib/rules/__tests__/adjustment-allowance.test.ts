@@ -23,13 +23,27 @@ const sub = (code: string): SubCategory => {
   return found!.sub;
 };
 
-/** ห้าหมวดของประเภท "ปรับปรุงทางบัญชี" — เขียนชื่อตรงๆ เพื่อให้การถอดหมวดเห็นใน diff */
+/**
+ * หมวดค่าเผื่อ/ตัดหนี้สูญ ห้าตัว — เขียนชื่อตรงๆ เพื่อให้การถอดหมวดเห็นใน diff
+ * (ไฟล์นี้ตรวจเฉพาะกลุ่มนี้ · กลุ่มตีราคา D-111 อยู่ใน `revaluation-rules.test.ts`)
+ */
 const ADJ_CODES = [
   "adj.doubtful",
   "adj.doubtful_release",
   "adj.writeoff_rent",
   "adj.writeoff_interest",
   "adj.writeoff_other",
+];
+
+/**
+ * หมวดตีราคาทรัพย์ฝั่งลงทุน (D-111 ข้อ 2) — อยู่ใต้ประเภท `adjust` เหมือนกัน
+ * เพราะไม่มีเงินเคลื่อน แต่เป็นคนละเรื่องกับค่าเผื่อหนี้สงสัยจะสูญ
+ */
+const REVALUE_CODES = [
+  "adj.revalue_securities_up",
+  "adj.revalue_securities_down",
+  "adj.revalue_commodity_up",
+  "adj.revalue_commodity_down",
 ];
 
 const WRITEOFF_CODES = ["adj.writeoff_rent", "adj.writeoff_interest", "adj.writeoff_other"];
@@ -82,8 +96,10 @@ describe("ประเภทรายการ ปรับปรุงทาง
     expect(type!.cash).toBe("none");
   });
 
-  it("มีห้าหมวดครบตามที่ตัดสินไว้ ไม่ขาดไม่เกิน", () => {
-    expect(allowedSubs("adjust").map((s) => s.code).sort()).toEqual([...ADJ_CODES].sort());
+  it("มีเก้าหมวดครบตามที่ตัดสินไว้ ไม่ขาดไม่เกิน (ค่าเผื่อ 5 + ตีราคา 4)", () => {
+    expect(allowedSubs("adjust").map((s) => s.code).sort()).toEqual(
+      [...ADJ_CODES, ...REVALUE_CODES].sort()
+    );
   });
 
   it("ห้าหมวดนี้เลือกจากประเภทอื่นไม่ได้ — ห้ามยัดลงประเภทค่าใช้จ่ายเดิม", () => {

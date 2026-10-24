@@ -11,8 +11,9 @@
  * แปลว่าตัวเลขผิดเงียบๆ ซึ่งแย่กว่าการขึ้น error
  */
 
-import { accrualCheck, movesCash, type SubCategory } from "@/lib/rules/tx-rules";
-import { coa, isCashAccount, CASH_COA } from "@/lib/rules/coa";
+import { accrualCheck, movesCash, whtCheck, type SubCategory } from "@/lib/rules/tx-rules";
+import { fxCheck, toThb } from "@/lib/rules/currency";
+import { coa, coaLabel, isCashAccount, CASH_COA, REVALUATION_SURPLUS_COA } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { computeDisposal } from "@/lib/disposal/capital-gain";
 import {
@@ -31,6 +32,7 @@ import {
   assertCashLinesHaveAccount,
   assertEvidencePolicy,
   assertLinesValid,
+  assertNoProfitAndLoss,
   assertOwnerSelectable,
   assertRequiredDimensions,
   assertTypeAndSub,
@@ -118,6 +120,113 @@ function accrualAccount(sub: SubCategory): string {
     throw new PostingError(`หมวด "${sub.label}" ยังตั้งค้างรับ-ค้างจ่ายไม่ได้ — ${check.why}`);
   }
   return check.account;
+}
+
+/**
+ * ภาษีถูกหัก ณ ที่จ่าย — ตัวเลขที่ตรวจแล้วว่า **รายได้เป็นยอดเต็ม** (D-111 ข้อ 1)
+ *
+ * ด่านใจกลางของทั้งเรื่องอยู่ที่นี่: `withheld` ต้องสอดคล้องกับ `rate × gross`
+ * ถ้าผู้ใช้กรอก **ยอดสุทธิที่ได้รับ** ลงช่องจำนวนเงิน (ซึ่งเป็นความเข้าใจผิดที่
+ * เป็นธรรมชาติที่สุด เพราะนั่นคือยอดที่เห็นใน statement) สองตัวเลขจะไม่ลงรอยกัน
+ * แล้วถูกปฏิเสธพร้อมบอกยอดที่ควรเป็น — **ไม่ใช่ลงบัญชีให้เงียบๆ แล้วรายได้ขาดไป 5%**
+ *
+ * ยอมคลาดได้ 1 สตางค์ เพราะใบรับรองบางใบปัดเป็นบาทเต็ม · ความคลาดจากการกรอก
+ * ยอดสุทธิจะใหญ่กว่านั้นเสมอ (เท่ากับ rate × ภาษีที่ถูกหัก ซึ่งต่ำสุดก็หลายสิบสตางค์)
+ */
+function whtAmounts(
+  sub: SubCategory,
+  gross: number,
+  wht: NonNullable<PostingInput["wht"]>
+): { account: string; rate: number; withheld: number; net: number } {
+  const check = whtCheck(sub);
+  if (!check.ok) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ถูกหักภาษี ณ ที่จ่ายไม่ได้ — ${check.why} · ` +
+        "ถ้าเงินที่เข้าบัญชีไม่เต็มเพราะเหตุอื่น (ค่าธรรมเนียมโอน ฯลฯ) ต้องบันทึกเป็นค่าใช้จ่ายแยกใบ"
+    );
+  }
+
+  const rate = money(wht.rate, "อัตราภาษีหัก ณ ที่จ่าย");
+  if (rate <= 0 || rate >= 100) {
+    throw new PostingError(
+      `อัตราภาษีหัก ณ ที่จ่ายต้องมากกว่า 0 และน้อยกว่า 100 (ได้ ${rate}) — ` +
+        "ไม่ระบุอัตราแล้วคำนวณจากยอดที่หักไว้ย้อนกลับคือการเดา ซึ่งทำให้ตรวจใบรับรองไม่ได้"
+    );
+  }
+
+  const withheld = money(wht.amount, "ภาษีที่ถูกหักไว้");
+  if (withheld <= 0) {
+    throw new PostingError(
+      "ต้องระบุยอดภาษีที่ถูกหักไว้ให้มากกว่า 0 — ถ้าไม่มีใครหักภาษี ให้ไม่ต้องส่งข้อมูลการหักภาษีมาเลย"
+    );
+  }
+  if (withheld >= gross) {
+    throw new PostingError(
+      `ภาษีที่ถูกหัก (${withheld}) ต้องน้อยกว่ายอดรายได้เต็มจำนวน (${gross}) — ` +
+        "ถ้าเท่ากันหรือมากกว่า แปลว่ากรอกยอดสลับช่องกัน"
+    );
+  }
+
+  const expected = round2((gross * rate) / 100);
+  if (Math.abs(round2(withheld - expected)) > 0.01) {
+    throw new PostingError(
+      `ยอดเงินของรายการต้องเป็น **ยอดเต็มก่อนหักภาษี** ไม่ใช่ยอดที่เข้าบัญชี — ` +
+        `${rate}% ของ ${gross} ต้องเป็น ${expected} แต่ระบุว่าถูกหัก ${withheld} · ` +
+        `ถ้า ${withheld} คือยอดที่ถูกหักจริง ยอดเต็มควรเป็น ${round2((withheld * 100) / rate)} ` +
+        "(รายได้ต้องเป็นยอดเต็มเสมอ ไม่งั้นรายได้ต่ำกว่าจริงและเครดิตภาษีไม่ตรงใบรับรอง)"
+    );
+  }
+
+  return { account: check.account, rate, withheld, net: round2(gross - withheld) };
+}
+
+/**
+ * ข้อมูลการตีราคาที่ตรวจแล้ว (D-111 ข้อ 2)
+ *
+ * ตรวจ **ทั้งสามตัวคูณกันลงตัว** ไม่ใช่เชื่อยอดบาทที่ส่งมา: ถ้าเชื่อ ยอดบาทจะเป็น
+ * ตัวเลขที่ไม่มีใครตรวจย้อนได้ว่ามาจากอัตราไหน ซึ่งเป็นสิ่งที่ลูกพี่สั่งห้ามตรงๆ
+ * ("ห้ามเก็บแต่ยอดบาทสุดท้าย ไม่งั้นตรวจย้อนไม่ได้ว่าอัตราไหนถูกใช้")
+ */
+function checkedRevaluation(
+  sub: SubCategory,
+  input: PostingInput
+): NonNullable<PostingInput["revaluation"]> & { label: string } {
+  const rv = input.revaluation;
+  if (!rv) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ต้องระบุสกุลเงิน อัตราแลกเปลี่ยน และมูลค่าในสกุลเดิม — ` +
+        "การตีราคาที่ไม่บอกอัตราแลกเปลี่ยนคือยอดบาทที่ไม่มีใครตรวจย้อนได้ว่ามาจากไหน"
+    );
+  }
+
+  const fx = fxCheck({ currency: rv.currency, thbPerUnit: rv.rateToThb });
+  if (!fx.ok) throw new PostingError(`หมวด "${sub.label}" — ${fx.why}`);
+
+  const valueOriginal = money(rv.valueOriginal, "มูลค่าในสกุลเดิม");
+  if (valueOriginal <= 0) {
+    throw new PostingError(
+      "มูลค่าตลาดในสกุลเดิมต้องมากกว่า 0 — ทรัพย์ที่มูลค่าเป็นศูนย์ต้องตัดจำหน่าย ไม่ใช่ตีราคา"
+    );
+  }
+
+  const valueThb = money(rv.valueThb, "มูลค่าที่แปลงเป็นบาท");
+  const computed = toThb(valueOriginal, fx.rate.thbPerUnit);
+  if (computed !== valueThb) {
+    throw new PostingError(
+      `มูลค่าที่แปลงเป็นบาทไม่ตรงกับอัตราที่ระบุ: ${valueOriginal} ${fx.rate.currency} × ` +
+        `${fx.rate.thbPerUnit} = ${computed} บาท แต่ระบุมา ${valueThb} บาท — ` +
+        "ยอดบาทต้องมาจากมูลค่าสกุลเดิมคูณอัตราที่บันทึกไว้เท่านั้น ไม่ใช่ตัวเลขที่พิมพ์แยก"
+    );
+  }
+
+  return {
+    ...rv,
+    currency: fx.rate.currency,
+    rateToThb: fx.rate.thbPerUnit,
+    valueOriginal,
+    valueThb,
+    label: `${valueOriginal.toLocaleString("en-US")} ${fx.rate.currency} × ${fx.rate.thbPerUnit} = ${valueThb.toLocaleString("en-US")} บาท`,
+  };
 }
 
 
@@ -253,6 +362,45 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       summary.push(rule.note);
       summary.push("งบรวมจะตัดรายการระหว่างกันออก ยอดกองกลางจึงไม่เปลี่ยน");
     }
+  } else if (sub.requires?.includes("revaluation")) {
+    /* ---------- ตีราคาทรัพย์ฝั่งลงทุน (D-111 ข้อ 2) ----------
+     *
+     * ดูจากธงในตารางกฎ ไม่ใช่รหัสหมวด (รูปเดียวกับ `transferTarget`) — หมวดตีราคา
+     * ตัวใหม่จะได้ไม่ตกไปเส้นทางปกติที่ไม่ถามอัตราแลกเปลี่ยนเลย แล้วยอดบาท
+     * จะกลายเป็นตัวเลขที่ไม่มีใครรู้ว่ามาจากอัตราไหน
+     *
+     * ต่างจากเส้นทางปกติสองอย่าง:
+     *   1. บังคับข้อมูลอัตราแลกเปลี่ยนครบสามตัว และตรวจว่าคูณกันลงตัว
+     *   2. **ผูกทรัพย์ทั้งสองขา** รวมขาส่วนเกินทุน (3400) ที่เป็นบัญชีทุน
+     *      เส้นทางปกติผูกทรัพย์แค่ขาที่เป็นบัญชีสินทรัพย์ ซึ่งไม่พอที่นี่:
+     *      ถ้าขา 3400 ไม่มี asset_id จะไม่มีทางรู้ว่าส่วนเกินทุนที่ค้างอยู่เป็นของ
+     *      ทรัพย์ชิ้นไหน แล้วตอนขายจะล้างส่วนเกินของทรัพย์ชิ้นนั้นออกไม่ได้
+     *      (ซึ่งคือการนับซ้ำที่ลูกพี่สั่งให้กัน)
+     */
+    const rv = checkedRevaluation(sub, input);
+    const memo = `ตีราคา ${rv.label}${rv.valuationRef ? ` · อ้างอิง ${rv.valuationRef}` : ""}`;
+
+    const lines: PostingLine[] = [
+      line({ coaCode: sub.dr, assetId: input.assetId, debit: amount, cfCategory: "none", memo }),
+      line({ coaCode: sub.cr, assetId: input.assetId, credit: amount, cfCategory: "none", memo }),
+    ];
+
+    /**
+     * **ด่านที่ลูกพี่สั่งให้มี** — ต้องพังเสียงดังถ้ารายการตีราคาไปแตะ P&L
+     * ซ้อนทับกับการที่ตารางกฎใช้บัญชีประเภท equity อยู่แล้วโดยตั้งใจ:
+     * ตารางกฎกันการ "ตั้งใจ" · ด่านนี้กันการ "เผลอแก้คู่บัญชีวันหลัง"
+     * มีเทสต์ mutation ยืนยันว่าแดงจริง (revaluation-posting.test.ts)
+     */
+    assertNoProfitAndLoss(lines, `รายการตีราคา "${sub.label}"`);
+
+    transactions.push({ ownerId: input.ownerId, lines });
+    summary.push(
+      `มูลค่าตลาด ${rv.label} — ลงที่ ${coaLabel(REVALUATION_SURPLUS_COA)} ในส่วนของเจ้าของ ` +
+        "**ไม่เข้างบกำไรขาดทุน** (กำไร/ขาดทุนรับรู้ตอนขายจริงเท่านั้น)"
+    );
+    summary.push(
+      "เดือนถัดไปต้องกลับรายการใบนี้ก่อนลงยอดใหม่ ไม่ใช่ลงส่วนต่างทับกัน — ใช้ planRevaluation()"
+    );
   } else if (sub.requires?.includes("capitalGain")) {
     // ---------- ขายทรัพย์ / ขายหลักทรัพย์ ----------
     const d = input.disposal!;
@@ -262,6 +410,8 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       costBasis: money(d.costBasis, "ต้นทุน"),
       salePrice: money(d.salePrice, "ราคาขาย"),
       sellingCosts: money(d.sellingCosts ?? 0, "ค่าใช้จ่ายในการขาย"),
+      // **ติดลบได้** จึงไม่ผ่าน money() ที่ห้ามติดลบ — เคยตีราคาลงคือเรื่องปกติ
+      unrealizedAdjustment: d.unrealizedAdjustment ?? 0,
     });
     const { costBasis, netProceeds, capitalGain: gain } = r;
 

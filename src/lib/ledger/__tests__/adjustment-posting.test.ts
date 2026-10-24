@@ -39,13 +39,24 @@ const net = (lines: PostingLine[], code: string) =>
 const plNet = (lines: PostingLine[]) =>
   lines.filter((l) => statementOf(l.coaCode).statement === "PL").reduce((a, l) => a + l.debit - l.credit, 0);
 
-const ADJ = allowedSubs("adjust");
+/**
+ * หมวดปรับปรุงที่กรอกแค่ยอด + คู่ค้าก็ลงได้ — **ไม่รวมหมวดตีราคา** (D-111 ข้อ 2)
+ *
+ * หมวดตีราคาบังคับ `revaluation` (สกุลเงิน · อัตรา · มูลค่าสกุลเดิม) และบังคับผูกทรัพย์
+ * ตามตารางกฎ จึงใช้ `adj()` ชุดนี้ไม่ได้ · เคสของมันอยู่ใน `revaluation-posting.test.ts`
+ * ซึ่งไล่ทั้งเคสครบและ **เคสที่ไม่ส่งข้อมูล** ครบทุกช่อง
+ *
+ * คัดด้วยธงจากตารางกฎ ไม่ใช่รายชื่อรหัสหมวด — หมวดตีราคาตัวใหม่จึงไม่หลุดเข้ามาเอง
+ */
+const ADJ = allowedSubs("adjust").filter((s) => !s.requires?.includes("revaluation"));
 const WRITEOFF = ["adj.writeoff_rent", "adj.writeoff_interest", "adj.writeoff_other"];
 
 describe("ลงรายการที่ไม่มีเงินเคลื่อนได้ โดยไม่ต้องส่งบัญชีธนาคาร", () => {
   it("ต้องมีหมวดให้ทดสอบ (กันเทสต์ผ่านเพราะลูปว่าง)", () => {
     expect(ADJ.length).toBe(5);
     expect(ADJ.every((s) => !movesCash(s))).toBe(true);
+    // ทั้งประเภทต้องไม่มีเงินเคลื่อน รวมหมวดตีราคาที่ถูกคัดออกจากลูปนี้ด้วย
+    expect(allowedSubs("adjust").every((s) => !movesCash(s))).toBe(true);
   });
 
   for (const s of ADJ) {
