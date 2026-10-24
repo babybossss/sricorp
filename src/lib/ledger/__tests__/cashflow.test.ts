@@ -711,3 +711,86 @@ describe("งวดว่าง", () => {
     expect(st.reconciled).toBe(true);
   });
 });
+
+/**
+ * **ผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด** (FCD · ลูกพี่ยืนยัน 25/10 · IAS 7.28)
+ *
+ * ยอดบาทของบัญชีเงินฝากสกุลต่างประเทศขยับได้โดยไม่มีเงินเข้าออกกิจการ
+ * → **ไม่ใช่กระแสเงินสด** (ไม่อยู่ในสามส่วน) แต่ **ต้องอยู่ในการกระทบยอด**
+ * ถ้าปล่อยเป็น anomaly งบจะไม่กระทบยอดทุกเดือนที่ค่าเงินขยับ = ปิดเดือนไม่ได้
+ * ทั้งที่ไม่มีอะไรผิด (Money Invariant 5)
+ */
+describe("อัตราแลกเปลี่ยนของบัญชีเงินฝากสกุลต่างประเทศ", () => {
+  it("แปลงค่าสิ้นเดือน: ยอดบาทขยับ แต่ไม่เข้าสามส่วน · ไม่ใช่ anomaly · กระทบยอดลง", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "t-fx",
+        subCode: "trf.fx_translate_up",
+        lines: [ln(CASH, 5_000, 0, "none"), ln("3410", 0, 5_000, "none")],
+      }),
+    ]);
+    expect(st.netChange, "สามส่วนต้องมีแต่ค่าเช่า").toBe(50_000);
+    expect(st.fxEffect, "ผลกระทบอัตราแลกเปลี่ยนแยกบรรทัดของตัวเอง").toBe(5_000);
+    expect(st.anomalies, "การแปลงค่าไม่ใช่ความผิดปกติ").toEqual([]);
+    expect(st.reconciled, "เงินสดเปลี่ยน 55,000 = 50,000 + 5,000").toBe(true);
+    expect(st.difference).toBe(0);
+    expect(st.closingCash).toBe(55_000);
+  });
+
+  it("แลกเป็นบาทจริง: ส่วนต่างที่ทำให้ยอดบาทรวมขยับอยู่บรรทัดผลกระทบอัตราแลกเปลี่ยน", () => {
+    // ตัดเงินตราออกตามอัตราตามบัญชี 370,000 · รับบาท 375,000 · กำไรจริง 5,000
+    const st = run([
+      tx({
+        txnId: "t-conv",
+        subCode: "trf.fx_convert",
+        lines: [
+          ln(CASH, 375_000, 0, "none"),
+          ln(CASH, 0, 370_000, "none"),
+          ln("4330", 0, 5_000, "none"),
+        ],
+      }),
+    ]);
+    expect(st.netChange).toBe(0);
+    expect(st.fxEffect).toBe(5_000);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+    expect(st.closingCash).toBe(5_000);
+  });
+
+  it("แปลงค่าลง: ผลกระทบติดลบและยังกระทบยอดลง", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "t-fx-down",
+        subCode: "trf.fx_translate_down",
+        lines: [ln("3410", 4_000, 0, "none"), ln(CASH, 0, 4_000, "none")],
+      }),
+    ]);
+    expect(st.netChange).toBe(50_000);
+    expect(st.fxEffect).toBe(-4_000);
+    expect(st.reconciled).toBe(true);
+    expect(st.closingCash).toBe(46_000);
+  });
+
+  it("**MUTATION** หมวดอื่นที่เงินสดไม่หักกันเป็นศูนย์ยังเป็น anomaly เหมือนเดิม", () => {
+    // ถ้าข้อยกเว้นกว้างเกินไป (เช่นยกเว้นทุกหมวดที่ cfCategory = none)
+    // ยอดเงินสดที่หายจากงบจะเงียบหมด — เคสนี้กันไว้
+    const st = run([
+      tx({
+        txnId: "t-bad",
+        subCode: "trf.internal",
+        lines: [ln(CASH, 100_000, 0, "none"), ln("1200", 0, 100_000, "none")],
+      }),
+    ]);
+    expect(st.fxEffect, "หมวดที่ไม่ใช่เรื่องค่าเงินห้ามถูกนับเป็นผลกระทบอัตราแลกเปลี่ยน").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.reconciled).toBe(false);
+  });
+
+  it("ไม่มีรายการค่าเงินเลย → fxEffect เป็น 0 (ไม่ใช่ undefined)", () => {
+    const st = run([rentIn()]);
+    expect(st.fxEffect).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+});

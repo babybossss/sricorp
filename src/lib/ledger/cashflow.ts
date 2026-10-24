@@ -71,7 +71,7 @@
 import { isCashAccount } from "@/lib/rules/coa";
 import { INTERCOMPANY_RULES, type IntercompanyNature } from "@/lib/rules/intercompany";
 import { CF_LAYOUT, CF_SECTION_TH, cashflowLineOf, cashflowLineOfLeg } from "@/lib/rules/statements";
-import type { CashflowSection } from "@/lib/rules/tx-rules";
+import { findSub, isFxCashSub, type CashflowSection } from "@/lib/rules/tx-rules";
 import { assertBalanced, assertIsoDate, round2 } from "./guards";
 import type { TxnStatus } from "./reversal";
 import { PostingError, type PostingLine } from "./types";
@@ -271,7 +271,19 @@ export type CashflowStatement = {
   computedOpeningCash: number;
   /** `openingCash` + การเคลื่อนไหวเงินสดในงวด (บรรทัด 11xx ทั้งหมด) */
   closingCash: number;
-  /** `netChange − (closingCash − openingCash)` · 0 = กระทบยอดลงตัว */
+  /**
+   * **ผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด** (บาท · IAS 7.28) — FCD · ลูกพี่ยืนยัน 25/10
+   *
+   * ยอดบาทของบัญชีเงินฝากสกุลต่างประเทศขยับได้ **โดยไม่มีเงินเข้าออกกิจการ**
+   * (อัตราสิ้นเดือนเปลี่ยน · หรือแลกเป็นบาทได้มากกว่าอัตราตามบัญชี)
+   * ยอดนี้จึง **ไม่ใช่กระแสเงินสดของงวด** → ไม่อยู่ในสามส่วนของงบ
+   * แต่ **ต้องอยู่ในการกระทบยอด** ไม่งั้นงบจะไม่กระทบยอดทุกเดือนที่ค่าเงินขยับ
+   * และ "ปิดเดือนไม่ได้" ทั้งที่ไม่มีอะไรผิด (Money Invariant 5)
+   *
+   *     เงินสดปลายงวด − ต้นงวด = netChange + fxEffect
+   */
+  fxEffect: number;
+  /** `netChange + fxEffect − (closingCash − openingCash)` · 0 = กระทบยอดลงตัว */
   difference: number;
   reconciled: boolean;
   /** ขาของรายการข้ามผู้ถือที่ถูกตัดออกจากงบรวม — ไว้ให้หน้าจอกดดูได้ */
@@ -583,6 +595,8 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
   let computedOpeningSatang = 0;
   let inPeriodSatang = 0;
   let eliminatedSatang = 0;
+  /** ผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด — แยกจากสามส่วนของงบ (ดู CashflowStatement.fxEffect) */
+  let fxEffectSatang = 0;
 
   const note = (
     kind: CashflowAnomalyKind,
@@ -708,16 +722,32 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
     for (const [category, flow] of moving) {
       const satang = netOf(flow);
       if (category === "none") {
-        // โอนระหว่างบัญชีตัวเองมีเงินเคลื่อนขั้นต้นแต่สุทธิเป็นศูนย์ → ปกติ ไม่ต้องดัง
+        /**
+         * โอนระหว่างบัญชีตัวเองมีเงินเคลื่อนขั้นต้นแต่สุทธิเป็นศูนย์ → ปกติ ไม่ต้องดัง
+         *
+         * **ข้อยกเว้นที่ไม่ใช่ความผิดปกติ: อัตราแลกเปลี่ยน** (FCD · ลูกพี่ยืนยัน 25/10)
+         * การแปลงค่าสิ้นเดือนและการแลกเป็นบาทจริงทำให้ยอด **บาท** ของเงินสดขยับ
+         * โดยไม่มีเงินเข้าออกกิจการ → ไม่ใช่กระแสเงินสด แต่ต้องอยู่ในการกระทบยอด
+         * (IAS 7.28) · ถ้าปล่อยให้เป็น anomaly งบจะไม่กระทบยอดทุกเดือนที่ค่าเงินขยับ
+         * แล้ว "ปิดเดือนไม่ได้" ทั้งที่ไม่มีอะไรผิด
+         *
+         * ตัดสินจาก **ตารางกฎ** (`isFxCashSub()` อ่านคู่บัญชี 3410 / 4330 / 5930)
+         * ไม่ใช่รายชื่อรหัสหมวดที่นี่ — หมวดค่าเงินตัวใหม่จะถูกครอบเองทันที
+         */
         if (satang !== 0) {
-          note(
-            "cashOutsideStatement",
-            t.txnId,
-            t.subCode,
-            satang,
-            `รายการ ${t.txnId} มีเงินสดเคลื่อนสุทธิ ${toBaht(satang)} บาท ` +
-              'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ'
-          );
+          const sub = findSub(t.subCode)?.sub;
+          if (sub && isFxCashSub(sub)) {
+            fxEffectSatang += satang;
+          } else {
+            note(
+              "cashOutsideStatement",
+              t.txnId,
+              t.subCode,
+              satang,
+              `รายการ ${t.txnId} มีเงินสดเคลื่อนสุทธิ ${toBaht(satang)} บาท ` +
+                'แต่ cfCategory เป็น "none" (ไม่เข้างบ) — ถ้าไม่ใช่การโอนระหว่างบัญชีตัวเอง ยอดนี้หายจากงบ'
+            );
+          }
         }
         continue;
       }
@@ -804,7 +834,8 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
   const openingSatang = hasProvidedOpening ? providedOpeningSatang : computedOpeningSatang;
   const closingSatang = openingSatang + inPeriodSatang;
 
-  const differenceSatang = netSatang - inPeriodSatang;
+  // ผลกระทบของอัตราแลกเปลี่ยนไม่ใช่กระแสเงินสด แต่เป็นส่วนหนึ่งของการกระทบยอด
+  const differenceSatang = netSatang + fxEffectSatang - inPeriodSatang;
   const reconciled = differenceSatang === 0;
 
   if (!reconciled) {
@@ -814,6 +845,7 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       null,
       differenceSatang,
       `งบกระแสเงินสดไม่กระทบยอด: ผลรวมสามส่วน ${toBaht(netSatang)} บาท ` +
+        (fxEffectSatang !== 0 ? `+ ผลกระทบอัตราแลกเปลี่ยน ${toBaht(fxEffectSatang)} บาท ` : "") +
         `แต่เงินสดปลายงวดลบต้นงวด ${toBaht(inPeriodSatang)} บาท ` +
         `(ต่างกัน ${toBaht(differenceSatang)} บาท) — ตัวเลขในงบยังดูได้ แต่ห้ามส่งออกก่อนหาสาเหตุ`
     );
@@ -826,6 +858,7 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
     consolidated: ownerIds.length > 1,
     sections,
     netChange: toBaht(netSatang),
+    fxEffect: toBaht(fxEffectSatang),
     totalInflow: toBaht(inflowSatang),
     totalOutflow: toBaht(outflowSatang),
     openingCash: toBaht(openingSatang),
