@@ -35,6 +35,17 @@ const base = {
 const bankFor = (s: { cash: string; dr: string; cr: string }) =>
   movesCash(s as Parameters<typeof movesCash>[0]) ? "b4" : undefined;
 
+/**
+ * ข้อมูลตีราคาของหมวดที่บังคับ (D-111 ข้อ 2) — ตอนไล่ทั้งตารางกฎ
+ *
+ * ยอดบาทต้องคูณกับอัตราลงตัว ไม่งั้น engine ปฏิเสธ (และปฏิเสธถูก)
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `revaluation-posting.test.ts` ครบทุกช่อง
+ */
+const revaluationFor = (s: { requires?: readonly string[] }) =>
+  s.requires?.includes("revaluation")
+    ? { currency: "USD", rateToThb: 36.5, valueOriginal: 1_000, valueThb: 36_500 }
+    : undefined;
+
 describe("Money Invariant 1 — ทุกรายการต้องสมดุล", () => {
   it("ทุกหมวดย่อยในตารางกฎ สร้างบรรทัดที่สมดุลได้", () => {
     for (const t of TX_TYPES) {
@@ -54,6 +65,7 @@ describe("Money Invariant 1 — ทุกรายการต้องสมด
             ? { principal: 9000, interest: 3000 }
             : undefined,
           transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
+          revaluation: revaluationFor(s),
         };
         const r = buildPosting(input);
         expect(totalDebit(allLines(r)), `${s.code} debit=credit`).toBe(totalCredit(allLines(r)));
@@ -77,6 +89,7 @@ describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
           disposal: s.requires?.includes("capitalGain") ? { costBasis: 10000, salePrice: 12000 } : undefined,
           repayment: s.requires?.includes("principalInterestSplit") ? { principal: 9000, interest: 3000 } : undefined,
           transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
+          revaluation: revaluationFor(s),
         });
         for (const l of allLines(r)) {
           if (isCashAccount(l.coaCode)) {
