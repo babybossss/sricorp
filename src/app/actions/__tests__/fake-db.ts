@@ -39,7 +39,7 @@ export function referenceFixture(): Reference {
     id, code, name, policy, status, color: null, sortOrder: 1,
   });
   const b = (id: string, ownerId: string, name: string, isActive = true) => ({
-    id, ownerId, name, bank: "X", last4: null, isActive, sortOrder: 1,
+    id, ownerId, name, bank: "X", last4: null, isActive, sortOrder: 1, currency: "THB",
   });
   return {
     owners: [
@@ -155,10 +155,23 @@ export function createFakeDb() {
   const seen = new Map<string, string[]>();
   let seq = 0;
   /** ทำให้ rpc ล้ม — ใช้ทดสอบเส้นทาง error ของ DB */
-  const control: { rpcError: { message: string; code?: string } | null; rpcData: unknown | "default" } = {
+  const control: {
+    rpcError: { message: string; code?: string } | null;
+    rpcData: unknown | "default";
+    /** ตารางที่ RLS ปฏิเสธการเขียน — INSERT = error 42501 · UPDATE/DELETE = ไม่มีแถวถูกแก้ (ตรงกับ PostgREST จริง) */
+    denyWrites: Set<string>;
+  } = {
     rpcError: null,
     rpcData: "default",
+    denyWrites: new Set(),
   };
+  /** ตารางทั่วไป (ไม่ใช่สมุด) — เท่าที่ action ตั้งค่า/ข้อมูลอ้างอิงใช้ */
+  const tables: Record<string, Record<string, unknown>[]> = {
+    owners: [], bank_accounts: [], assets: [], contacts: [], chart_of_accounts: [],
+  };
+  /** การเขียนที่ action ยิงมา — ไว้ตรวจว่าส่งอะไรไป (และต้องไม่มี delete) */
+  const writes: { table: string; op: "insert" | "update" | "delete"; payload: unknown; denied: boolean }[] = [];
+  const BANK_CCY = new Set(["THB", "USD", "JPY", "CNY"]);
 
   const newId = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
 
@@ -190,6 +203,16 @@ export function createFakeDb() {
     if ((p.wht_rate == null) !== (p.wht_amount == null)) throw new Error("ต้องส่ง wht_rate และ wht_amount คู่กัน");
     if (hasCash && !p.cash_date) throw new Error("ไม่มี cash_date ทั้งที่มีบรรทัดเงินสด");
     if (!hasCash && p.cash_date) throw new Error("มี cash_date ทั้งที่ไม่มีบรรทัดเงินสด");
+
+    // D-092: บัญชีที่ปิดใช้งานแล้วลงรายการใหม่ไม่ได้ (ยกเว้นใบกลับรายการ) — จำลอง fn_assert_bank_account_open
+    for (const t of txns) {
+      for (const l of (t.lines as Record<string, unknown>[]) ?? []) {
+        const bank = tables.bank_accounts.find((b) => b.id === l.bank_account_id);
+        if (bank && bank.is_active === false && p.source !== "reverse") {
+          throw new Error(`บัญชี "${bank.display_name}" ปิดใช้งานแล้ว ลงรายการใหม่เข้าบัญชีนี้ไม่ได้ (D-092)`);
+        }
+      }
+    }
 
     const ids: string[] = [];
     try {
@@ -249,9 +272,80 @@ export function createFakeDb() {
     return { transaction_ids: ids, replayed: false };
   }
 
+  type TRow = Record<string, unknown>;
+  function tableFrom(table: string) {
+    const store = tables[table];
+    let mode: "select" | "insert" | "update" | "delete" = "select";
+    let payload: unknown = null;
+    const preds: ((r: TRow) => boolean)[] = [];
+    const orders: { col: string; asc: boolean }[] = [];
+    let cap = Infinity;
+    /** คอลัมน์ที่ขอ — PostgREST คืนเฉพาะคอลัมน์ที่ select (ไม่ขอ = ไม่ได้) เทสต์จึงจับ select ที่ลืมคอลัมน์ได้ */
+    let sel: string[] | null = null;
+    const project = (r: TRow): TRow => (sel ? Object.fromEntries(sel.map((c) => [c, r[c]])) : { ...r });
+
+    function run(): { data: TRow[] | null; error: { message: string; code?: string } | null } {
+      const res = run0();
+      return res.data ? { data: res.data.map(project), error: res.error } : res;
+    }
+    function run0(): { data: TRow[] | null; error: { message: string; code?: string } | null } {
+      if (mode === "select") {
+        const out = store.filter((r) => preds.every((p) => p(r)));
+        for (const o of [...orders].reverse()) {
+          out.sort((a, b) => {
+            const x = a[o.col] as never, y = b[o.col] as never;
+            return (x < y ? -1 : x > y ? 1 : 0) * (o.asc ? 1 : -1);
+          });
+        }
+        return { data: out.slice(0, cap).map((r) => ({ ...r })), error: null };
+      }
+      const denied = control.denyWrites.has(table);
+      writes.push({ table, op: mode, payload, denied });
+      if (mode === "insert") {
+        if (denied) return { data: null, error: { code: "42501", message: `new row violates row-level security policy for table "${table}"` } };
+        const row: TRow = { id: newId(), is_active: true, sort_order: 0, currency: "THB", opening_balance: 0, ...(payload as TRow) };
+        if (table === "bank_accounts") {
+          for (const c of ["owner_id", "bank", "account_name", "display_name"]) {
+            if (row[c] == null) return { data: null, error: { code: "23502", message: `null value in column "${c}" violates not-null constraint` } };
+          }
+          if (!BANK_CCY.has(String(row.currency))) {
+            return { data: null, error: { code: "23514", message: 'new row violates check constraint "bank_accounts_currency_allowed"' } };
+          }
+        }
+        store.push(row);
+        return { data: [{ ...row }], error: null };
+      }
+      // update / delete: RLS กรองแถวออกแล้วไม่เหลือ → ไม่ error แต่ไม่มีแถวถูกแตะ
+      const hit = denied ? [] : store.filter((r) => preds.every((p) => p(r)));
+      if (mode === "update") for (const r of hit) Object.assign(r, payload as TRow);
+      else for (const r of hit) store.splice(store.indexOf(r), 1);
+      return { data: hit.map((r) => ({ ...r })), error: null };
+    }
+
+    const q = {
+      select: (cols?: string) => ((sel = cols && cols !== "*" ? cols.split(",").map((c) => c.trim()) : null), q),
+      insert: (row: unknown) => ((mode = "insert"), (payload = row), q),
+      update: (patch: unknown) => ((mode = "update"), (payload = patch), q),
+      delete: () => ((mode = "delete"), q),
+      eq: (c: string, v: unknown) => (preds.push((r) => r[c] === v), q),
+      order: (col: string, o?: { ascending?: boolean }) => (orders.push({ col, asc: o?.ascending !== false }), q),
+      limit: (n: number) => ((cap = n), q),
+      single: async () => {
+        const r = run();
+        if (r.error) return { data: null, error: r.error };
+        return r.data && r.data.length === 1
+          ? { data: r.data[0], error: null }
+          : { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } };
+      },
+      then: (resolve: (v: ReturnType<typeof run>) => unknown) => resolve(run()),
+    };
+    return q;
+  }
+
   type Pred = (r: LedgerViewRow) => boolean;
   function from(table: string) {
-    if (table !== "v_ledger_posted") throw new Error(`เทสต์นี้อ่านได้เฉพาะ v_ledger_posted ไม่ใช่ ${table} (D-107)`);
+    if (table in tables) return tableFrom(table);
+    if (table !== "v_ledger_posted") throw new Error(`เทสต์นี้อ่านได้เฉพาะ v_ledger_posted และตารางตั้งค่า ไม่ใช่ ${table} (D-107)`);
     const preds: Pred[] = [];
     let cap = Infinity;
     const q = {
@@ -306,7 +400,7 @@ export function createFakeDb() {
         .reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0) * 100
     ) / 100;
 
-  return { client, rows, rpcCalls, control, balance, fake };
+  return { client, rows, rpcCalls, control, balance, fake, tables, writes };
 }
 
 export type FakeDb = ReturnType<typeof createFakeDb>;

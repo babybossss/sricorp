@@ -313,6 +313,18 @@ describe("ปฏิเสธทั้งไฟล์: โครงไฟล์/�
     expect(has(parseBad(loadFixture(), ctx), TK, 39, /ปิดใช้งาน/)).toBe(true);
   });
 
+  it("บัญชีสกุลต่างประเทศ (FCD) → ปฏิเสธ ไม่ลงเป็นบาทเงียบๆ", () => {
+    const ctx = ctxOf();
+    ctx.banks.find((b) => b.id === "b-tk-scb")!.currency = "USD";
+    expect(has(parseBad(loadFixture(), ctx), TK, 39, /สกุล USD.*ไม่ได้/)).toBe(true);
+  });
+
+  it("ชื่อบัญชีซ้ำสองบัญชีของผู้ถือเดียวกัน → ปฏิเสธ (ไม่ให้ตัวหลังชนะเงียบๆ)", () => {
+    const ctx = ctxOf();
+    ctx.banks.push({ id: "b-tk-scb-2", ownerId: "o-thanakorn", name: "ธนากร - SCB", isActive: true, currency: "THB" });
+    expect(has(parseBad(loadFixture(), ctx), TK, 39, /ชื่อซ้ำกัน/)).toBe(true);
+  });
+
   it("เงินสดที่มียอดแต่ไม่มีชื่อบัญชี → ปฏิเสธ", () => {
     const wb = loadFixture();
     setCell(wb, TK, 40, "E", 5);

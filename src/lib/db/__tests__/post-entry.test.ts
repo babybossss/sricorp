@@ -255,8 +255,8 @@ describe("makeResolver · resolver จากข้อมูลจริงใน
       { id: "o-corp", code: "C", name: "SRI Corporation", policy: "corporate_strict", status: "active", color: null, sortOrder: 2 },
     ],
     banks: [
-      { id: "b-open", ownerId: "o-person", name: "ธนากร - BBL", bank: "BBL", last4: null, isActive: true, sortOrder: 1 },
-      { id: "b-closed", ownerId: "o-person", name: "ธนากร - TTB (ปิด)", bank: "TTB", last4: null, isActive: false, sortOrder: 2 },
+      { id: "b-open", ownerId: "o-person", name: "ธนากร - BBL", bank: "BBL", last4: null, isActive: true, sortOrder: 1, currency: "THB" },
+      { id: "b-closed", ownerId: "o-person", name: "ธนากร - TTB (ปิด)", bank: "TTB", last4: null, isActive: false, sortOrder: 2, currency: "THB" },
     ],
   };
   const resolver = makeResolver(ref);

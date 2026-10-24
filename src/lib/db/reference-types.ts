@@ -28,6 +28,8 @@ export type RefBank = {
   last4: string | null;
   isActive: boolean;
   sortOrder: number;
+  /** สกุลเงินของบัญชี (`bank_accounts.currency`) — THB ยกเว้นบัญชีเงินฝากสกุลต่างประเทศ (FCD) */
+  currency: string;
 };
 
 export type RefAsset = {

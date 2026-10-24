@@ -65,7 +65,7 @@ export async function previewOpeningImport(formData: FormData): Promise<OpeningP
 
   const result = parseOpeningWorkbook(wb, {
     owners: ref.ref.owners.map((o) => ({ id: o.id, name: o.name, status: o.status })),
-    banks: ref.ref.banks.map((b) => ({ id: b.id, ownerId: b.ownerId, name: b.name, isActive: b.isActive })),
+    banks: ref.ref.banks.map((b) => ({ id: b.id, ownerId: b.ownerId, name: b.name, isActive: b.isActive, currency: b.currency })),
     cutoff,
   });
   if (!result.ok) {

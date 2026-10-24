@@ -41,7 +41,7 @@ export const OPENING_POSTING_READY = false;
 /* ---------------------------------------------------------------- ชนิด */
 
 export type OwnerRef = { id: string; name: string; status: string };
-export type BankRef = { id: string; ownerId: string; name: string; isActive: boolean };
+export type BankRef = { id: string; ownerId: string; name: string; isActive: boolean; currency: string };
 
 export type ParseContext = {
   owners: OwnerRef[];
@@ -297,7 +297,14 @@ function readOwnerSheet(sheet: Sheet, owner: OwnerRef, ctx: ParseContext, issues
 function buildJournal(os: OwnerSheet, ctx: ParseContext, issues: ImportIssue[]): OwnerJournal | null {
   const lines: JournalLine[] = [];
   const sheet = os.sheet;
-  const bankOf = new Map(ctx.banks.filter((b) => b.ownerId === os.owner.id).map((b) => [b.name.trim(), b]));
+  // ชื่อบัญชีซ้ำในผู้ถือเดียวกัน = ไม่รู้ว่าเงินก้อนนี้เข้าบัญชีไหน → ห้ามให้ตัวหลังชนะเงียบๆ
+  const bankOf = new Map<string, BankRef>();
+  const ambiguous = new Set<string>();
+  for (const b of ctx.banks.filter((x) => x.ownerId === os.owner.id)) {
+    const k = b.name.trim();
+    if (bankOf.has(k)) ambiguous.add(k);
+    bankOf.set(k, b);
+  }
 
   const cashTotal = round2(os.cash.reduce((t, c) => t + c.amount, 0));
   const cashRow = os.amounts.get("1100");
@@ -317,6 +324,18 @@ function buildJournal(os: OwnerSheet, ctx: ParseContext, issues: ImportIssue[]):
         sheet,
         row: c.row,
         message: `บัญชี "${c.name}" ไม่มีในระบบเป็นของ ${os.owner.name} — สร้างบัญชีธนาคารที่ตั้งค่าก่อน แล้วใช้ชื่อให้ตรงกัน (ระบบไม่สร้างบัญชีให้เอง ไม่เดาว่าเป็นบัญชีไหน)`,
+      });
+      continue;
+    }
+    if (ambiguous.has(c.name)) {
+      issues.push({ sheet, row: c.row, message: `บัญชี "${c.name}" มีชื่อซ้ำกันมากกว่าหนึ่งบัญชีของ ${os.owner.name} ในระบบ — ไม่รู้ว่าเงินก้อนนี้เข้าบัญชีไหน ให้แก้ชื่อบัญชีในหน้าตั้งค่าให้ไม่ซ้ำก่อน` });
+      continue;
+    }
+    if (bank.currency !== "THB") {
+      issues.push({
+        sheet,
+        row: c.row,
+        message: `บัญชี "${c.name}" เป็นบัญชีสกุล ${bank.currency} — ยังนำเข้ายอดตั้งต้นของบัญชีสกุลต่างประเทศไม่ได้ เพราะไฟล์ไม่มีอัตราแลกเปลี่ยน ณ วันตัดยอด และระบบไม่เดาอัตราให้ (ลงเป็นบาทเฉยๆ ยอดเงินสดในงบจะผิดเงียบๆ)`,
       });
       continue;
     }

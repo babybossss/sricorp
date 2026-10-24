@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { SETTINGS_MENU } from "@/lib/mock/dashboard";
+import { SETTINGS_MENU } from "./menu";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/components/auth/permissions-provider";
 import { canOpen } from "@/lib/auth/routes";

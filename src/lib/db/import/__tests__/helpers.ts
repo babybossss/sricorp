@@ -16,10 +16,10 @@ export const OWNERS: OwnerRef[] = [
 ];
 
 export const BANKS: BankRef[] = [
-  { id: "b-sri-scb", ownerId: "o-sri", name: "SRI - SCB", isActive: true },
-  { id: "b-tk-bbl", ownerId: "o-thanakorn", name: "ธนากร - BBL 888", isActive: true },
-  { id: "b-tk-scb", ownerId: "o-thanakorn", name: "ธนากร - SCB", isActive: true },
-  { id: "b-st-ttb", ownerId: "o-suthee", name: "สุธี - TTB", isActive: true },
+  { id: "b-sri-scb", ownerId: "o-sri", name: "SRI - SCB", isActive: true, currency: "THB" },
+  { id: "b-tk-bbl", ownerId: "o-thanakorn", name: "ธนากร - BBL 888", isActive: true, currency: "THB" },
+  { id: "b-tk-scb", ownerId: "o-thanakorn", name: "ธนากร - SCB", isActive: true, currency: "THB" },
+  { id: "b-st-ttb", ownerId: "o-suthee", name: "สุธี - TTB", isActive: true, currency: "THB" },
 ];
 
 export const ctxOf = (over: Partial<ParseContext> = {}): ParseContext => ({

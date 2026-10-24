@@ -254,6 +254,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           {banks.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
+              {b.currency !== "THB" ? ` · บัญชีสกุล ${b.currency}` : ""}
               {bankOff(b.id) ? " (ปิดใช้งานแล้ว)" : ""}
             </option>
           ))}

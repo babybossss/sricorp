@@ -30,6 +30,7 @@ type BankRow = {
   account_no_last4: string | null;
   is_active: boolean;
   sort_order: number;
+  currency: string | null;
 };
 type AssetRow = { id: string; code: string; name: string; owner_id: string; status: string };
 type ContactRow = {
@@ -59,8 +60,10 @@ export const loadReference = cache(async (): Promise<ReferenceState> => {
       .order("sort_order", { ascending: true }),
     supabase
       .from("bank_accounts")
-      .select("id, owner_id, bank, display_name, account_no_last4, is_active, sort_order")
-      .order("sort_order", { ascending: true }),
+      .select("id, owner_id, bank, display_name, account_no_last4, is_active, sort_order, currency")
+      // เลขลำดับซ้ำกันได้ (แถวเดิมเป็น 0 ทั้งหมด) → ชื่อเป็นตัวตัดสินที่ซ้ำได้ทุกครั้ง ไม่งั้นลำดับสลับเองระหว่างโหลด
+      .order("sort_order", { ascending: true })
+      .order("display_name", { ascending: true }),
     supabase.from("assets").select("id, code, name, owner_id, status").order("name", { ascending: true }),
     supabase
       .from("contacts")
@@ -100,6 +103,8 @@ export const loadReference = cache(async (): Promise<ReferenceState> => {
       last4: b.account_no_last4,
       isActive: b.is_active,
       sortOrder: b.sort_order,
+      // คอลัมน์ not null default 'THB' (ถ้า DB ไม่มีคอลัมน์นี้ คำสั่ง select ข้างบนล้มทั้งก้อนและ loader คืน error ไม่ใช่ null)
+      currency: b.currency ?? "THB",
     })),
     assets: ((assets.data ?? []) as AssetRow[]).map((a) => ({
       id: a.id,
