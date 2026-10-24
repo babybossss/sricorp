@@ -5,7 +5,14 @@ import { createClient } from "@/lib/supabase/server";
 import { getAccess } from "@/lib/auth/session";
 import { loadReference } from "@/lib/db/reference";
 import { makeResolver } from "@/lib/db/resolver";
-import { PayloadError, humanizeDbError, notWiredReason, toPostEntryPayload } from "@/lib/db/post-entry";
+import {
+  PayloadError,
+  humanizeDbError,
+  notWiredReason,
+  readPostResult,
+  refuseInactiveOwners,
+  toPostEntryPayload,
+} from "@/lib/db/post-entry";
 import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { findSub } from "@/lib/rules/tx-rules";
@@ -85,38 +92,14 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
     return fail("ระบบประกอบรายการบัญชีไม่สำเร็จด้วยเหตุที่ไม่คาดคิด ยังไม่ได้บันทึกอะไร — แจ้งผู้ดูแลระบบ");
   }
 
-  // ---- ตั้งค้างรับ-ค้างจ่ายยังล้างไม่ได้ จึงยังตั้งไม่ได้ ----
-  // `cash_date` ว่าง = ลงลูกหนี้/เจ้าหนี้ไว้ รอเงินจริง แล้วไปล้างที่หน้า "ยืนยันรับ-จ่าย"
-  // หน้านั้น **ยังอ่านข้อมูลจำลองและเก็บผลไว้ใน state** ยังไม่เขียน DB → ตั้งแล้วล้างไม่ได้เลย
-  // ปล่อยผ่านแปลว่าลูกหนี้ค้างถาวร และเมื่อเงินเข้าผู้ใช้จะลงใบใหม่เป็นรายได้ = **รายได้ถูกนับซ้ำ**
-  // กันที่นี่ไม่ใช่ที่ `notWiredReason()` เพราะการตั้งค้างเป็นคุณสมบัติของ "ใบนี้" ไม่ใช่ของหมวด
-  // (กันที่หมวดจะปิด 23 หมวดทิ้งทั้งหมวด รวมค่าเช่าที่จ่ายแล้วซึ่งลงได้ปกติ)
-  if (payload.cash_date === null) {
-    return fail(
-      "รายการที่ยังไม่ได้รับ/จ่ายเงิน ยังบันทึกจริงไม่ได้ในรอบนี้ — เพราะหน้ายืนยันรับ-จ่ายยังล้างของค้างลงฐานข้อมูลไม่ได้ " +
-        "ถ้าตั้งค้างไว้ตอนนี้จะล้างไม่ออกและรายได้จะถูกนับซ้ำตอนเงินเข้า · ถ้าเงินเข้า-ออกแล้วให้กรอกวันที่เงินเข้า/ออกจริงด้วย"
-    );
-  }
+  // ---- ตั้งค้างรับ-ค้างจ่าย (cash_date ว่าง) ----
+  // ปล่อยผ่านได้เพราะหน้า "ยืนยันรับ-จ่าย" อ่านยอดค้างจาก DB และล้างผ่าน `confirmCash()` แล้ว
+  // (ทดสอบ: src/app/actions/__tests__/confirm-cash.test.ts — ตั้งค้าง → ล้าง → ลูกหนี้เป็นศูนย์ รายได้นับครั้งเดียว)
+  // ถ้าวันหนึ่งทางล้างพัง ให้คืนด่านนี้: ปฏิเสธเมื่อ `payload.cash_date === null`
 
-  // ---- ผู้ถือที่ยังไม่จดทะเบียนหรือปิดไปแล้ว ห้ามเป็นเจ้าของรายการ ----
-  // อ่านจากผู้ถือที่ payload แตะจริง (รวมปลายทางที่ engine หามาจากบัญชี) ไม่เชื่อช่องที่ผู้ใช้เว้นได้
-  // ฟอร์มซ่อน `planned` ไว้แล้ว แต่คำขอที่แก้เองข้ามหน้าจอได้ → ต้องกันฝั่งเซิร์ฟเวอร์ด้วย
-  const ownerStatus = new Map(refState.ref.owners.map((o) => [o.id, o.status]));
-  for (const t of payload.transactions) {
-    for (const id of [t.owner_id, t.counter_owner_id]) {
-      if (!id) continue;
-      const status = ownerStatus.get(id);
-      if (status === undefined) return fail("ไม่รู้จักผู้ถือที่รายการนี้อ้างถึง — ยังไม่ได้บันทึกอะไร");
-      if (status !== "active") {
-        const name = refState.ref.owners.find((o) => o.id === id)?.name ?? id;
-        return fail(
-          status === "planned"
-            ? `"${name}" ยังไม่ได้จดทะเบียน จึงยังเป็นเจ้าของรายการไม่ได้ — ยังไม่ได้บันทึกอะไร`
-            : `"${name}" ไม่ได้ใช้งานอยู่ จึงเป็นเจ้าของรายการใหม่ไม่ได้ — ยังไม่ได้บันทึกอะไร`
-        );
-      }
-    }
-  }
+  // ---- ผู้ถือที่ยังไม่จดทะเบียนหรือปิดไปแล้ว ห้ามเป็นเจ้าของรายการ (ทั้ง owner_id และ counter_owner_id) ----
+  const refused = refuseInactiveOwners(payload, refState.ref.owners);
+  if (refused) return fail(refused);
 
   // ---- เขียนลง DB ด้วย RPC ตัวเดียว ----
   let supabase;
@@ -128,14 +111,12 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   const { data, error } = await supabase.rpc("fn_post_entry", { p_payload: payload });
   if (error) return fail(humanizeDbError(error));
 
-  const out = data as { transaction_ids?: unknown; replayed?: unknown } | null;
-  const ids = Array.isArray(out?.transaction_ids) ? (out!.transaction_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
-  // DB ไม่คืน id ทั้งที่ไม่ error = ตอบสำเร็จไม่ได้ (ไม่รู้ว่ามีอะไรถูกบันทึก)
-  if (ids.length !== payload.transactions.length) {
-    return fail("ฐานข้อมูลตอบกลับไม่ครบ — ยังยืนยันไม่ได้ว่ารายการถูกบันทึก ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ");
-  }
+  const read = readPostResult(data, payload.transactions.length);
+  if (!read.ok) return fail(read.message);
+  const ids = read.transactionIds;
+  const out = { replayed: read.replayed };
 
   revalidatePath("/ledger");
   revalidatePath("/dashboard");
-  return { ok: true, transactionIds: ids, replayed: out?.replayed === true };
+  return { ok: true, transactionIds: ids, replayed: out.replayed };
 }

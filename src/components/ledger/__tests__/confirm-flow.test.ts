@@ -355,10 +355,23 @@ describe("ไม่มีกฎบัญชีเหลืออยู่ใน�
     expect(confirmBody).toContain("buildClearing(input, resolve)");
     expect(confirmBody).not.toContain("buildClearingDraft");
   });
-  it("หน้าจอไม่เรียก engine เอง — ตัดสินผ่าน checkRow / confirmRows เท่านั้น", () => {
+  it("หน้าจอไม่เรียก engine เอง — พรีวิวผ่าน checkRow, ยืนยันผ่าน server action confirmCash เท่านั้น", () => {
+    // เดิมหน้าจอเรียก confirmRows() แล้วเก็บผลไว้ใน state (ล้างลง DB ไม่ได้ → ลูกหนี้ค้างถาวร)
+    // ตอนนี้ปุ่มยืนยันเรียก confirmCash ซึ่งอ่านประวัติสดจาก DB แล้วเรียก buildClearing() ที่ฝั่งเซิร์ฟเวอร์
     const tab = code("confirm-tab.tsx");
-    expect(tab).toContain("confirmRows(");
+    expect(tab).toContain("confirmCash(");
+    expect(tab).not.toContain("confirmRows(");
     expect(tab).not.toContain("buildClearing");
     expect(tab).not.toMatch(/canConfirm\s*=|\.canConfirm\s*=/);
+    // ไม่เก็บประวัติการล้างไว้ใน state ของหน้าจอ — ต้องมาจาก DB เท่านั้น
+    expect(tab).not.toContain("postedRef");
+    expect(tab).not.toContain("onPostedChange");
+  });
+  it("server action ยืนยันใช้ buildClearing ตัวจริง ไม่ใช่ draft และไม่รับบรรทัดบัญชีจาก browser", () => {
+    const action = fs.readFileSync(path.resolve(__dirname, "../../../app/actions/confirm-cash.ts"), "utf8");
+    const body = action.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(body).toContain("buildClearing(input, resolver)");
+    expect(body).not.toContain("buildClearingDraft");
+    expect(body).not.toMatch(/lines\s*:\s*it\./); // ไม่ใช้บรรทัดจาก item ที่ browser ส่งมา
   });
 });

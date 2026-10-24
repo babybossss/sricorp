@@ -1,0 +1,255 @@
+import "./mocks";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ctx, resetCtx } from "./ctx";
+import { ASSET, BANK, CONTACT, COA_BY_ID, OWNER } from "./fake-db";
+import { postEntry } from "../post-entry";
+import { confirmCash, type ConfirmCashItem } from "../confirm-cash";
+import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
+import type { PostingInput } from "@/lib/ledger/types";
+
+/** ตั้งค้างรับค่าเช่า (ยังไม่ได้รับเงิน) ของธนากร — เส้นทางเดียวกับที่ฟอร์มส่ง */
+const accrual = (amount = 12000, over: Partial<PostingInput> = {}): PostingInput => ({
+  typeKey: "income",
+  subCode: "inc.rent",
+  amount,
+  ownerId: OWNER.tk,
+  assetId: ASSET,
+  contactId: CONTACT,
+  notYetPaid: true,
+  ...over,
+});
+async function postAccrual(amount = 12000, over: Partial<PostingInput> = {}) {
+  const out = await postEntry({ input: accrual(amount, over), docDate: "01/10/2026", cashDate: "" });
+  if (!out.ok) throw new Error(`ตั้งค้างไม่ได้: ${out.message}`);
+  return out.transactionIds[0];
+}
+
+const item = (sourceId: string, over: Partial<ConfirmCashItem> = {}): ConfirmCashItem => ({
+  sourceId,
+  amount: "12,000.00",
+  date: "24/10/2026",
+  bankAccountId: BANK.tk,
+  slips: [],
+  expectedClearedCount: 0,
+  ...over,
+});
+
+const pendingNow = async () => {
+  const r = await readPendingAccruals(ctx.db.client as never, COA_BY_ID);
+  if (!r.ok) throw new Error(r.error);
+  return r.items;
+};
+const outstandingOf = async (id: string) => (await pendingNow()).find((p) => p.id === id)?.outstanding ?? 0;
+const revenueCredited = () =>
+  ctx.db.rows.filter((r) => /^4/.test(COA_BY_ID[r.coa_id])).reduce((t, r) => t + Number(r.credit) - Number(r.debit), 0);
+
+beforeEach(resetCtx);
+
+describe("ตั้งค้าง → ล้าง: ยอดลูกหนี้กลับเป็นศูนย์ และรายได้ถูกนับครั้งเดียว", () => {
+  it("ล้างเต็มยอด", async () => {
+    const id = await postAccrual(12000);
+
+    // หลังตั้งค้าง: ลูกหนี้ค้าง 12,000 · รายได้นับแล้ว 12,000 · เงินสดยังไม่ขยับ
+    expect(ctx.db.balance("1200")).toBe(12000);
+    expect(revenueCredited()).toBe(12000);
+    expect(ctx.db.balance("1100")).toBe(0);
+    expect(await outstandingOf(id)).toBe(12000);
+
+    const out = await confirmCash({ items: [item(id)] });
+    expect(out.ok).toBe(true);
+
+    // หลังล้าง: ลูกหนี้เป็นศูนย์ · เงินเข้าบัญชี 12,000 · **รายได้ยังเท่าเดิม ไม่ถูกนับซ้ำ**
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(12000);
+    expect(revenueCredited()).toBe(12000);
+
+    // รายการหายจากรายการค้าง เพราะอ่านจาก DB ใหม่ (ไม่ใช่ลบออกจาก state)
+    const items = await pendingNow();
+    expect(items.find((p) => p.id === id)?.outstanding).toBe(0);
+    expect(items.filter((p) => p.outstanding > 0)).toHaveLength(0);
+  });
+
+  it("ล้างเป็นงวด: ค้างลดลงตามที่ล้างจริง และครบแล้วลูกหนี้เป็นศูนย์", async () => {
+    const id = await postAccrual(12000);
+    expect((await confirmCash({ items: [item(id, { amount: "5000" })] })).ok).toBe(true);
+    expect(await outstandingOf(id)).toBe(7000);
+    expect(ctx.db.balance("1200")).toBe(7000);
+
+    expect((await confirmCash({ items: [item(id, { amount: "7000", expectedClearedCount: 1 })] })).ok).toBe(true);
+    expect(await outstandingOf(id)).toBe(0);
+    expect(ctx.db.balance("1200")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(12000);
+    expect(revenueCredited()).toBe(12000);
+  });
+
+  it("ค้างจ่าย (ค่าใช้จ่าย): เจ้าหนี้กลับเป็นศูนย์ ค่าใช้จ่ายนับครั้งเดียว", async () => {
+    const id = await postAccrual(8600, { typeKey: "expense", subCode: "exp.common", contactId: CONTACT });
+    expect(ctx.db.balance("2100")).toBe(-8600);
+    const out = await confirmCash({ items: [item(id, { amount: "8600" })] });
+    expect(out.ok).toBe(true);
+    expect(ctx.db.balance("2100")).toBe(0);
+    expect(ctx.db.balance("1100")).toBe(-8600);
+    const expense = ctx.db.rows.filter((r) => /^5/.test(COA_BY_ID[r.coa_id])).reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0);
+    expect(expense).toBe(8600);
+  });
+
+  it("ใบล้างใช้เลขอ้างอิง <id ต้นทาง>-clr-<n> และกลับรายการใบล้างแล้วยอดค้างกลับมา", async () => {
+    const id = await postAccrual(12000);
+    const out = await confirmCash({ items: [item(id)] });
+    expect(out.ok).toBe(true);
+    const clearing = ctx.db.rpcCalls[ctx.db.rpcCalls.length - 1];
+    expect(clearing.source_ref).toBe(`${id}-clr-1`);
+
+    // กลับรายการใบล้าง (สะท้อนบรรทัดด้านตรงข้าม) — ใบล้างเดิมต้องไม่ถูกนับเป็นประวัติอีก
+    const clearingId = (out as { results: { transactionId: string }[] }).results[0].transactionId;
+    const rev = await ctx.db.client.rpc("fn_post_entry", {
+      p_payload: {
+        txn_type_code: clearing.txn_type_code as string,
+        doc_date: "2026-10-25",
+        cash_date: "2026-10-25",
+        source: "reverse",
+        reverses_id: clearingId,
+        transactions: [
+          {
+            owner_id: OWNER.tk,
+            lines: [
+              { coa_code: "1200", debit: 12000, credit: 0 },
+              { coa_code: "1100", bank_account_id: BANK.tk, debit: 0, credit: 12000 },
+            ],
+          },
+        ],
+      },
+    });
+    expect(rev.error).toBeNull();
+    expect(ctx.db.balance("1200")).toBe(12000);
+    expect(await outstandingOf(id)).toBe(12000);
+  });
+});
+
+describe("กันล้างซ้ำ (กดซ้ำ · เน็ตหลุดแล้วลองใหม่ · ข้อมูลหน้าจอเก่า)", () => {
+  it("ลองส่งคำขอเดิมซ้ำหลังสำเร็จแล้ว → ปฏิเสธ ไม่ล้างรอบสอง ไม่เขียน DB เพิ่ม", async () => {
+    const id = await postAccrual(12000);
+    expect((await confirmCash({ items: [item(id)] })).ok).toBe(true);
+    const callsAfterFirst = ctx.db.rpcCalls.length;
+
+    const retry = await confirmCash({ items: [item(id)] });
+    expect(retry.ok).toBe(false);
+    expect(ctx.db.rpcCalls).toHaveLength(callsAfterFirst);
+    expect(ctx.db.balance("1100")).toBe(12000);
+    expect(ctx.db.balance("1200")).toBe(0);
+  });
+
+  it("หน้าจอเก่าที่ยังเห็นว่า 'ไม่เคยล้าง' (ตัวนับไม่ตรง DB) → ปฏิเสธ", async () => {
+    const id = await postAccrual(12000);
+    await confirmCash({ items: [item(id, { amount: "5000" })] });
+    const stale = await confirmCash({ items: [item(id, { amount: "5000", expectedClearedCount: 0 })] });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.message).toMatch(/ข้อมูลเปลี่ยนไป/);
+    expect(await outstandingOf(id)).toBe(7000);
+  });
+
+  it("ประวัติที่ browser แนบมาเองไม่ถูกเชื่อ — ใช้ประวัติจาก DB เท่านั้น", async () => {
+    const id = await postAccrual(12000);
+    await confirmCash({ items: [item(id)] });
+    const forged = { ...item(id, { expectedClearedCount: 1 }), postedClearings: [], accruedAmount: 999999 };
+    const out = await confirmCash({ items: [forged as ConfirmCashItem] });
+    expect(out.ok).toBe(false);
+    expect(ctx.db.balance("1100")).toBe(12000);
+  });
+
+  it("ล้างเกินยอดค้าง → engine ปฏิเสธ", async () => {
+    const id = await postAccrual(12000);
+    const out = await confirmCash({ items: [item(id, { amount: "12000.01" })] });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.message).toMatch(/เกินยอดค้างคงเหลือ/);
+    expect(ctx.db.rpcCalls).toHaveLength(1); // มีแค่ตอนตั้งค้าง
+  });
+
+  it("รายการเดียวกันซ้ำในคำขอเดียว → ปฏิเสธทั้งคำขอ", async () => {
+    const id = await postAccrual(12000);
+    const out = await confirmCash({ items: [item(id, { amount: "5000" }), item(id, { amount: "5000" })] });
+    expect(out.ok).toBe(false);
+    expect(ctx.db.rpcCalls).toHaveLength(1);
+  });
+});
+
+describe("ข้อมูลขาด ต้องปฏิเสธ ไม่เดา (บทเรียนข้อ 3)", () => {
+  let id: string;
+  beforeEach(async () => {
+    id = await postAccrual(12000);
+  });
+  const refused = async (items: unknown, needle?: RegExp) => {
+    const before = ctx.db.rpcCalls.length;
+    const out = await confirmCash({ items } as never);
+    expect(out.ok).toBe(false);
+    if (!out.ok && needle) expect(out.message).toMatch(needle);
+    expect(ctx.db.rpcCalls).toHaveLength(before);
+    expect(ctx.db.balance("1100")).toBe(0);
+  };
+
+  it("ไม่ส่งรายการ / ไม่ส่ง items / sourceId ไม่ใช่ uuid", async () => {
+    await refused([], /ไม่ได้เลือก/);
+    await refused(undefined, /ไม่ได้เลือก/);
+    await refused([item("not-a-uuid")], /ไม่ถูกต้อง/);
+    await refused([null], /ไม่ถูกต้อง/);
+  });
+
+  it("ไม่ส่งบัญชี → engine ปฏิเสธ (ไม่ตกไปบัญชีอื่น)", async () => {
+    await refused([item(id, { bankAccountId: "" })], /บัญชี/);
+    await refused([{ ...item(id), bankAccountId: undefined }], /บัญชี/);
+  });
+
+  it("ไม่ส่งยอด / ยอดอ่านไม่ออก / ยอดเป็นศูนย์", async () => {
+    await refused([item(id, { amount: "" })]);
+    await refused([item(id, { amount: "abc" })]);
+    await refused([item(id, { amount: "0" })]);
+  });
+
+  it("ไม่ส่งวันที่ / วันที่ไม่จริง", async () => {
+    await refused([item(id, { date: "" })], /วันที่/);
+    await refused([item(id, { date: "31/02/2026" })], /วันที่/);
+  });
+
+  it("ไม่ส่งตัวนับประวัติ (expectedClearedCount) → ปฏิเสธ ไม่เดาว่า 0", async () => {
+    await refused([{ ...item(id), expectedClearedCount: undefined }], /จำนวนครั้งที่เคยยืนยัน/);
+  });
+
+  it("บัญชีของคนอื่น · บัญชีที่ปิดแล้ว · บัญชีที่ไม่มีอยู่", async () => {
+    await refused([item(id, { bankAccountId: BANK.sutee })], /เป็นของ/);
+    await refused([item(id, { bankAccountId: BANK.tkClosed })], /ปิดใช้งาน/);
+    await refused([item(id, { bankAccountId: "aaaaaaaa-0000-4000-8000-0000000000ff" })], /ไม่พบบัญชี/);
+  });
+
+  it("รายการที่ไม่ใช่ยอดค้าง (id ที่ไม่มีในสมุด) → ปฏิเสธ", async () => {
+    await refused([item("99999999-9999-4999-8999-999999999999")], /ไม่พบยอดค้าง/);
+  });
+
+  it("ไม่มีสิทธิ์อนุมัติเข้าสมุด · ไม่ได้ล็อกอิน", async () => {
+    ctx.access.permissions = new Set(["txn.create"]);
+    await refused([item(id)], /ลงสมุดบัญชีโดยตรงไม่ได้/);
+    ctx.access.permissions = new Set(["ledger.approve"]);
+    ctx.access.user = null;
+    await refused([item(id)], /หมดอายุ/);
+  });
+
+  it("ทั้งหมดหรือไม่มีเลย: แถวหนึ่งผิด → ไม่เขียนแถวที่ถูกด้วย", async () => {
+    const id2 = await postAccrual(9000);
+    const before = ctx.db.rpcCalls.length;
+    const out = await confirmCash({ items: [item(id2, { amount: "9000" }), item(id, { amount: "" })] });
+    expect(out.ok).toBe(false);
+    expect(ctx.db.rpcCalls).toHaveLength(before);
+    expect(await outstandingOf(id2)).toBe(9000);
+  });
+});
+
+describe("error จาก DB ต้องถึงผู้ใช้", () => {
+  it("DB ปฏิเสธใบล้าง → รายงานเป็นรายแถว ไม่ตอบว่าสำเร็จ และยอดค้างไม่เปลี่ยน", async () => {
+    const id = await postAccrual(12000);
+    ctx.db.control.rpcError = { message: "บันทึกรายการไม่ได้: งวดนี้ปิดแล้ว", code: "P0001" };
+    const out = await confirmCash({ items: [item(id)] });
+    expect(out.ok).toBe(false);
+    expect(out.results[0]).toMatchObject({ ok: false, message: "บันทึกรายการไม่ได้: งวดนี้ปิดแล้ว" });
+    ctx.db.control.rpcError = null;
+    expect(await outstandingOf(id)).toBe(12000);
+  });
+});

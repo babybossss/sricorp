@@ -17,6 +17,7 @@ const row = (o: Partial<LedgerViewRow>): LedgerViewRow => ({
   txn_memo: null,
   attachments: null,
   source: "manual",
+  source_ref: null,
   reverses_id: null,
   created_at: "2026-10-24T01:00:00Z",
   coa_id: "c1100",

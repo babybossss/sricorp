@@ -7,9 +7,9 @@ import { Pill } from "@/components/ui/pill";
 import { useApp } from "@/lib/store";
 import { STATUS_PILL, TYPE_PILL } from "@/lib/tone";
 import { money, signedMoney, plMoney } from "@/lib/format";
-import { PL_SERIES, CF_GROUPS, CF_ACCOUNTS, CASH_GROUPS, UNASSIGNED_CASH_ROWS } from "@/lib/mock/ledger";
+import { PL_SERIES, CF_GROUPS, CF_ACCOUNTS } from "@/lib/mock/ledger";
 import { MONTHS } from "@/lib/mock/entities";
-import { findSub, movesCash } from "@/lib/rules/tx-rules";
+import { findSub } from "@/lib/rules/tx-rules";
 import { useReference } from "@/components/reference/reference-provider";
 import { FAMILY_VIEW } from "@/lib/db/reference-types";
 import { cashNet } from "@/lib/db/ledger-entries";
@@ -17,7 +17,7 @@ import type { LedgerListState } from "@/lib/db/ledger-entries-server";
 import { isoToDmy } from "@/lib/format";
 import { EntryDrawer } from "./entry-drawer";
 import { ConfirmTab } from "./confirm-tab";
-import { initialPosted, type PostedMap } from "./confirm-flow";
+import type { PendingAccrualsState } from "@/lib/db/pending-accruals-server";
 
 const TABS = [
   { key: "list", label: "รายการ" },
@@ -28,14 +28,8 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function LedgerTabs({ ledger }: { ledger: LedgerListState }) {
+export function LedgerTabs({ ledger, pending }: { ledger: LedgerListState; pending: PendingAccrualsState }) {
   const [tab, setTab] = React.useState<TabKey>("list");
-  // ประวัติการยืนยันเงินเข้า-ออกอยู่ที่นี่ ไม่ใช่ในแท็บ — แท็บถูกถอดเมื่อสลับ ถ้าเก็บไว้ในแท็บ
-  // กลับมาแล้วประวัติหาย และกดยืนยันรายการเดิมซ้ำได้ (เงินสดเพิ่มสองเท่า)
-  const [posted, setPosted] = React.useState<PostedMap>(() =>
-    initialPosted([...UNASSIGNED_CASH_ROWS, ...CASH_GROUPS.flatMap((g) => g.rows)])
-  );
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-1 border-b border-line">
@@ -53,13 +47,8 @@ export function LedgerTabs({ ledger }: { ledger: LedgerListState }) {
         ))}
       </div>
 
-      {tab === "list" ? <ListTab ledger={ledger} /> : null}
-      {tab === "confirm" ? (
-        <>
-          <MockNotice />
-          <ConfirmTab posted={posted} onPostedChange={setPosted} />
-        </>
-      ) : null}
+      {tab === "list" ? <ListTab ledger={ledger} pending={pending} /> : null}
+      {tab === "confirm" ? <ConfirmTab pending={pending} /> : null}
       {tab === "pl" ? (
         <>
           <MockNotice />
@@ -88,7 +77,7 @@ function MockNotice() {
   );
 }
 
-function ListTab({ ledger }: { ledger: LedgerListState }) {
+function ListTab({ ledger, pending }: { ledger: LedgerListState; pending: PendingAccrualsState }) {
   const entityId = useApp((s) => s.entityId);
   const ref = useReference();
   const [openId, setOpenId] = React.useState<string | null>(null);
@@ -170,10 +159,12 @@ function ListTab({ ledger }: { ledger: LedgerListState }) {
               const asset = e.assetId ? ref.assets.find((a) => a.id === e.assetId) : undefined;
               const net = nets[i];
               const reversal = e.source === "reverse";
-              // ค้างรับ-ค้างจ่าย = หมวดที่เงินต้องเคลื่อน แต่รายการนี้ยังไม่มีบรรทัดเงินสด (อ่านจากตารางกฎ + บรรทัดที่บันทึก)
-              const accrued = net === null && !!found && movesCash(found.sub);
-              const status = reversal ? "off" : accrued ? "late" : "saved";
-              const statusLabel = reversal ? "กลับรายการ" : accrued ? "ค้างรับ/ค้างจ่าย" : "บันทึกแล้ว";
+              // สถานะค้าง/ล้างแล้วมาจากยอดค้างที่อ่านจาก DB (ประวัติการล้างจริง) ไม่ได้เดาจากหน้าจอ
+              // ไม่รู้สถานะ (โหลดยอดค้างไม่สำเร็จ) = ไม่ติดป้ายว่าล้างแล้ว
+              const accrued = pending.ok && pending.pending.some((p) => p.id === e.id);
+              const cleared = pending.ok && pending.clearedIds.includes(e.id);
+              const status = reversal ? "off" : accrued ? "late" : cleared ? "done" : "saved";
+              const statusLabel = reversal ? "กลับรายการ" : accrued ? "ค้างรับ/ค้างจ่าย" : cleared ? "ล้างยอดค้างแล้ว" : "บันทึกแล้ว";
               return (
                 <tr
                   key={e.id}

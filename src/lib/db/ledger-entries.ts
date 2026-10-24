@@ -55,6 +55,7 @@ export type LedgerViewRow = {
   txn_memo: string | null;
   attachments: string[] | null;
   source: string;
+  source_ref: string | null;
   reverses_id: string | null;
   created_at: string;
   coa_id: string;

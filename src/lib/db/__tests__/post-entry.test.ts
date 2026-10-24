@@ -186,3 +186,52 @@ describe("makeResolver · resolver จากข้อมูลจริงใน
     expect(buildPosting(input, resolver).transactions).toHaveLength(1);
   });
 });
+
+import { refuseInactiveOwners, readPostResult } from "../post-entry";
+
+describe("refuseInactiveOwners · ผู้ถือที่ payload แตะต้อง active ทั้ง owner_id และ counter_owner_id", () => {
+  const owners = [
+    { id: "ok1", name: "ธนากร", status: "active" },
+    { id: "ok2", name: "สุธี", status: "active" },
+    { id: "pl", name: "SRI Holding", status: "planned" },
+    { id: "off", name: "เก่า", status: "inactive" },
+  ];
+  const payload = (owner_id: string, counter_owner_id?: string) => ({
+    transactions: [{ owner_id, counter_owner_id, lines: [] }],
+  });
+
+  it("ผ่านเมื่อทุกฝั่ง active (และไม่มีคู่ก็ผ่าน)", () => {
+    expect(refuseInactiveOwners(payload("ok1"), owners)).toBeNull();
+    expect(refuseInactiveOwners(payload("ok1", "ok2"), owners)).toBeNull();
+  });
+
+  it("ทางช่อง owner_id", () => {
+    expect(refuseInactiveOwners(payload("pl"), owners)).toMatch(/ยังไม่ได้จดทะเบียน/);
+    expect(refuseInactiveOwners(payload("off"), owners)).toMatch(/ไม่ได้ใช้งานอยู่/);
+  });
+
+  it("ทางช่อง counter_owner_id — owner_id ปกติแต่ปลายทางเป็น planned ต้องถูกปฏิเสธ", () => {
+    expect(refuseInactiveOwners(payload("ok1", "pl"), owners)).toMatch(/SRI Holding.*ยังไม่ได้จดทะเบียน/);
+    expect(refuseInactiveOwners(payload("ok1", "off"), owners)).toMatch(/ไม่ได้ใช้งานอยู่/);
+  });
+
+  it("ผู้ถือที่ไม่มีในข้อมูลอ้างอิง (ทั้งสองช่อง) ถูกปฏิเสธ ไม่ถือว่าผ่าน", () => {
+    expect(refuseInactiveOwners(payload("ghost"), owners)).toMatch(/ไม่รู้จักผู้ถือ/);
+    expect(refuseInactiveOwners(payload("ok1", "ghost"), owners)).toMatch(/ไม่รู้จักผู้ถือ/);
+  });
+
+  it("ตรวจทุกก้อนของรายการข้ามผู้ถือ ไม่ใช่แค่ก้อนแรก", () => {
+    const two = { transactions: [{ owner_id: "ok1", lines: [] }, { owner_id: "pl", lines: [] }] };
+    expect(refuseInactiveOwners(two, owners)).toMatch(/ยังไม่ได้จดทะเบียน/);
+  });
+});
+
+describe("readPostResult · ตอบสำเร็จได้ก็ต่อเมื่อ DB คืน id ครบ", () => {
+  it("ครบ → สำเร็จ · ขาด/ว่าง/null/ชนิดผิด → ไม่สำเร็จ", () => {
+    expect(readPostResult({ transaction_ids: ["a", "b"], replayed: true }, 2)).toEqual({ ok: true, transactionIds: ["a", "b"], replayed: true });
+    expect(readPostResult({ transaction_ids: ["a"] }, 2).ok).toBe(false);
+    expect(readPostResult({ transaction_ids: [] }, 1).ok).toBe(false);
+    expect(readPostResult(null, 1).ok).toBe(false);
+    expect(readPostResult({ transaction_ids: [1, 2] }, 2).ok).toBe(false);
+  });
+});

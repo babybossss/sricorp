@@ -39,6 +39,8 @@ export type PostEntryPayload = {
   attachments?: string[];
   asset_id?: string;
   contact_id?: string;
+  /** ใบล้างยอดค้างใช้เก็บเลขอ้างอิงการยืนยัน `<id รายการต้นทาง>-clr-<n>` — ที่มาของประวัติการล้าง */
+  source_ref?: string;
   source: "manual";
   transactions: PostEntryTransaction[];
 };
@@ -56,7 +58,7 @@ const blank = (s: string | undefined | null): string | undefined => (s && s.trim
 export function toPostEntryPayload(
   input: PostingInput,
   result: PostingResult,
-  header: { docDate: string; cashDate: string | null }
+  header: { docDate: string; cashDate: string | null; sourceRef?: string }
 ): PostEntryPayload {
   if (!result.transactions.length) {
     throw new PayloadError("เครื่องยนต์บัญชีไม่ได้คืนรายการเลย — ไม่ส่งอะไรไปฐานข้อมูล");
@@ -77,6 +79,7 @@ export function toPostEntryPayload(
     attachments: input.attachments?.length ? [...input.attachments] : undefined,
     asset_id: blank(input.assetId),
     contact_id: blank(input.contactId),
+    source_ref: blank(header.sourceRef),
     source: "manual",
     transactions: result.transactions.map((t) => ({
       owner_id: t.ownerId,
@@ -143,4 +146,50 @@ export function humanizeDbError(err: DbErrorLike | null | undefined): string {
     return `ติดต่อฐานข้อมูลไม่ได้ — ยังไม่ทราบว่ารายการถูกบันทึกหรือไม่ ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ${tail}`;
   }
   return `ฐานข้อมูลไม่รับรายการนี้ ยังไม่มีรายการถูกบันทึก${tail}`;
+}
+
+/**
+ * ผู้ถือที่ payload แตะจริงต้องเป็น `active` — ตรวจทั้ง `owner_id` และ `counter_owner_id`
+ *
+ * อ่านจากสิ่งที่ engine คืนมา (รวมปลายทางที่ engine หามาจากบัญชี) ไม่เชื่อช่องที่ผู้ใช้เว้นได้
+ * ฟอร์มซ่อน `planned` ไว้แล้ว แต่คำขอที่แก้เองข้ามหน้าจอได้ → ต้องกันฝั่งเซิร์ฟเวอร์ด้วย
+ * คืนข้อความปฏิเสธ หรือ `null` ถ้าผ่าน
+ */
+export function refuseInactiveOwners(
+  payload: Pick<PostEntryPayload, "transactions">,
+  owners: readonly { id: string; name: string; status: string }[]
+): string | null {
+  const byId = new Map(owners.map((o) => [o.id, o]));
+  for (const t of payload.transactions) {
+    for (const id of [t.owner_id, t.counter_owner_id]) {
+      if (!id) continue;
+      const o = byId.get(id);
+      if (!o) return "ไม่รู้จักผู้ถือที่รายการนี้อ้างถึง — ยังไม่ได้บันทึกอะไร";
+      if (o.status === "planned") {
+        return `"${o.name}" ยังไม่ได้จดทะเบียน จึงยังเป็นเจ้าของรายการไม่ได้ — ยังไม่ได้บันทึกอะไร`;
+      }
+      if (o.status !== "active") {
+        return `"${o.name}" ไม่ได้ใช้งานอยู่ จึงเป็นเจ้าของรายการใหม่ไม่ได้ — ยังไม่ได้บันทึกอะไร`;
+      }
+    }
+  }
+  return null;
+}
+
+/** อ่านผลของ `fn_post_entry` — ตอบสำเร็จได้ก็ต่อเมื่อ DB คืน id ครบทุกก้อนที่ส่งไป */
+export function readPostResult(
+  data: unknown,
+  expected: number
+): { ok: true; transactionIds: string[]; replayed: boolean } | { ok: false; message: string } {
+  const out = data as { transaction_ids?: unknown; replayed?: unknown } | null;
+  const ids = Array.isArray(out?.transaction_ids)
+    ? (out!.transaction_ids as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
+  if (ids.length !== expected) {
+    return {
+      ok: false,
+      message: "ฐานข้อมูลตอบกลับไม่ครบ — ยังยืนยันไม่ได้ว่ารายการถูกบันทึก ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ",
+    };
+  }
+  return { ok: true, transactionIds: ids, replayed: out?.replayed === true };
 }
