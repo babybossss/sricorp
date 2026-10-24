@@ -27,6 +27,8 @@ export const ROUTE_ACCESS = {
   // ผู้ติดต่อใช้ตอนคีย์รายการ จึงผูกกับสิทธิ์สร้างรายการ (ข้อกำหนดไม่ได้ระบุ — ตัดสินเอง)
   "/contacts": { allOf: ["txn.create"] },
   "/settings": { allOf: ["settings.manage"] },
+  // นำเข้ายอดตั้งต้นจากไฟล์ Excel — แตะงบดุลทั้งระบบ จึงผูกกับสิทธิ์ตั้งค่า
+  "/import": { allOf: ["settings.manage"] },
   "/settings/users": { allOf: ["settings.manage", "users.manage"] },
   // หน้าทดลองของนักพัฒนา (ไม่อยู่ในเมนู)
   "/dev": { allOf: ["settings.manage"] },

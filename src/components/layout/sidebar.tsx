@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
   { href: "/balance", label: "งบดุล & ทรัพย์สิน", icon: icon("M3 10h18", "M12 3 3 8h18z", "M6 10v8M10 10v8M14 10v8M18 10v8", "M3 21h18"), match: (p) => p.startsWith("/balance") },
   { href: "/assets", label: "บริหารสินทรัพย์", icon: icon("M3 21h18", "M5 21V7l7-4 7 4v14", "M9 21v-5h6v5"), match: (p) => p.startsWith("/assets") },
   { href: "/contacts", label: "ผู้ติดต่อ", icon: icon("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8") },
+  { href: "/import", label: "นำเข้ายอดตั้งต้น", icon: icon("M12 3v12", "m7 10 5 5 5-5", "M5 21h14") },
   { href: "/settings/banks", label: "ตั้งค่า", icon: icon("M20 7h-9", "M14 17H5"), match: (p) => p.startsWith("/settings") },
 ];
 

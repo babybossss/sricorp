@@ -1,0 +1,625 @@
+/**
+ * นำเข้ายอดตั้งต้นงบดุล (ไฟล์ 2 · `templates/SRI_OS_2_ยอดตั้งต้นงบดุล.xlsx`) — **อ่าน + ตรวจ + วางแผน ยังไม่ลงสมุด**
+ *
+ * ไฟล์นี้ทำสามอย่างเท่านั้น และทั้งหมดเป็นฟังก์ชันล้วน (ไม่แตะ DB ไม่แตะ Excel โดยตรง):
+ *   1. `parseOpeningWorkbook()`  — ตรวจไฟล์ทั้งเล่ม **ทุกช่อง ทุกชีท** แล้วรวบรวมความผิดทั้งหมดในครั้งเดียว
+ *                                  มีแม้แต่จุดเดียว = ปฏิเสธทั้งไฟล์ (ไม่นำเข้าบางส่วน) พร้อมบอกชีท/แถว
+ *   2. `fingerprintOf()`         — ลายนิ้วมือของ "เนื้อหา" ที่นำเข้า (ไม่ใช่ของไฟล์) ไว้ตัดสินว่าอัปโหลดซ้ำเหมือนเดิมไหม
+ *   3. `planOpeningImport()`     — เทียบกับชุดยอดตั้งต้นที่ **อยู่ในสมุดจริง** แล้วบอกว่าต้องทำอะไร:
+ *                                  ใหม่ / ไม่เปลี่ยน / กลับรายการชุดเดิมแล้วลงชุดใหม่ (ห้าม DELETE เด็ดขาด)
+ *
+ * หลักที่ยึด
+ *  - **ตารางเทียบรหัสบัญชีอยู่ในไฟล์เทมเพลต/คู่มือ (`docs/IMPORT_GUIDE.md`) และรหัสในไฟล์คือรหัสบัญชีจริง** — ไม่คิดการเทียบใหม่
+ *    รหัสทุกตัวต้องมีในผังบัญชีและอยู่ในโครงงบดุล (`BS_LAYOUT`) ไม่งั้นปฏิเสธ
+ *  - **วันตัดยอดไม่ fix ในโค้ด** (กฎเหล็กข้อ 5) — ผู้ใช้ระบุตอนนำเข้า และทุกชีทต้องเป็นวันเดียวกับที่ระบุ
+ *    (คนละวันกัน = งบดุลไม่ลงตัวและหาสาเหตุไม่ได้ · templates/README.md)
+ *  - ยอดทุกช่องมาจากช่องที่คน **กรอก** เท่านั้น — ช่องที่เป็นสูตรไม่ถูกเชื่อ (ระบบรวมยอดเองใหม่ทุกครั้ง)
+ *  - ขาคู่ของยอดตั้งต้นคือส่วนของเจ้าของ (3100 ทุน · 3300 กำไรสะสม) ที่ **ผู้ใช้กรอกมาเอง** ระบบไม่เติมให้:
+ *    ถ้าสินทรัพย์ − หนี้สิน − ส่วนของเจ้าของ ≠ 0 = ปฏิเสธ (ไม่ดัดตัวเลขอื่นให้ตรง · คู่มือข้อ "ผลต่างรอกระทบยอด")
+ *  - เงินสดทุกบาทต้องผูกบัญชีธนาคารจริงของผู้ถือนั้น และบัญชีต้องยังเปิดอยู่ (Money Invariant 2 · D-092)
+ *
+ * **ยังลงสมุดไม่ได้ในรอบนี้** — เหตุผลอยู่ที่ `OPENING_POSTING_READY`
+ */
+
+import { createHash } from "node:crypto";
+import { COA, coa } from "@/lib/rules/coa";
+import { BS_LAYOUT } from "@/lib/rules/statements";
+import { parseAmountOrNull } from "@/lib/format";
+import { unrealisedEquityCodes } from "../statements";
+import { cellAt, type Cell, type Sheet, type Workbook } from "./xlsx";
+
+/**
+ * ลงสมุดจริงได้หรือยัง — **ยังไม่ได้** (`false`)
+ *
+ * `buildPosting()` ลงได้เฉพาะหมวดที่อยู่ในตารางกฎ (`txn_types`) และ DB ตรวจว่าทุกบรรทัดใช้บัญชีที่หมวดนั้นประกาศ
+ * แต่ **ยังไม่มีประเภทรายการ "ยอดตั้งต้น" ในตารางกฎเลย** (D-046 ข้อ 3: "ต้องเพิ่มด้วย /new-txn-type") ·
+ * และการกลับรายการชุดเดิมเมื่ออัปโหลดใหม่ต้องมีหลักยึดที่ DB กำหนดให้ (ไม่ใช่ป้ายที่ผู้เรียกส่งมา · D-115)
+ * ทั้งสองอย่างเป็น migration/ตารางกฎ ซึ่งนอกขอบเขตของงานหน้าจอ → ต้องให้ผู้รับผิดชอบฐานข้อมูลทำก่อน
+ */
+export const OPENING_POSTING_READY = false;
+
+/* ---------------------------------------------------------------- ชนิด */
+
+export type OwnerRef = { id: string; name: string; status: string };
+export type BankRef = { id: string; ownerId: string; name: string; isActive: boolean };
+
+export type ParseContext = {
+  owners: OwnerRef[];
+  banks: BankRef[];
+  /** วันตัดยอด YYYY-MM-DD ที่ผู้ใช้ระบุ */
+  cutoff: string;
+};
+
+export type ImportIssue = { sheet: string; row?: number; message: string };
+
+export type JournalLine = {
+  coaCode: string;
+  /** บรรทัดเงินสด (11xx) ต้องมีเสมอ · บรรทัดอื่นต้องเป็น null */
+  bankAccountId: string | null;
+  debit: number;
+  credit: number;
+};
+
+export type OwnerJournal = {
+  ownerId: string;
+  ownerName: string;
+  sheet: string;
+  lines: JournalLine[];
+  totalDebit: number;
+  totalCredit: number;
+  /** ยอดรวมตามประเภท (บาท) — ไว้แสดงในพรีวิว */
+  assets: number;
+  liabilities: number;
+  equity: number;
+};
+
+export type Lot = {
+  ownerId: string;
+  ownerName: string;
+  kind: string;
+  name: string;
+  /** YYYY-MM-DD */
+  boughtOn: string;
+  units: number;
+  pricePerUnit: number;
+  fee: number;
+  cost: number;
+  /** 1700 หลักทรัพย์ · 1720 ทองคำและสินทรัพย์ทางเลือก */
+  coaCode: "1700" | "1720";
+  row: number;
+};
+
+export type ParsedOpening = {
+  cutoff: string;
+  journals: OwnerJournal[];
+  lots: Lot[];
+  warnings: string[];
+};
+
+export type ParseResult = { ok: true; parsed: ParsedOpening } | { ok: false; issues: ImportIssue[] };
+
+/* ---------------------------------------------------------------- ค่าคงที่ของโครงไฟล์ */
+
+const SHEET_PREFIX = "BS-";
+const LOTS_SHEET = "พอร์ตลงทุน (รายล็อต)";
+/** ชีทที่รู้จักแต่ไม่ใช่ข้อมูลนำเข้า */
+const IGNORED_SHEETS = new Set(["อ่านก่อน", "รวมทุกผู้ถือ"]);
+/** ชนิดล็อตที่รวมเข้า 1720 — ที่เหลือ (หุ้น ETF กองทุน พันธบัตร) รวมเข้า 1700 ตามคู่มือ */
+const COMMODITY_KINDS = new Set(["ทองคำ", "Crypto"]);
+const LOT_KINDS = new Set(["หุ้นไทย", "หุ้น US", "ETF", "กองทุน", "Crypto", "ทองคำ", "พันธบัตร"]);
+
+/** 3200 เงินถอนเป็นยอดระหว่างงวด (D-043) · 3400/3410 ยังไม่เกิดจริง ต้องไม่โผล่ในยอดตั้งต้นที่ลงราคาทุน */
+function forbiddenCodes(): Map<string, string> {
+  const m = new Map<string, string>([
+    ["3200", "เงินถอนของเจ้าของเป็นยอดระหว่างงวด ไม่ใช่ยอดคงเหลือ — เงินถอนสะสมถูกหักในกำไรสะสมแล้ว ใส่อีกบรรทัดจะนับสองรอบ (D-043)"],
+  ]);
+  for (const c of unrealisedEquityCodes()) {
+    m.set(c, "เป็นกำไร/ขาดทุนที่ยังไม่เกิดขึ้นจริง ยอดตั้งต้นลงราคาทุนเท่านั้น ราคาประเมินห้ามใส่ที่นี่ (D-043)");
+  }
+  return m;
+}
+
+const bsCodeSet = (): Set<string> => new Set(BS_LAYOUT.flatMap((g) => g.lines.flatMap((l) => l.codes)));
+
+/* ---------------------------------------------------------------- ตัวช่วยอ่านช่อง */
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const cents = (n: number) => Math.round(n * 100);
+const text = (c: Cell | null): string => (c && c.value !== null ? String(c.value).trim() : "");
+
+function dateFromText(s: string): string | null {
+  const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s) ?? null;
+  if (!m) return null;
+  const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+  if (y < 1900 || y > 2399 || mo < 1 || mo > 12 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null;
+  return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** วันที่ในช่อง: ตัวเลข serial ของ Excel · วว/ดด/ปปปป · YYYY-MM-DD — อย่างอื่น null */
+function dateFromCell(c: Cell | null): string | null {
+  if (!c || c.value === null) return null;
+  if (typeof c.value === "number") {
+    if (!Number.isFinite(c.value)) return null;
+    const serial = Math.floor(c.value);
+    if (serial < 20000 || serial > 80000) return null; // ~1954–2118 · เลขอื่นไม่ใช่วันที่
+    const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  const s = String(c.value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return dateFromText(`${s.slice(8)}/${s.slice(5, 7)}/${s.slice(0, 4)}`);
+  return dateFromText(s);
+}
+
+/** จำนวนเงินจากช่องที่คนกรอก — สูตร = ไม่เชื่อ · อ่านไม่ออก = ปัญหา · ว่าง = ไม่มียอด */
+function amountFrom(
+  c: Cell | null,
+  where: { sheet: string; row: number; label: string },
+  issues: ImportIssue[],
+  decimals = 2
+): number | null {
+  if (!c || c.value === null || (typeof c.value === "string" && c.value.trim() === "")) return null;
+  if (c.formula) {
+    issues.push({ ...where, message: `${where.label}: ช่องนี้เป็นสูตร — ยอดนำเข้าต้องเป็นตัวเลขที่กรอกเอง (ระบบรวมยอดเองใหม่ทุกครั้ง ไม่เชื่อผลคำนวณของ Excel)` });
+    return null;
+  }
+  let n: number | null;
+  if (typeof c.value === "number") n = c.value;
+  else if (typeof c.value === "boolean") n = null;
+  else n = parseAmountOrNull(c.value);
+  if (n === null || !Number.isFinite(n)) {
+    issues.push({ ...where, message: `${where.label}: อ่านเป็นตัวเลขไม่ได้ ("${String(c.value).slice(0, 30)}")` });
+    return null;
+  }
+  const scale = 10 ** decimals;
+  if (Math.abs(n * scale - Math.round(n * scale)) > 1e-6) {
+    issues.push({ ...where, message: `${where.label}: มีทศนิยมเกิน ${decimals} ตำแหน่ง (${n})` });
+    return null;
+  }
+  return Math.round(n * scale) / scale;
+}
+
+/* ---------------------------------------------------------------- อ่านชีทผู้ถือ */
+
+type OwnerSheet = {
+  owner: OwnerRef;
+  sheet: string;
+  amounts: Map<string, { amount: number; row: number }>;
+  cash: { name: string; amount: number; row: number }[];
+  hasAnything: boolean;
+};
+
+function readOwnerSheet(sheet: Sheet, owner: OwnerRef, ctx: ParseContext, issues: ImportIssue[]): OwnerSheet {
+  const name = sheet.name;
+  const out: OwnerSheet = { owner, sheet: name, amounts: new Map(), cash: [], hasAnything: false };
+
+  // วันตัดยอด (แถว 2) ต้องมีและตรงกับที่ผู้ใช้ระบุ
+  let cutoffText = "";
+  for (let r = 1; r <= 3; r++) {
+    const t = text(cellAt(sheet, r, "A")) || text(cellAt(sheet, r, "B"));
+    if (/ณ วันที่/.test(t)) {
+      cutoffText = t;
+      break;
+    }
+  }
+  const fileCutoff = cutoffText ? dateFromText(cutoffText) : null;
+  if (!fileCutoff) {
+    issues.push({ sheet: name, row: 2, message: 'ไม่พบ "ณ วันที่ วว/ดด/ปปปป" ในหัวชีท — ทุกชีทต้องระบุวันตัดยอด และต้องเป็นวันเดียวกันทั้งไฟล์' });
+  } else if (fileCutoff !== ctx.cutoff) {
+    issues.push({
+      sheet: name,
+      row: 2,
+      message: `วันตัดยอดในชีทคือ ${fileCutoff} แต่ที่ระบุตอนนำเข้าคือ ${ctx.cutoff} — ยอดตั้งต้นคนละวันกันทำให้งบดุลไม่ลงตัวและหาสาเหตุไม่ได้ ต้องเป็นวันเดียวกันทั้งไฟล์`,
+    });
+  }
+
+  const forbidden = forbiddenCodes();
+  const allowed = bsCodeSet();
+  const rowNumbers = [...sheet.rows.keys()].sort((a, b) => a - b);
+  let cashHeader = -1;
+  let cashEnd = -1;
+  let totalsAt = -1;
+
+  for (const r of rowNumbers) {
+    const b = text(cellAt(sheet, r, "B"));
+    if (b === "รวมสินทรัพย์" && totalsAt < 0) totalsAt = r;
+    if (b === "บัญชี" && cashHeader < 0) cashHeader = r;
+    if (b === "รวมเงินสด" && cashEnd < 0) cashEnd = r;
+  }
+
+  // ---- บรรทัดบัญชี: คอลัมน์ A เป็นรหัส 4 หลัก ก่อนแถวรวม ----
+  for (const r of rowNumbers) {
+    if (totalsAt >= 0 && r >= totalsAt) break;
+    const a = cellAt(sheet, r, "A");
+    const code = typeof a?.value === "number" ? String(a.value) : text(a);
+    if (!/^\d{4}$/.test(code)) continue;
+    const where = { sheet: name, row: r, label: `รหัส ${code}` };
+
+    if (!COA.some((x) => x.code === code)) {
+      issues.push({ ...where, message: `${where.label}: ไม่มีรหัสนี้ในผังบัญชี` });
+      continue;
+    }
+    if (forbidden.has(code)) {
+      issues.push({ ...where, message: `${where.label}: ใส่ในยอดตั้งต้นไม่ได้ — ${forbidden.get(code)}` });
+      continue;
+    }
+    if (!allowed.has(code)) {
+      issues.push({ ...where, message: `${where.label}: ไม่ใช่บัญชีงบดุล (รายได้/ค่าใช้จ่ายไม่มียอดตั้งต้น) — ยอดสะสมของปีก่อนอยู่ในกำไรสะสม 3300` });
+      continue;
+    }
+    if (out.amounts.has(code)) {
+      issues.push({ ...where, message: `${where.label}: ซ้ำกับแถว ${out.amounts.get(code)!.row} — หนึ่งรหัสมีบรรทัดเดียว` });
+      continue;
+    }
+    const amount = amountFrom(cellAt(sheet, r, "E"), { ...where, label: `${where.label} ยอดตั้งต้น` }, issues);
+    if (amount === null) continue;
+    if (amount < 0 && code !== "3300") {
+      issues.push({ ...where, message: `${where.label}: ยอดติดลบไม่ได้ (ใส่จำนวนบวกเสมอ — ระบบรู้เดบิต/เครดิตจากประเภทบัญชี) ยกเว้น 3300 กำไรสะสมที่ขาดทุนสะสมได้` });
+      continue;
+    }
+    if (amount === 0) continue;
+    out.amounts.set(code, { amount, row: r });
+    out.hasAnything = true;
+  }
+
+  // ---- ตารางแยกเงินสดตามบัญชีธนาคาร ----
+  if (cashHeader >= 0) {
+    const stop = cashEnd >= 0 ? cashEnd : Math.max(...rowNumbers) + 1;
+    const seen = new Set<string>();
+    for (let r = cashHeader + 1; r < stop; r++) {
+      const nm = text(cellAt(sheet, r, "B"));
+      const eCell = cellAt(sheet, r, "E");
+      const hasAmount = !!eCell && eCell.value !== null && String(eCell.value).trim() !== "";
+      if (!nm && !hasAmount) continue;
+      const where = { sheet: name, row: r, label: `บัญชี "${nm || "(ไม่มีชื่อ)"}"` };
+      if (!nm) {
+        issues.push({ ...where, message: "มียอดเงินสดแต่ไม่ได้ระบุชื่อบัญชี — เงินสดทุกบาทต้องผูกบัญชีธนาคารจริง (Money Invariant 2)" });
+        continue;
+      }
+      const amount = amountFrom(eCell, { ...where, label: `${where.label} ยอด` }, issues);
+      if (amount === null || amount === 0) continue;
+      if (amount < 0) {
+        issues.push({ ...where, message: `${where.label}: ยอดเงินสดติดลบไม่ได้` });
+        continue;
+      }
+      if (seen.has(nm)) {
+        issues.push({ ...where, message: `${where.label}: ชื่อบัญชีซ้ำในตารางเงินสดเดียวกัน` });
+        continue;
+      }
+      seen.add(nm);
+      out.cash.push({ name: nm, amount, row: r });
+    }
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- สร้างรายการบัญชีของผู้ถือ */
+
+function buildJournal(os: OwnerSheet, ctx: ParseContext, issues: ImportIssue[]): OwnerJournal | null {
+  const lines: JournalLine[] = [];
+  const sheet = os.sheet;
+  const bankOf = new Map(ctx.banks.filter((b) => b.ownerId === os.owner.id).map((b) => [b.name.trim(), b]));
+
+  const cashTotal = round2(os.cash.reduce((t, c) => t + c.amount, 0));
+  const cashRow = os.amounts.get("1100");
+  if ((cashRow?.amount ?? 0) !== cashTotal) {
+    issues.push({
+      sheet,
+      row: cashRow?.row,
+      message:
+        `เงินสด 1100 = ${(cashRow?.amount ?? 0).toLocaleString("en-US")} แต่ตารางแยกบัญชีรวมได้ ${cashTotal.toLocaleString("en-US")} ` +
+        `(ต่างกัน ${round2((cashRow?.amount ?? 0) - cashTotal).toLocaleString("en-US")}) — ต้องเท่ากันทุกสตางค์ และเงินสดทุกบาทต้องแยกเป็นรายบัญชีธนาคาร`,
+    });
+  }
+  for (const c of os.cash) {
+    const bank = bankOf.get(c.name);
+    if (!bank) {
+      issues.push({
+        sheet,
+        row: c.row,
+        message: `บัญชี "${c.name}" ไม่มีในระบบเป็นของ ${os.owner.name} — สร้างบัญชีธนาคารที่ตั้งค่าก่อน แล้วใช้ชื่อให้ตรงกัน (ระบบไม่สร้างบัญชีให้เอง ไม่เดาว่าเป็นบัญชีไหน)`,
+      });
+      continue;
+    }
+    if (!bank.isActive) {
+      issues.push({ sheet, row: c.row, message: `บัญชี "${c.name}" ปิดใช้งานแล้ว — ลงยอดตั้งต้นเข้าบัญชีที่ปิดไม่ได้ (D-092)` });
+      continue;
+    }
+    lines.push({ coaCode: "1100", bankAccountId: bank.id, debit: c.amount, credit: 0 });
+  }
+
+  for (const [code, { amount }] of [...os.amounts].sort(([a], [b]) => a.localeCompare(b))) {
+    if (code === "1100") continue; // แตกเป็นรายบัญชีแล้ว
+    const type = coa(code).type;
+    const debitSide = type === "asset" || amount < 0; // 3300 ติดลบ = ขาดทุนสะสม = เดบิต
+    lines.push({
+      coaCode: code,
+      bankAccountId: null,
+      debit: debitSide ? Math.abs(amount) : 0,
+      credit: debitSide ? 0 : Math.abs(amount),
+    });
+  }
+
+  const totalDebit = round2(lines.reduce((t, l) => t + l.debit, 0));
+  const totalCredit = round2(lines.reduce((t, l) => t + l.credit, 0));
+  const sumType = (t: string) =>
+    round2(
+      [...os.amounts].filter(([c]) => coa(c).type === t).reduce((s, [, v]) => s + v.amount, 0)
+    );
+  const journal: OwnerJournal = {
+    ownerId: os.owner.id,
+    ownerName: os.owner.name,
+    sheet,
+    lines,
+    totalDebit,
+    totalCredit,
+    assets: sumType("asset"),
+    liabilities: sumType("liability"),
+    equity: sumType("equity"),
+  };
+  if (cents(totalDebit) !== cents(totalCredit)) {
+    issues.push({
+      sheet,
+      message:
+        `งบดุลของ ${os.owner.name} ไม่ลงตัว: สินทรัพย์ ${journal.assets.toLocaleString("en-US")} − หนี้สิน ${journal.liabilities.toLocaleString("en-US")} ` +
+        `− ส่วนของเจ้าของ ${journal.equity.toLocaleString("en-US")} = ${round2(totalDebit - totalCredit).toLocaleString("en-US")} (ต้องเป็น 0) — ` +
+        "ใส่ผลต่างที่ 3300 กำไรสะสมพร้อมหมายเหตุตามคู่มือ อย่าดัดตัวเลขอื่นให้ตรง",
+    });
+  }
+  return lines.length ? journal : null;
+}
+
+/* ---------------------------------------------------------------- รายล็อต */
+
+function readLots(sheet: Sheet, ownersByName: Map<string, OwnerRef>, ctx: ParseContext, issues: ImportIssue[]): Lot[] {
+  const rowNumbers = [...sheet.rows.keys()].sort((a, b) => a - b);
+  const header = rowNumbers.find((r) => text(cellAt(sheet, r, "A")).startsWith("ถือในชื่อ"));
+  if (header === undefined) {
+    issues.push({ sheet: sheet.name, message: 'ไม่พบแถวหัวตาราง "ถือในชื่อ" — โครงชีทรายล็อตผิดไปจากเทมเพลต' });
+    return [];
+  }
+  const lots: Lot[] = [];
+  for (const r of rowNumbers.filter((x) => x > header)) {
+    const a = text(cellAt(sheet, r, "A"));
+    if (a.startsWith("ต้องตรงกับ")) continue; // แถวคำอธิบายของเทมเพลต
+    const cols = ["A", "B", "C", "D", "E", "F", "G", "I"].map((c) => cellAt(sheet, r, c));
+    if (cols.every((c) => !c || c.value === null || String(c.value).trim() === "")) continue;
+    const where = { sheet: sheet.name, row: r, label: "ล็อต" };
+    const before = issues.length;
+
+    const owner = ownersByName.get(a);
+    if (!owner) issues.push({ ...where, message: `ถือในชื่อ "${a || "(ว่าง)"}" ไม่ตรงกับผู้ถือคนใดในระบบ` });
+    const kind = text(cellAt(sheet, r, "B"));
+    if (!LOT_KINDS.has(kind)) issues.push({ ...where, message: `ประเภท "${kind || "(ว่าง)"}" ไม่อยู่ในรายการ (${[...LOT_KINDS].join(" / ")})` });
+    const nm = text(cellAt(sheet, r, "C"));
+    if (!nm) issues.push({ ...where, message: "ไม่ได้ระบุชื่อ/รหัสหลักทรัพย์" });
+    const boughtOn = dateFromCell(cellAt(sheet, r, "D"));
+    if (!boughtOn) issues.push({ ...where, message: "วันที่ซื้ออ่านเป็นวันที่ไม่ได้ (รับ วว/ดด/ปปปป ค.ศ. หรือวันที่ของ Excel)" });
+    else if (boughtOn > ctx.cutoff) issues.push({ ...where, message: `วันที่ซื้อ ${boughtOn} หลังวันตัดยอด ${ctx.cutoff} — ล็อตที่ซื้อหลังวันตัดยอดต้องบันทึกเป็นรายการซื้อ ไม่ใช่ยอดตั้งต้น` });
+    const units = amountFrom(cellAt(sheet, r, "E"), { ...where, label: "จำนวนหน่วย" }, issues, 6);
+    const price = amountFrom(cellAt(sheet, r, "F"), { ...where, label: "ราคาต่อหน่วย" }, issues, 6);
+    const fee = amountFrom(cellAt(sheet, r, "G"), { ...where, label: "ค่าธรรมเนียม" }, issues) ?? 0;
+    const cur = text(cellAt(sheet, r, "I"));
+    if (cur !== "THB") {
+      issues.push({
+        ...where,
+        message: `สกุลเงิน "${cur || "(ว่าง)"}" — ตอนนี้นำเข้าได้เฉพาะ THB เพราะไฟล์ไม่มีอัตราแลกเปลี่ยน ณ วันตัดยอด และระบบไม่เดาอัตราให้`,
+      });
+    }
+    if (units === null || units <= 0) issues.push({ ...where, message: "จำนวนหน่วยต้องมากกว่า 0" });
+    if (price === null || price < 0) issues.push({ ...where, message: "ราคาต่อหน่วยต้องไม่ติดลบ" });
+    if (fee < 0) issues.push({ ...where, message: "ค่าธรรมเนียมต้องไม่ติดลบ" });
+    if (issues.length > before || !owner || units === null || price === null || !boughtOn) continue;
+
+    lots.push({
+      ownerId: owner.id,
+      ownerName: owner.name,
+      kind,
+      name: nm,
+      boughtOn,
+      units,
+      pricePerUnit: price,
+      fee,
+      cost: round2(units * price + fee),
+      coaCode: COMMODITY_KINDS.has(kind) ? "1720" : "1700",
+      row: r,
+    });
+  }
+  return lots;
+}
+
+/* ---------------------------------------------------------------- ตัวหลัก */
+
+export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext): ParseResult {
+  const issues: ImportIssue[] = [];
+  const warnings: string[] = [];
+  const ownersByName = new Map(ctx.owners.map((o) => [o.name.trim(), o]));
+  const sheetByOwner = new Map<string, Sheet>();
+
+  for (const sh of wb.sheets) {
+    if (IGNORED_SHEETS.has(sh.name) || sh.name === LOTS_SHEET) continue;
+    if (!sh.name.startsWith(SHEET_PREFIX)) {
+      warnings.push(`ชีท "${sh.name}" ไม่ใช่ชีทของเทมเพลต จึงไม่ถูกอ่าน`);
+      continue;
+    }
+    const nm = sh.name.slice(SHEET_PREFIX.length).trim();
+    const owner = ownersByName.get(nm);
+    if (!owner) {
+      issues.push({ sheet: sh.name, message: `ชื่อผู้ถือ "${nm}" ไม่ตรงกับผู้ถือคนใดในระบบ — ชื่อชีทต้องเป็น "BS-" ตามด้วยชื่อผู้ถือให้ตรงทุกตัวอักษร` });
+      continue;
+    }
+    if (owner.status !== "active") {
+      issues.push({ sheet: sh.name, message: `ผู้ถือ "${nm}" ยังไม่เปิดใช้งาน (สถานะ ${owner.status}) — ลงยอดตั้งต้นให้ไม่ได้` });
+      continue;
+    }
+    sheetByOwner.set(owner.id, sh);
+  }
+  for (const o of ctx.owners.filter((x) => x.status === "active")) {
+    if (!sheetByOwner.has(o.id)) {
+      issues.push({ sheet: "(ทั้งไฟล์)", message: `ไม่พบชีท "BS-${o.name}" — ผู้ถือที่ใช้งานอยู่ทุกคนต้องมีชีท (ไม่มียอดก็ปล่อยว่างทั้งชีท) เพื่อให้รู้ว่าตั้งใจว่าง ไม่ใช่ลืม` });
+    }
+  }
+  const lotsSheet = wb.sheets.find((s) => s.name === LOTS_SHEET);
+  if (!lotsSheet) {
+    issues.push({ sheet: "(ทั้งไฟล์)", message: `ไม่พบชีท "${LOTS_SHEET}" — ต้องมีชีทนี้เสมอ (ไม่มีหลักทรัพย์ก็ปล่อยว่าง)` });
+  }
+
+  const sheets: OwnerSheet[] = [];
+  for (const o of ctx.owners) {
+    const sh = sheetByOwner.get(o.id);
+    if (sh) sheets.push(readOwnerSheet(sh, o, ctx, issues));
+  }
+  const lots = lotsSheet ? readLots(lotsSheet, ownersByName, ctx, issues) : [];
+
+  // ล็อตต้องรวมได้เท่า 1700 / 1720 ของแต่ละผู้ถือ
+  for (const os of sheets) {
+    for (const code of ["1700", "1720"] as const) {
+      const declared = os.amounts.get(code);
+      const sum = round2(lots.filter((l) => l.ownerId === os.owner.id && l.coaCode === code).reduce((t, l) => t + l.cost, 0));
+      if (cents(declared?.amount ?? 0) !== cents(sum)) {
+        issues.push({
+          sheet: os.sheet,
+          row: declared?.row,
+          message:
+            `${code} ${coa(code).nameTh} = ${(declared?.amount ?? 0).toLocaleString("en-US")} แต่ชีทรายล็อตของ ${os.owner.name} รวมได้ ${sum.toLocaleString("en-US")} ` +
+            `(ต่างกัน ${round2((declared?.amount ?? 0) - sum).toLocaleString("en-US")}) — ต้องเท่ากันทุกสตางค์ (ระบบต้องรู้ล็อตเพื่อคิดต้นทุนถัวเฉลี่ยทีหลัง · ย้อนสร้างไม่ได้)`,
+        });
+      }
+    }
+  }
+
+  const journals: OwnerJournal[] = [];
+  for (const os of sheets) {
+    const j = buildJournal(os, ctx, issues);
+    if (j) journals.push(j);
+  }
+
+  if (issues.length) return { ok: false, issues };
+
+  // ลูกหนี้/เจ้าหนี้ระหว่างกันต้องหักกันได้ในงบรวม — เตือน ไม่ปฏิเสธ (แต่ละผู้ถือยังดุลในตัวเอง)
+  const sumCode = (code: string) => round2(sheets.reduce((t, s) => t + (s.amounts.get(code)?.amount ?? 0), 0));
+  if (cents(sumCode("1310")) !== cents(sumCode("2310"))) {
+    warnings.push(
+      `ลูกหนี้ระหว่างกัน 1310 รวม ${sumCode("1310").toLocaleString("en-US")} ไม่เท่าเจ้าหนี้ระหว่างกัน 2310 รวม ${sumCode("2310").toLocaleString("en-US")} — ` +
+        "งบรวมตัดรายการระหว่างกันไม่ได้จนกว่าจะเท่ากัน (ตรวจว่าฝั่งตรงข้ามกรอกครบหรือไม่)"
+    );
+  }
+  return { ok: true, parsed: { cutoff: ctx.cutoff, journals, lots, warnings } };
+}
+
+/* ---------------------------------------------------------------- ลายนิ้วมือ */
+
+/** ลายนิ้วมือของ "เนื้อหาที่จะนำเข้า" — ไม่ผูกกับตัวไฟล์ (บันทึกใหม่/จัดรูปใหม่แล้วเนื้อเหมือนเดิมต้องได้ค่าเดิม) */
+export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lots">): string {
+  const canon = {
+    v: 1,
+    cutoff: p.cutoff,
+    journals: [...p.journals]
+      .sort((a, b) => a.ownerId.localeCompare(b.ownerId))
+      .map((j) => ({
+        owner: j.ownerId,
+        lines: j.lines
+          .map((l) => [l.coaCode, l.bankAccountId ?? "", cents(l.debit), cents(l.credit)] as const)
+          .sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])),
+      })),
+    lots: p.lots
+      .map((l) => [l.ownerId, l.coaCode, l.kind, l.name, l.boughtOn, l.units, l.pricePerUnit, cents(l.fee)] as const)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  };
+  return createHash("sha256").update(JSON.stringify(canon)).digest("hex");
+}
+
+/* ---------------------------------------------------------------- แผน (ใหม่ / ไม่เปลี่ยน / กลับแล้วลงใหม่) */
+
+/**
+ * ใบยอดตั้งต้นที่ **อยู่ในสมุดจริงและยังไม่ถูกกลับรายการ** — ผู้เรียกอ่านจาก DB (ไม่รับจากไฟล์หรือจากหน้าจอ)
+ * หลักยึดที่ใช้บอกว่า "ใบนี้คือยอดตั้งต้น" ต้องเป็นสิ่งที่ DB กำหนด (ประเภทรายการในตารางกฎ) ไม่ใช่ป้ายที่ผู้เรียกส่งมา
+ */
+export type ExistingOpeningEntry = {
+  txnId: string;
+  ownerId: string;
+  docDate: string;
+  lines: JournalLine[];
+};
+
+export type PlanAction = "new" | "unchanged" | "replace" | "retract";
+
+export type PlanItem = {
+  ownerId: string;
+  ownerName: string;
+  action: PlanAction;
+  /** บรรทัดที่จะลงใหม่ (ว่างเมื่อ unchanged/retract) */
+  post: JournalLine[];
+  /** ใบเดิมที่ต้องกลับรายการก่อน (ไม่มีการลบ) */
+  reverse: string[];
+  note?: string;
+};
+
+export type OpeningPlan = {
+  cutoff: string;
+  fingerprint: string;
+  items: PlanItem[];
+  /** ไม่มีอะไรต้องทำเลย (อัปโหลดเนื้อหาเดิมซ้ำ) */
+  nothingToDo: boolean;
+  totals: { owners: number; journals: number; lines: number; assets: number; liabilities: number; equity: number };
+};
+
+const signature = (docDate: string, lines: JournalLine[]): string =>
+  JSON.stringify([
+    docDate,
+    lines
+      .map((l) => [l.coaCode, l.bankAccountId ?? "", cents(l.debit), cents(l.credit)] as const)
+      .sort((a, b) => (a[0] + a[1] + a[2] + a[3]).localeCompare(b[0] + b[1] + b[2] + b[3])),
+  ]);
+
+export function planOpeningImport(parsed: ParsedOpening, existing: ExistingOpeningEntry[], ownerNames: Map<string, string>): OpeningPlan {
+  const items: PlanItem[] = [];
+  const byOwner = new Map<string, ExistingOpeningEntry[]>();
+  for (const e of existing) byOwner.set(e.ownerId, [...(byOwner.get(e.ownerId) ?? []), e]);
+
+  const ownerIds = new Set([...parsed.journals.map((j) => j.ownerId), ...byOwner.keys()]);
+  for (const ownerId of [...ownerIds].sort()) {
+    const next = parsed.journals.find((j) => j.ownerId === ownerId);
+    const prev = byOwner.get(ownerId) ?? [];
+    const ownerName = next?.ownerName ?? ownerNames.get(ownerId) ?? ownerId;
+
+    if (next && prev.length === 0) {
+      items.push({ ownerId, ownerName, action: "new", post: next.lines, reverse: [] });
+    } else if (next) {
+      // ชุดเดิมของผู้ถือคนนี้ที่ยังไม่ถูกกลับ: เทียบเนื้อหา "ทั้งชุด" (รวมวันที่) กับชุดใหม่
+      const prevSig = signature(prev[0].docDate, prev.flatMap((e) => e.lines));
+      const sameDate = prev.every((e) => e.docDate === parsed.cutoff);
+      if (sameDate && prevSig === signature(parsed.cutoff, next.lines)) {
+        items.push({ ownerId, ownerName, action: "unchanged", post: [], reverse: [] });
+      } else {
+        items.push({
+          ownerId,
+          ownerName,
+          action: "replace",
+          post: next.lines,
+          reverse: prev.map((e) => e.txnId),
+          note: sameDate ? undefined : `วันตัดยอดเปลี่ยนจาก ${prev[0].docDate} เป็น ${parsed.cutoff}`,
+        });
+      }
+    } else {
+      // เคยนำเข้า แต่ไฟล์ใหม่ไม่มียอดของคนนี้เลย = ถอนยอดตั้งต้นของเขา (กลับรายการ ไม่ลบ)
+      items.push({ ownerId, ownerName, action: "retract", post: [], reverse: prev.map((e) => e.txnId), note: "ไฟล์ใหม่ไม่มียอดของผู้ถือคนนี้ — กลับรายการชุดเดิมทั้งหมด" });
+    }
+  }
+
+  const posted = items.filter((i) => i.post.length);
+  const sumType = (t: string) => round2(parsed.journals.reduce((s, j) => s + (t === "asset" ? j.assets : t === "liability" ? j.liabilities : j.equity), 0));
+  return {
+    cutoff: parsed.cutoff,
+    fingerprint: fingerprintOf(parsed),
+    items,
+    nothingToDo: items.every((i) => i.action === "unchanged"),
+    totals: {
+      owners: parsed.journals.length,
+      journals: posted.length,
+      lines: posted.reduce((t, i) => t + i.post.length, 0),
+      assets: sumType("asset"),
+      liabilities: sumType("liability"),
+      equity: sumType("equity"),
+    },
+  };
+}
