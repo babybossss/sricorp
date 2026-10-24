@@ -645,7 +645,7 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
                 key={f}
                 type="button"
                 onClick={() => removeFile(i)}
-                className="flex min-h-[44px] items-center gap-2 rounded border border-line bg-surface px-3 text-sm"
+                className="flex min-h-control items-center gap-2 rounded border border-line bg-surface px-3 text-sm"
               >
                 📎 {isAttachmentRef(f) ? `ไฟล์หลักฐาน ${i + 1}` : safeDisplayName(f)}{" "}
                 <span className="text-ink-400">เอาออกจากรายการนี้</span>

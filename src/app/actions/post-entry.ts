@@ -52,8 +52,12 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
 
   if (!req || typeof req !== "object" || !req.input) return fail("ไม่ได้รับข้อมูลรายการ — ยังไม่ได้บันทึกอะไร");
 
+  // เส้นทางนี้คือการบันทึกรายการใหม่ (source = manual) เท่านั้น — ธง `reversal` ปลดการกันบัญชีที่ปิดใช้งาน (D-092)
+  // และต้องมาจากเส้นทางกลับรายการที่ส่ง reverses_id ด้วย · browser ส่งธงนี้มาเองไม่ได้ จึงตัดทิ้งเสมอ
+  const input: PostingInput = { ...req.input, reversal: undefined };
+
   // ---- หมวดที่เส้นทางนี้ยังต่อไม่ครบ ต้องปฏิเสธ ไม่ใช่บันทึกครึ่งเดียว ----
-  const blocked = notWiredReason(findSub(req.input.subCode)?.sub);
+  const blocked = notWiredReason(findSub(input.subCode)?.sub);
   if (blocked) return fail(blocked);
 
   // ---- วันที่ ----
@@ -72,8 +76,8 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   // ---- engine ตัวจริง ----
   let payload;
   try {
-    const result = buildPosting(req.input, makeResolver(refState.ref));
-    payload = toPostEntryPayload(req.input, result, { docDate, cashDate });
+    const result = buildPosting(input, makeResolver(refState.ref));
+    payload = toPostEntryPayload(input, result, { docDate, cashDate });
   } catch (e) {
     if (e instanceof PostingError || e instanceof PayloadError) return fail(e.message);
     // ข้อผิดพลาดที่ไม่ได้คาดไว้ ห้ามกลืน — แต่ไม่ปล่อยข้อความดิบให้ผู้ใช้
