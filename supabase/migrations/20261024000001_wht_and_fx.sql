@@ -424,6 +424,20 @@ end $fn$;
 comment on function fn_assert_revaluation_no_pl() is
   'D-111 ข้อ 2 · รายการตีราคา (หมวดที่คู่บัญชีแตะ 3400) ห้ามมีบรรทัดในบัญชีรายได้/ค่าใช้จ่าย · คู่กับ assertNoProfitAndLoss() ฝั่ง lib/ledger ซึ่งมีเทสต์ mutation ยืนยันว่าแดงจริง · ที่นี่เป็นด่านที่เขียนตรงเข้าตารางก็ข้ามไม่ได้';
 
+/**
+ * **เรียกตรงไม่ได้ทุก role** — รูปเดียวกับ fn_assert_line_coa_in_rules (20261008000012)
+ *
+ * ฟังก์ชันนี้เป็น security definer ที่อ่าน `transactions` ตรงๆ ซึ่งถูกจัดประเภทเป็น
+ * `row` ด้วย ledger.read · ถ้า PUBLIC เรียกได้ มันคือ **ทางข้าม policy ของสมุดเงิน**
+ * (ด่าน D-089 ข้อ `row_escape` จับได้และพังตอน migrate — ซึ่งถูกแล้ว)
+ * trigger ยังยิงได้ตามปกติ เพราะ trigger ไม่ได้เรียกผ่านสิทธิ์ของผู้คีย์
+ */
+revoke all on function fn_assert_revaluation_no_pl() from public;
+do $$
+begin
+  execute 'revoke all on function sri_os.fn_assert_revaluation_no_pl() from anon, authenticated';
+end $$;
+
 -- ชื่อขึ้นต้น trg_lines_s* เพื่อให้ยิง **หลัง** ด่านชุด trg_lines_r* (คู่บัญชีตรงตารางกฎ)
 -- ข้อความที่ผู้ใช้เห็นจะได้ชี้สาเหตุที่ตรงที่สุดก่อน
 drop trigger if exists trg_lines_s_revaluation_no_pl on transaction_lines;
@@ -519,6 +533,14 @@ end $fn$;
 
 comment on function fn_assert_wht_gross() is
   'D-111 ข้อ 1 · ใบที่มีบรรทัด 1800 ต้องมีรายได้เป็น **ยอดเต็ม**: เครดิตบัญชีรายได้ = เดบิตเงินสด + เดบิต 1800 · และยอดในหัวรายการต้องตรงกับบรรทัด · ใบที่ลงรายได้เป็นยอดสุทธิยังสมดุลทุกบรรทัด จับได้ด้วยสมการนี้เท่านั้น';
+
+-- เรียกตรงไม่ได้ทุก role — เหตุผลเดียวกับ fn_assert_revaluation_no_pl ข้างบน
+-- (ตัวนี้อ่านทั้ง transactions และ transaction_lines ซึ่งเป็น row ทั้งคู่)
+revoke all on function fn_assert_wht_gross() from public;
+do $$
+begin
+  execute 'revoke all on function sri_os.fn_assert_wht_gross() from anon, authenticated';
+end $$;
 
 drop trigger if exists trg_assert_wht_gross on transaction_lines;
 create constraint trigger trg_assert_wht_gross

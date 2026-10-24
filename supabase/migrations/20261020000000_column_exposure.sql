@@ -148,6 +148,31 @@ end $$;
 
 grant usage on schema sri_os to sri_os_column_reader;
 
+-- ------------------------------------------------------------
+-- ผู้ที่รัน migration ต้อง **SET ROLE เป็น sri_os_column_reader ได้ชั่วคราว**
+-- ไม่งั้น `alter function ... owner to sri_os_column_reader` ใน fn_apply พัง
+--
+-- ทำไมถึงไม่เจอตอนทดสอบในเครื่อง: ในเครื่องรันด้วย superuser ซึ่งยกความเป็นเจ้าของ
+-- ให้ role ไหนก็ได้ · บน Supabase ผู้ใช้ `postgres` **ไม่ใช่ superuser**
+-- และตั้งแต่ PG16 การเป็นผู้สร้าง role ให้สิทธิ์ ADMIN มาก็จริง **แต่ไม่ให้ SET**
+-- → วัดจากของจริง 24/10: `ERROR: must be able to SET ROLE "sri_os_column_reader"`
+--
+-- ให้สิทธิ์แบบ `inherit false` เพื่อ **ไม่ให้ผู้รันได้สิทธิ์ของ role นี้ติดมาด้วย**
+-- และ **ถอนคืนท้ายไฟล์** เพราะด่าน `reader_role` ห้ามมี role อื่นเป็นสมาชิกค้างไว้
+-- (ถ้าค้าง = ใช้สิทธิ์ของทางเข้าได้โดยไม่ต้องผ่านฟังก์ชัน)
+do $$
+begin
+  execute format('grant sri_os_column_reader to %I with inherit false, set true', current_user);
+exception when others then
+  -- PG15 ลงไปไม่มีตัวเลือก inherit/set · ลองแบบเดิม
+  begin
+    execute format('grant sri_os_column_reader to %I', current_user);
+  exception when others then
+    raise exception 'ให้สิทธิ์ SET ROLE sri_os_column_reader แก่ % ไม่ได้ (%) — '
+      'ต้องรันไฟล์นี้ด้วยผู้ใช้ที่สร้าง role ได้ เช่น postgres ของ Supabase', current_user, sqlerrm;
+  end;
+end $$;
+
 -- (ไม่ใช้ comment on role เพราะบน Supabase role ไม่ได้เป็นของ postgres เสมอ
 --  คำอธิบายของ role อยู่ที่หัวไฟล์นี้และใน comment ของ fn_<ตาราง>_visible())
 
@@ -756,6 +781,15 @@ exception when undefined_object then
 end $$;
 
 select fn_apply_column_exposure();
+
+-- ถอนสมาชิกภาพชั่วคราวคืนทันทีที่ตั้งเจ้าของเสร็จ
+-- **ต้องถอน** ไม่งั้นด่าน `reader_role` จะฟ้องว่ามี role อื่นเป็นสมาชิกของทางเข้า
+-- ซึ่งแปลว่าใช้สิทธิ์ของทางเข้าได้โดยไม่ต้องผ่านฟังก์ชัน = ด่านคอลัมน์ไร้ผล
+do $$
+begin
+  execute format('revoke sri_os_column_reader from %I', current_user);
+exception when others then null;   -- ไม่เคยได้รับก็ไม่ต้องถอน
+end $$;
 
 -- ============================================================
 -- 8 · เงื่อนไขบังคับก่อนสร้างบัญชี Staff (D-089 สั่งห้ามสร้างจนกว่าจะปิดข้อนี้)
