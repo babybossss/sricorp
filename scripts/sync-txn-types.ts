@@ -54,6 +54,33 @@ const HANDLED_FIELDS: (keyof SubCategory)[] = [
 const HANDLED_COA_FIELDS: (keyof CoaAccount)[] = ["code", "nameTh", "nameEn", "type"];
 
 /**
+ * ค่าทุกตัวของ `FormRequirement` ที่ไฟล์นี้ **ตัดสินใจแล้ว** ว่าจะทำอะไรกับมัน
+ *
+ * `HANDLED_FIELDS` ข้างบนกันแค่ "ฟิลด์ใหม่" — ค่าใหม่ใน `requires` เป็นอีกช่องหนึ่ง
+ * ที่หลุดได้เงียบๆ: ธงใหม่ที่ไม่มีคอลัมน์รองรับจะถูกทิ้งไปโดยที่ seed ยังรันผ่าน
+ * แล้ว DB จะถือกฎที่ไม่ครบ (ซึ่งเป็นรูปเดียวกับที่ D-096 เจอตอน `intercompany.ts`
+ * ไม่ถูกครอบ แล้วรายการข้ามผู้ถือถูกปฏิเสธโดยไม่มีอะไรดังขึ้นก่อน)
+ *
+ * หกตัวแรกมีคอลัมน์ `requires_*` ของตัวเองใน `txn_types`
+ *
+ * **`revaluation` ไม่มีคอลัมน์โดยเจตนา** — ฝั่ง DB ตัดสินว่า "หมวดนี้คือรายการ
+ * ตีราคาหรือไม่" จาก **คู่บัญชี** (`dr_coa_code`/`cr_coa_code` ตัวใดตัวหนึ่งเป็น 3400)
+ * ซึ่งเป็นข้อมูลที่ seed ลงไปอยู่แล้ว · ทำแบบนี้แทนการเพิ่มคอลัมน์ธงเพราะ
+ * **คู่บัญชีกับธงแยกจากกันได้** (ธงเป็น true แต่คู่บัญชีไม่แตะ 3400 = ด่านฝั่ง DB
+ * คุมหมวดคนละชุดกับฝั่งโค้ด) ส่วนคู่บัญชีเป็นสิ่งเดียวกันทั้งสองฝั่งเสมอ
+ * มีเทสต์ `revaluation-rules.test.ts` บังคับว่าธงกับคู่บัญชีตรงกันทั้งสองทิศ
+ */
+const HANDLED_REQUIREMENTS: string[] = [
+  "contact",
+  "asset",
+  "loanTerms",
+  "capitalGain",
+  "principalInterestSplit",
+  "transferTarget",
+  "revaluation",
+];
+
+/**
  * ฟิลด์ของ `IntercompanyRule` ที่ไฟล์นี้ตัดสินใจแล้วว่าจะทำอะไรกับมัน
  * - `payer` / `receiver` → ลงใน `fn_intercompany_pairs()` (ใช้แค่ `.coa`)
  * - `label` / `note`     → **ไม่ลง DB โดยตั้งใจ** (ข้อความสำหรับหน้าจอ ไม่ใช่กฎบัญชี)
@@ -70,6 +97,9 @@ function assertAllFieldsHandled(): void {
     for (const s of t.subs) {
       for (const k of Object.keys(s)) {
         if (!HANDLED_FIELDS.includes(k as keyof SubCategory)) unknown.add(`SubCategory.${k}`);
+      }
+      for (const r of s.requires ?? []) {
+        if (!HANDLED_REQUIREMENTS.includes(r)) unknown.add(`FormRequirement."${r}"`);
       }
     }
   }
