@@ -533,47 +533,91 @@ end $$;
 -- ============================================================
 -- R2 · **MUTATION** — ด่าน "ตีราคาห้ามแตะ P&L" ต้องแดงจริง
 --
--- กลายพันธุ์ตารางกฎให้หมวดตีราคาเครดิตบัญชี **รายได้** (4900) ซึ่งทำให้
--- ด่านคู่บัญชี (fn_assert_line_coa_in_rules) **ยอมรับ** บรรทัดนั้น
--- → ตัวที่ต้องปฏิเสธคือ trg_lines_s_revaluation_no_pl เท่านั้น
+-- รอบแรกเทสต์นี้กลายพันธุ์ `cr_coa_code` จาก 3400 → 4900 แล้ว **ด่านไม่ติด**
+-- เพราะ `fn_assert_revaluation_no_pl()` ชี้ว่า "ใบนี้เป็นการตีราคา" จากการที่
+-- คู่บัญชีแตะ 3400 → ถอด 3400 ออก ด่านก็เลิกมองหมวดนั้นไปเลย
+-- (ด่านที่ชี้ตัวเองจากสิ่งที่ถูกแก้ = ด่านที่ปลดได้ด้วยการแก้สิ่งเดียวกัน)
 --
--- ถ้าเคสนี้ผ่าน: กำไรขาดทุนจะวิ่งตามค่าเงินทุกเดือนทั้งที่ไม่มีอะไรเกิดขึ้นจริง
+-- ปิดด้วยสองด่านที่ทดสอบแยกกันที่นี่:
+--   R2a ตั้ง `gain_coa_code = '4900'` โดย **คงคู่บัญชีไว้** → ด่านคู่บัญชี
+--       (fn_assert_line_coa_in_rules) ยอมรับบรรทัด 4900 เพราะอยู่ในช่องที่ประกาศไว้
+--       → ตัวที่ต้องปฏิเสธคือ trg_lines_s_revaluation_no_pl เท่านั้น
+--   R2b ถอด 3400 ออกจากหมวด → **การแก้ตารางกฎเองต้องถูกปฏิเสธ**
+--       (trg_txn_types_revaluation_clean) ไม่ใช่ปล่อยให้ด่านเลิกคุมเงียบๆ
+--   R2c ตั้งบัญชี P&L ไว้ในช่อง gain ตั้งแต่ตอนแก้ตารางกฎ → ถูกปฏิเสธที่ตารางกฎ
+--
+-- ถ้าเคสพวกนี้ผ่าน: กำไรขาดทุนจะวิ่งตามค่าเงินทุกเดือนทั้งที่ไม่มีอะไรเกิดขึ้นจริง
 -- และใบยังสมดุลทุกบรรทัด ไม่มีอะไรฟ้องเลย (ลูกพี่สั่ง 24/10 ว่า "เด็ดขาด")
 -- ============================================================
 savepoint before_mutation;
 do $$
 declare t uuid := '00000000-0000-0000-0000-00000002f022';
 begin
-  -- กลายพันธุ์: ส่วนเกินทุน (3400) → รายได้อื่น (4900)
-  update sri_os.txn_types set cr_coa_code = '4900' where code = 'adj.revalue_securities_up';
-  if (select cr_coa_code from sri_os.txn_types where code = 'adj.revalue_securities_up') <> '4900' then
-    raise exception 'FAIL: R2 — กลายพันธุ์ไม่สำเร็จ เทสต์นี้จึงไม่ได้พิสูจน์อะไร';
+  -- กลายพันธุ์แบบที่ **ไม่แตะคู่บัญชี** → ด่านคู่บัญชียังยอมรับบรรทัด 4900
+  -- ปิด trigger ของตารางกฎชั่วคราวเพื่อให้กลายพันธุ์ลงได้จริง (R2c ทดสอบตัวนั้นแยก)
+  alter table sri_os.txn_types disable trigger trg_txn_types_revaluation_clean;
+  update sri_os.txn_types set gain_coa_code = '4900', loss_coa_code = '5910'
+   where code = 'adj.revalue_securities_up';
+  alter table sri_os.txn_types enable trigger trg_txn_types_revaluation_clean;
+
+  if (select gain_coa_code from sri_os.txn_types where code = 'adj.revalue_securities_up') <> '4900' then
+    raise exception 'FAIL: R2a — กลายพันธุ์ไม่สำเร็จ เทสต์นี้จึงไม่ได้พิสูจน์อะไร';
   end if;
 
   begin
     set constraints all deferred;
     perform pg_temp.mk_txn(t, 'adj.revalue_securities_up', null, null, null, null);
     perform pg_temp.ln(t, '1700', 460000, 0, '00000000-0000-0000-0000-00000002a002');
-    perform pg_temp.ln(t, '4900', 0, 460000, '00000000-0000-0000-0000-00000002a002');
+    perform pg_temp.ln(t, '3400', 0, 300000, '00000000-0000-0000-0000-00000002a002');
+    -- บรรทัดที่พากำไรจากการตีราคาเข้างบกำไรขาดทุน
+    perform pg_temp.ln(t, '4900', 0, 160000, '00000000-0000-0000-0000-00000002a002');
     set constraints all immediate;
-    raise exception 'FAIL: R2 — รายการตีราคาลงบัญชีรายได้ได้ ด่านไม่ได้กันอะไรเลย';
+    raise exception 'FAIL: R2a — รายการตีราคาลงบัญชีรายได้ได้ ด่านไม่ได้กันอะไรเลย';
   exception when others then
     if sqlerrm like 'FAIL:%' then raise; end if;
     if position('ห้ามเข้างบกำไรขาดทุนเด็ดขาด' in sqlerrm) = 0 then
-      raise exception 'FAIL: R2 — ปฏิเสธถูกแต่ไม่ใช่ด่านการตีราคา: %', sqlerrm;
+      raise exception 'FAIL: R2a — ปฏิเสธถูกแต่ไม่ใช่ด่านการตีราคา: %', sqlerrm;
     end if;
   end;
-  raise notice 'ok R2 · MUTATION · ด่าน "ตีราคาห้ามแตะงบกำไรขาดทุน" แดงจริง';
+  raise notice 'ok R2a · MUTATION · ด่านบรรทัด "ตีราคาห้ามแตะงบกำไรขาดทุน" แดงจริง';
 end $$;
 -- คืนตารางกฎให้กลับเป็นของจริง **ก่อน** เคสถัดไป
 rollback to savepoint before_mutation;
+
 do $$
 begin
-  if (select cr_coa_code from sri_os.txn_types where code = 'adj.revalue_securities_up') <> '3400' then
-    raise exception 'FAIL: R2 — ตารางกฎยังค้างสภาพกลายพันธุ์หลัง rollback';
+  if (select gain_coa_code from sri_os.txn_types where code = 'adj.revalue_securities_up') is not null then
+    raise exception 'FAIL: R2a — ตารางกฎยังค้างสภาพกลายพันธุ์หลัง rollback';
   end if;
-  raise notice 'ok R2b · ตารางกฎกลับสภาพเดิมหลังเทสต์ mutation';
+
+  -- R2b · ถอด 3400 ออกจากหมวดตีราคา → การแก้ตารางกฎต้องถูกปฏิเสธเอง
+  perform pg_temp.must_fail_like(
+    'R2b ถอด 3400 ออกจากหมวดตีราคา',
+    $q$ update sri_os.txn_types set cr_coa_code = '4900' where code = 'adj.revalue_securities_up' $q$,
+    'จะเปลี่ยนให้ไม่แตะ 3400 ไม่ได้');
+
+  -- R2c · ตั้งบัญชี P&L ไว้ในช่อง gain/loss ของหมวดตีราคา → ถูกปฏิเสธที่ตารางกฎ
+  perform pg_temp.must_fail_like(
+    'R2c ตั้งบัญชีรายได้ไว้ในช่อง gain ของหมวดตีราคา',
+    $q$ update sri_os.txn_types set gain_coa_code = '4900' where code = 'adj.revalue_commodity_up' $q$,
+    'ห้ามเข้างบกำไรขาดทุนเด็ดขาด');
+  perform pg_temp.must_fail_like(
+    'R2d ตั้งบัญชีค่าใช้จ่ายไว้ในช่อง accrual ของหมวดตีราคา',
+    $q$ update sri_os.txn_types set accrual_coa_code = '5900' where code = 'adj.revalue_commodity_down' $q$,
+    'ห้ามเข้างบกำไรขาดทุนเด็ดขาด');
+
+  -- แต่การแก้ที่ไม่เกี่ยวกับ P&L ต้องยังทำได้ (กันแน่นเกิน = seed รอบหน้าพัง)
+  perform pg_temp.must_pass(
+    'R2e แก้คำอธิบายของหมวดตีราคายังทำได้',
+    $q$ update sri_os.txn_types set caution_th = 'ทดสอบ' where code = 'adj.revalue_securities_up' $q$);
+  -- และหมวดที่ไม่ใช่การตีราคา ยังตั้งบัญชี P&L ได้ตามปกติ
+  perform pg_temp.must_pass(
+    'R2f หมวดอื่นยังตั้งบัญชีกำไร/ขาดทุนได้',
+    $q$ update sri_os.txn_types set gain_coa_code = '4300' where code = 'inv.sell_re' $q$);
+
+  raise notice 'ok R2b–R2f · ตารางกฎกันการปลดด่านทั้งสองทาง และไม่กันแน่นเกิน';
 end $$;
+rollback to savepoint before_mutation;
 
 -- ============================================================
 -- R3 · ต้นทุนทรัพย์ต้องเป็น **ต้นทุนเดิม** ไม่รวมใบตีราคา

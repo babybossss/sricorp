@@ -425,6 +425,69 @@ comment on function fn_assert_revaluation_no_pl() is
   'D-111 ข้อ 2 · รายการตีราคา (หมวดที่คู่บัญชีแตะ 3400) ห้ามมีบรรทัดในบัญชีรายได้/ค่าใช้จ่าย · คู่กับ assertNoProfitAndLoss() ฝั่ง lib/ledger ซึ่งมีเทสต์ mutation ยืนยันว่าแดงจริง · ที่นี่เป็นด่านที่เขียนตรงเข้าตารางก็ข้ามไม่ได้';
 
 /**
+ * ด่านคู่กัน · **หมวดตีราคาเลิกเป็นหมวดตีราคาไม่ได้ และห้ามประกาศบัญชี P&L ไว้เลย**
+ *
+ * ทำไมต้องมี: `fn_assert_revaluation_no_pl()` ข้างบนรู้ว่า "ใบนี้เป็นการตีราคา"
+ * จากการที่คู่บัญชีของหมวดแตะ 3400 — ซึ่งแปลว่า **ถ้าใครถอด 3400 ออกจากหมวด
+ * ด่านนั้นก็เลิกมองหมวดนั้นไปเลย** (ด่านที่ชี้ตัวเองจากสิ่งที่ถูกแก้ = ด่านที่
+ * ปลดได้ด้วยการแก้สิ่งเดียวกัน · เจอจากเทสต์ mutation R2 รอบแรกตรงๆ)
+ *
+ * ด่านนี้ปิดสองทางที่เหลือ:
+ *   (ก) หมวดที่เคยเป็นหมวดตีราคา ห้ามถอด 3400 ออก — ต้องเพิ่มหมวดใหม่
+ *       (ถอดแล้วยอดส่วนเกินทุนที่ลงไว้ด้วยหมวดนั้นจะไม่มีใครล้างได้ และ
+ *        ด่านห้ามแตะ P&L จะเลิกคุมหมวดนั้นเงียบๆ)
+ *   (ข) หมวดตีราคาห้ามมีบัญชีรายได้/ค่าใช้จ่ายในช่องใดเลย **รวม gain/loss/interest/accrual**
+ *       ไม่ใช่แค่ dr/cr — เพราะ `fn_assert_line_coa_in_rules()` ยอมให้บรรทัดลง
+ *       บัญชีในช่องพวกนั้นได้ด้วย · ตั้ง `gain_coa_code = '4900'` ไว้เฉยๆ
+ *       ก็เปิดทางให้กำไรจากการตีราคาเข้างบกำไรขาดทุนได้แล้ว
+ *
+ * ไม่ใช่ security definer โดยตั้งใจ — อ่านแค่ chart_of_accounts ที่ทุกคนอ่านได้อยู่แล้ว
+ * (definer ที่อ่านตารางซึ่งจัดประเภทเป็น row คือทางข้าม policy · D-089)
+ */
+create or replace function fn_assert_revaluation_type_stays_clean() returns trigger
+language plpgsql set search_path = sri_os, public as $fn$
+declare v text;
+begin
+  if tg_op = 'UPDATE'
+     and '3400' in (old.dr_coa_code, old.cr_coa_code)
+     and '3400' not in (new.dr_coa_code, new.cr_coa_code) then
+    raise exception 'หมวด "%" เป็นหมวดตีราคา (คู่บัญชีแตะ 3400) จะเปลี่ยนให้ไม่แตะ 3400 ไม่ได้ — ด่าน "ตีราคาห้ามเข้างบกำไรขาดทุน" ชี้หมวดจากคู่บัญชีนี้ ถอดออกแล้วด่านเลิกคุมหมวดนี้เงียบๆ · ถ้าต้องการหมวดใหม่ ให้เพิ่มหมวดใหม่ ไม่ใช่แก้หมวดเดิม',
+      new.code;
+  end if;
+
+  if '3400' in (new.dr_coa_code, new.cr_coa_code) then
+    select string_agg(c.code || ' ' || c.name_th, ', ') into v
+      from sri_os.chart_of_accounts c
+     where c.code in (new.dr_coa_code, new.cr_coa_code,
+                      coalesce(new.gain_coa_code, ''), coalesce(new.loss_coa_code, ''),
+                      coalesce(new.interest_coa_code, ''), coalesce(new.accrual_coa_code, ''))
+       and c.type::text in ('income', 'expense');
+    if v is not null then
+      raise exception 'หมวดตีราคา "%" ประกาศบัญชีรายได้/ค่าใช้จ่ายไว้ (%) — กำไร/ขาดทุนจากการตีราคาที่ยังไม่ได้ขาย ห้ามเข้างบกำไรขาดทุนเด็ดขาด (ลูกพี่สั่ง 24/10) · ทุกช่องบัญชีของหมวดนี้ต้องเป็นสินทรัพย์หรือส่วนของเจ้าของเท่านั้น เพราะบรรทัดลงได้ทุกช่องที่ประกาศไว้ ไม่ใช่แค่ dr/cr',
+        new.code, v;
+    end if;
+  end if;
+
+  return new;
+end $fn$;
+
+comment on function fn_assert_revaluation_type_stays_clean() is
+  'D-111 ข้อ 2 · กันสองทางที่ปลดด่าน "ตีราคาห้ามแตะ P&L" ได้: ถอด 3400 ออกจากหมวด (ด่านเลิกมองหมวดนั้น) และตั้งบัญชี P&L ไว้ในช่อง gain/loss/interest/accrual (บรรทัดลงได้ทุกช่องที่ประกาศไว้)';
+
+-- เรียกตรงไม่ได้ทุก role เหมือน trigger function ตัวอื่นของกฎเงิน
+-- (เทสต์ zz_db_hardening / zz_column_exposure ไล่ทุกฟังก์ชันใน sri_os)
+revoke all on function fn_assert_revaluation_type_stays_clean() from public;
+do $$
+begin
+  execute 'revoke all on function sri_os.fn_assert_revaluation_type_stays_clean() from anon, authenticated';
+end $$;
+
+drop trigger if exists trg_txn_types_revaluation_clean on txn_types;
+create trigger trg_txn_types_revaluation_clean
+  before insert or update on txn_types
+  for each row execute function fn_assert_revaluation_type_stays_clean();
+
+/**
  * **เรียกตรงไม่ได้ทุก role** — รูปเดียวกับ fn_assert_line_coa_in_rules (20261008000012)
  *
  * ฟังก์ชันนี้เป็น security definer ที่อ่าน `transactions` ตรงๆ ซึ่งถูกจัดประเภทเป็น

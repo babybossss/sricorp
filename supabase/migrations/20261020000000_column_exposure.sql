@@ -148,6 +148,12 @@ end $$;
 
 grant usage on schema sri_os to sri_os_column_reader;
 
+-- **ชั่วคราว** — เจ้าของใหม่ของฟังก์ชันต้องมีสิทธิ์ `create` บนสคีมาที่ฟังก์ชันอยู่
+-- ไม่งั้น `alter function ... owner to` ขึ้น `permission denied for schema sri_os`
+-- (วัดจากของจริง 24/10 · เครื่องทดสอบไม่เจอเพราะรันเป็น superuser)
+-- **ถอนคืนท้ายไฟล์** เพราะทางเข้านี้ไม่ควรสร้างอะไรในสคีมาได้เลย
+grant create on schema sri_os to sri_os_column_reader;
+
 -- ------------------------------------------------------------
 -- ผู้ที่รัน migration ต้อง **SET ROLE เป็น sri_os_column_reader ได้ชั่วคราว**
 -- ไม่งั้น `alter function ... owner to sri_os_column_reader` ใน fn_apply พัง
@@ -698,6 +704,28 @@ declare
   v_body   text;
   v_n      int := 0;
 begin
+  -- ------------------------------------------------------------
+  -- สิทธิ์ชั่วคราวที่จำเป็นต่อ `alter function ... owner to` ข้างล่าง
+  -- ผู้รันต้อง (1) สวมบทบาท sri_os_column_reader ได้ และ
+  --            (2) role นั้นต้องมีสิทธิ์ `create` บนสคีมาที่ฟังก์ชันอยู่
+  --
+  -- **อยู่ในฟังก์ชันไม่ใช่ในไฟล์** เพราะมีหลาย migration ที่เรียกฟังก์ชันนี้
+  -- (ไฟล์นี้ · wht_and_fx · และหน้าตั้งค่าในอนาคตที่แก้ทะเบียนแล้วต้องเรียกซ้ำ)
+  -- ถ้าวางไว้ที่ไฟล์เดียว ไฟล์อื่นจะพังด้วย error เดียวกัน
+  --
+  -- ทั้งสองข้อนี้ **ไม่เจอตอนทดสอบในเครื่อง** เพราะที่นั่นรันเป็น superuser
+  -- ซึ่งข้ามการตรวจทั้งสองอย่าง · วัดจากของจริง 24/10
+  -- ------------------------------------------------------------
+  begin
+    execute format('grant sri_os_column_reader to %I with inherit false, set true', current_user);
+  exception when others then
+    begin execute format('grant sri_os_column_reader to %I', current_user);
+    exception when others then null; end;   -- superuser ไม่ต้องการสิทธิ์นี้
+  end;
+  begin
+    execute 'grant create on schema sri_os to sri_os_column_reader';
+  exception when others then null;
+  end;
   for r in select distinct table_name from sri_os.column_exposure
             where exposure = 'grant' order by 1
   loop
@@ -750,6 +778,15 @@ $x$, r.table_name, v_sig, v_body);
     execute format($c$comment on function sri_os.fn_%1$s_visible() is 'ทางเข้าของระดับที่มีสิทธิ์อ่านคอลัมน์ที่ปิดของ sri_os.%1$s (D-089) · เจ้าของเป็น sri_os_column_reader ซึ่งเป็นสมาชิกของ authenticated → **RLS ยังกรองแถวตาม auth.uid() ของผู้เรียก** ไม่ได้เขียนเงื่อนไขแถวซ้ำ · คอลัมน์ที่ไม่มีสิทธิ์ได้ NULL · สร้างจากตาราง sri_os.column_exposure ห้ามแก้มือ'$c$, r.table_name);
     v_n := v_n + 1;
   end loop;
+  -- ถอนสิทธิ์ชั่วคราวคืนทันที · **ต้องถอนทั้งสอง**
+  --   สมาชิกภาพ: ด่าน reader_role ห้ามมี role อื่นเป็นสมาชิกของทางเข้า
+  --              (ถ้าค้าง = ใช้สิทธิ์ของทางเข้าได้โดยไม่ต้องเดินผ่านทางเข้า)
+  --   create on schema: ทางเข้านี้มีไว้ "อ่านแทน" ไม่ควรสร้างอะไรในสคีมาได้
+  begin execute 'revoke create on schema sri_os from sri_os_column_reader';
+  exception when others then null; end;
+  begin execute format('revoke sri_os_column_reader from %I', current_user);
+  exception when others then null; end;
+
   raise notice 'ด่านคอลัมน์ · ติดด่าน + สร้างทางเข้าให้ % ตาราง', v_n;
 end $fn$;
 comment on function fn_apply_column_exposure() is
@@ -790,6 +827,10 @@ begin
   execute format('revoke sri_os_column_reader from %I', current_user);
 exception when others then null;   -- ไม่เคยได้รับก็ไม่ต้องถอน
 end $$;
+
+-- ถอนสิทธิ์สร้างของในสคีมาคืนด้วย — ทางเข้านี้มีไว้ "อ่านแทน" เท่านั้น
+-- ถ้าปล่อยไว้ มันสร้างฟังก์ชันหรือตารางใน sri_os ได้ ซึ่งเกินหน้าที่ไปมาก
+revoke create on schema sri_os from sri_os_column_reader;
 
 -- ============================================================
 -- 8 · เงื่อนไขบังคับก่อนสร้างบัญชี Staff (D-089 สั่งห้ามสร้างจนกว่าจะปิดข้อนี้)
