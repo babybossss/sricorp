@@ -2,16 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { loadReference } from "./reference";
 import type { LedgerViewRow } from "./ledger-entries";
+import { fetchAllPages } from "./paged";
 import { accrualAccountCodes, derivePendingAccruals, type PendingAccrual } from "./pending-accruals";
 
 /** คอลัมน์ของ `v_ledger_posted` ที่ต้องใช้ — เขียนชื่อตรงๆ ไม่ใช้ `*` (คอลัมน์ใหม่ต้องไม่ไหลเข้าเองเงียบๆ) */
 const COLUMNS =
   "transaction_id, owner_id, txn_type_code, doc_date, cash_date, doc_no, txn_asset_id, contact_id, " +
   "counter_owner_id, intercompany_nature, txn_memo, attachments, source, source_ref, reverses_id, created_at, " +
-  "coa_id, bank_account_id, debit, credit, cf_category, line_asset_id, line_memo";
-
-/** เพดานบรรทัดต่อคำถาม — ชนเพดาน = ปฏิเสธ ไม่ตัดเงียบ (ตัดแล้วยอดค้างบางรายการจะหาย/ประวัติการล้างจะขาด) */
-const LINE_LIMIT = 5000;
+  "line_id, coa_id, bank_account_id, debit, credit, cf_category, line_asset_id, line_memo";
 
 export type PendingAccrualsState =
   | { ok: true; pending: PendingAccrual[]; clearedIds: string[] }
@@ -19,19 +17,18 @@ export type PendingAccrualsState =
 
 type Db = Pick<SupabaseClient, "from">;
 
-/** อ่านเป็นก้อนเดียวจาก `v_ledger_posted` เท่านั้น (D-107) */
+/**
+ * อ่านทุกหน้าจาก `v_ledger_posted` เท่านั้น (D-107) — แบ่งหน้าเพราะ PostgREST ตัดที่ 1,000 แถวเงียบๆ
+ * (เดิมใช้ `.limit(5000)` ซึ่งได้แค่ 1,000 โดยไม่มี error → ยอดค้างและประวัติการล้างขาด)
+ */
 async function fetchRows(
   db: Db,
   build: (q: any) => any // eslint-disable-line @typescript-eslint/no-explicit-any
 ): Promise<{ rows: LedgerViewRow[] } | { error: string }> {
-  const q = build(db.from("v_ledger_posted").select(COLUMNS)).limit(LINE_LIMIT);
-  const { data, error } = await q;
-  if (error) return { error: error.message as string };
-  const rows = (data ?? []) as LedgerViewRow[];
-  if (rows.length >= LINE_LIMIT) {
-    return { error: "มีรายการมากเกินกว่าจะอ่านครบในครั้งเดียว — ปฏิเสธแทนที่จะแสดงยอดค้างที่อาจไม่ครบ" };
-  }
-  return { rows };
+  const r = await fetchAllPages<LedgerViewRow>(() =>
+    build(db.from("v_ledger_posted").select(COLUMNS)).order("line_id", { ascending: true })
+  );
+  return r.ok ? { rows: r.rows } : { error: r.error };
 }
 
 /**

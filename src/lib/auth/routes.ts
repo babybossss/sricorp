@@ -18,6 +18,8 @@ export const ROUTE_ACCESS = {
   "/dashboard": { anyOf: ["ledger.read", "draft.read_own"] },
   "/ledger": { anyOf: ["ledger.read", "draft.read_own"] },
   "/approvals": { anyOf: ["ledger.approve", "cash.confirm"] },
+  // งบการเงินคำนวณจากสมุดที่ผู้ใช้เห็น (RLS กรองผู้ถือให้) — ต้องอ่านสมุดได้
+  "/reports": { allOf: ["ledger.read"] },
   // ลูกพี่สั่ง: Manager ดูภาพรวมการลงทุนไม่ได้ ดูได้แต่ทรัพย์ที่ตนบริหาร (ผ่าน /assets)
   "/balance": { allOf: ["portfolio.view_all"] },
   // ทุกคนที่มี asset.view_assigned เข้าได้ — แถวที่เห็นให้ RLS กรอง ห้ามกรองใน TS

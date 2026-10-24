@@ -1,14 +1,13 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
 import { useApp } from "@/lib/store";
 import { STATUS_PILL, TYPE_PILL } from "@/lib/tone";
-import { money, signedMoney, plMoney } from "@/lib/format";
-import { PL_SERIES, CF_GROUPS, CF_ACCOUNTS } from "@/lib/mock/ledger";
-import { MONTHS } from "@/lib/mock/entities";
+import { money, signedMoney } from "@/lib/format";
 import { findSub } from "@/lib/rules/tx-rules";
 import { useReference } from "@/components/reference/reference-provider";
 import { FAMILY_VIEW } from "@/lib/db/reference-types";
@@ -22,8 +21,6 @@ import type { PendingAccrualsState } from "@/lib/db/pending-accruals-server";
 const TABS = [
   { key: "list", label: "รายการ" },
   { key: "confirm", label: "ยืนยันรับ-จ่าย" },
-  { key: "pl", label: "กำไรขาดทุน (PL)" },
-  { key: "cf", label: "กระแสเงินสด (CF)" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -45,34 +42,16 @@ export function LedgerTabs({ ledger, pending }: { ledger: LedgerListState; pendi
             {t.label}
           </button>
         ))}
+        <Link
+          href="/reports"
+          className="ml-auto inline-flex min-h-control items-center px-[18px] text-base font-semibold text-brand-600 no-underline hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600"
+        >
+          ดูงบการเงิน (ฐานะ · กำไรขาดทุน · กระแสเงินสด)
+        </Link>
       </div>
 
       {tab === "list" ? <ListTab ledger={ledger} pending={pending} /> : null}
       {tab === "confirm" ? <ConfirmTab pending={pending} /> : null}
-      {tab === "pl" ? (
-        <>
-          <MockNotice />
-          <PLTab />
-        </>
-      ) : null}
-      {tab === "cf" ? (
-        <>
-          <MockNotice />
-          <CFTab />
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * แท็บยังใช้ข้อมูลจำลอง — บอกผู้ใช้ตรงๆ ว่าตัวเลขไม่ใช่ของจริง
- * (ตัวเลขจำลองที่หน้าตาเหมือนของจริงอันตรายกว่าหน้าที่ว่างเปล่า)
- */
-function MockNotice() {
-  return (
-    <div className="rounded border border-warn bg-warn-bg p-[12px_16px] text-base leading-7 text-warn-fg">
-      <b>ตัวอย่างข้อมูลจำลอง</b> — แท็บนี้ยังไม่ได้ต่อกับฐานข้อมูล ตัวเลขด้านล่างไม่ใช่ตัวเลขจริงของบ้าน
     </div>
   );
 }
@@ -213,109 +192,6 @@ function ListTab({ ledger, pending }: { ledger: LedgerListState; pending: Pendin
       <div className="text-sm text-ink-400">คลิกแถวเพื่อดูบรรทัดบัญชีที่ระบบบันทึกจริง</div>
 
       <EntryDrawer entry={openEntry} onClose={() => setOpenId(null)} />
-    </div>
-  );
-}
-
-function PLTab() {
-  const s = PL_SERIES;
-  const sum = (...arrs: number[][]) => arrs[0].map((_, i) => arrs.reduce((a, x) => a + x[i], 0));
-
-  const rows: { name: string; vals: number[]; kind?: "expense" | "sum" }[] = [
-    { name: "รายได้ค่าเช่า", vals: s.rent },
-    { name: "ดอกเบี้ยรับ", vals: s.interest },
-    { name: "เงินปันผล", vals: s.dividend },
-    { name: "กำไรจากการขายทรัพย์", vals: s.gain },
-    { name: "รวมรายได้", vals: sum(s.rent, s.interest, s.dividend, s.gain), kind: "sum" },
-    { name: "ค่าบริหารจัดการ", vals: s.admin, kind: "expense" },
-    { name: "ซ่อมบำรุง", vals: s.repair, kind: "expense" },
-    { name: "ดอกเบี้ยจ่าย", vals: s.interestExp, kind: "expense" },
-    { name: "ภาษี & ค่าธรรมเนียม", vals: s.tax, kind: "expense" },
-    { name: "รวมค่าใช้จ่าย", vals: sum(s.admin, s.repair, s.interestExp, s.tax), kind: "expense" },
-    { name: "กำไรสุทธิ", vals: sum(s.rent, s.interest, s.dividend, s.gain, s.admin, s.repair, s.interestExp, s.tax), kind: "sum" },
-  ];
-
-  return (
-    <TableShell>
-      <Table minWidth={1240}>
-        <thead>
-          <tr>
-            <Th className="sticky left-0 bg-canvas">หมวด</Th>
-            {MONTHS.map((m) => (
-              <Th key={m} align="right" className="whitespace-nowrap p-[12px_8px]">
-                {m.replace(".", "")}
-              </Th>
-            ))}
-            <Th align="right" className="text-ink-900">รวม</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const total = r.vals.reduce((a, b) => a + b, 0);
-            const bold = r.kind === "sum";
-            const tone = r.kind === "expense" ? "text-neg" : "text-ink-900";
-            return (
-              <tr key={r.name} className={bold ? "bg-canvas" : "bg-surface"}>
-                <Td className={cn("whitespace-nowrap p-[11px_10px]", bold && "font-semibold")}>{r.name}</Td>
-                {r.vals.map((v, i) => (
-                  <Td key={i} align="right" className={cn("whitespace-nowrap p-[11px_8px]", tone, bold && "font-semibold")}>
-                    {plMoney(v)}
-                  </Td>
-                ))}
-                <Td align="right" className={cn("whitespace-nowrap p-[11px_10px] font-semibold", tone)}>
-                  {plMoney(total)}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </Table>
-    </TableShell>
-  );
-}
-
-function CFTab() {
-  return (
-    <div className="flex flex-col gap-4">
-      {CF_GROUPS.map((g) => (
-        <div key={g.name} className="rounded-card border border-line bg-surface p-[18px_20px] shadow-card">
-          <div className="mb-2 flex items-baseline justify-between gap-3">
-            <div className="text-h2 font-semibold">{g.name}</div>
-            <div className={cn("text-h2 font-semibold", g.total < 0 ? "text-neg" : "text-pos")}>{signedMoney(g.total)}</div>
-          </div>
-          {g.items.map((i) => (
-            <div key={i.name} className="flex justify-between gap-3 border-t border-line py-2.5 text-base">
-              <span>{i.name}</span>
-              <span className={cn("font-semibold", i.amount < 0 ? "text-neg" : "text-pos")}>{signedMoney(i.amount)}</span>
-            </div>
-          ))}
-        </div>
-      ))}
-
-      <TableShell>
-        <Table minWidth={720}>
-          <thead>
-            <tr>
-              <Th>บัญชีธนาคาร</Th>
-              <Th align="right">ยอดต้นงวด</Th>
-              <Th align="right">เข้า</Th>
-              <Th align="right">ออก</Th>
-              <Th align="right">ยอดปลายงวด</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {CF_ACCOUNTS.map((a) => (
-              <tr key={a.name}>
-                <Td>{a.name}</Td>
-                <Td align="right">{money(a.open)}</Td>
-                <Td align="right" className="font-semibold text-pos">{signedMoney(a.in)}</Td>
-                <Td align="right" className="font-semibold text-neg">{money(a.out)}</Td>
-                <Td align="right" className="font-semibold">{money(a.close)}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </TableShell>
     </div>
   );
 }

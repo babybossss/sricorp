@@ -75,6 +75,7 @@ type Payload = Record<string, unknown> & { transactions?: Record<string, unknown
 
 export function createFakeDb() {
   const rows: LedgerViewRow[] = [];
+  const fake = { maxRows: 1000 };
   const rpcCalls: Payload[] = [];
   const seen = new Map<string, string[]>();
   let seq = 0;
@@ -171,9 +172,16 @@ export function createFakeDb() {
         return q;
       },
       in: (c: string, vals: unknown[]) => (preds.push((r) => vals.includes((r as never)[c])), q),
+      // ลำดับในหน่วยความจำคงที่อยู่แล้ว (ลำดับที่ลงสมุด) จึงไม่ต้องเรียงจริง
+      order: () => q,
+      // PostgREST ตัดผลที่ 1,000 แถวต่อคำขอเงียบๆ — จำลองการแบ่งหน้าด้วย range เพื่อให้เทสต์จับโค้ดที่ไม่แบ่งหน้าได้
+      range: async (from: number, to: number) => ({
+        data: rows.filter((r) => preds.every((p) => p(r))).slice(from, Math.min(to, from + (fake.maxRows - 1)) + 1),
+        error: null,
+      }),
       limit: (n: number) => ((cap = n), q),
       then: (resolve: (v: { data: LedgerViewRow[]; error: null }) => unknown) =>
-        resolve({ data: rows.filter((r) => preds.every((p) => p(r))).slice(0, cap), error: null }),
+        resolve({ data: rows.filter((r) => preds.every((p) => p(r))).slice(0, Math.min(cap, fake.maxRows)), error: null }),
     };
     return q;
   }
@@ -201,7 +209,7 @@ export function createFakeDb() {
         .reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0) * 100
     ) / 100;
 
-  return { client, rows, rpcCalls, control, balance };
+  return { client, rows, rpcCalls, control, balance, fake };
 }
 
 export type FakeDb = ReturnType<typeof createFakeDb>;

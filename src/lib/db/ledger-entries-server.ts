@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadReference } from "./reference";
+import { fetchAllPages } from "./paged";
 import { groupLedgerRows, type LedgerEntry, type LedgerViewRow } from "./ledger-entries";
 
 /** เพดานบรรทัดที่อ่านต่อครั้ง (ประมาณ 300-500 รายการ) — เกินแล้วบอกผู้ใช้ ไม่ตัดเงียบ */
@@ -24,22 +25,25 @@ export async function loadLedgerEntries(): Promise<LedgerListState> {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 
-  const { data, error } = await supabase
-    .from("v_ledger_posted")
-    .select(
-      "transaction_id, owner_id, txn_type_code, doc_date, cash_date, doc_no, txn_asset_id, contact_id, " +
-        "counter_owner_id, intercompany_nature, txn_memo, attachments, source, reverses_id, created_at, " +
-        "coa_id, bank_account_id, debit, credit, cf_category, line_asset_id, line_memo"
-    )
-    .order("doc_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .order("transaction_id", { ascending: true })
-    .order("debit", { ascending: false })
-    .limit(LEDGER_LINE_LIMIT);
+  const fetched = await fetchAllPages<LedgerViewRow>(
+    () =>
+      supabase
+        .from("v_ledger_posted")
+        .select(
+          "transaction_id, owner_id, txn_type_code, doc_date, cash_date, doc_no, txn_asset_id, contact_id, " +
+            "counter_owner_id, intercompany_nature, txn_memo, attachments, source, source_ref, reverses_id, created_at, " +
+            "coa_id, bank_account_id, debit, credit, cf_category, line_asset_id, line_memo"
+        )
+        .order("doc_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .order("transaction_id", { ascending: true })
+        .order("debit", { ascending: false })
+        .order("line_id", { ascending: true }) as never,
+    { stopAfter: LEDGER_LINE_LIMIT }
+  );
+  if (!fetched.ok) return { ok: false, error: `อ่านสมุดบัญชีไม่สำเร็จ (${fetched.error})` };
 
-  if (error) return { ok: false, error: `อ่านสมุดบัญชีไม่สำเร็จ (${error.message})` };
-
-  const rows = (data ?? []) as unknown as LedgerViewRow[];
-  const truncated = rows.length >= LEDGER_LINE_LIMIT;
+  const rows = fetched.rows;
+  const truncated = fetched.truncated;
   return { ok: true, entries: groupLedgerRows(rows, refState.ref.coaCodeById, truncated), truncated };
 }
