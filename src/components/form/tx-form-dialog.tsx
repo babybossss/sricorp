@@ -4,6 +4,7 @@ import * as React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 import { useApp } from "@/lib/store";
 import { useTxForm } from "./use-tx-form";
 import { StepType, StepHolder, StepDetail, StepConfirm } from "./tx-steps";
@@ -14,25 +15,47 @@ const STEP_LABELS = ["เลือกประเภท", "ผู้ถือก
 export function TxFormDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const api = useTxForm();
   const showToast = useApp((s) => s.showToast);
-  const { step, setStep, draft, canSubmit, reset } = api;
+  const router = useRouter();
+  const { step, setStep, draft, canSubmit, reset, submitting } = api;
+  // ผลจาก DB ที่ต้องให้ผู้ใช้เห็นค้างไว้จนกว่าจะแก้ — ไม่ใช่ toast ที่หายเอง
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   function close() {
+    // กำลังบันทึกอยู่ห้ามปิด — ปิดแล้วไม่มีใครเห็นผล (สำเร็จหรือไม่) และผู้ใช้จะกดซ้ำ
+    if (submitting) return;
     onOpenChange(false);
+    setSubmitError(null);
     // หน่วงไว้ให้ dialog ปิดจบก่อนค่อยล้างค่า จะได้ไม่เห็นฟอร์มกระพริบ
     setTimeout(reset, 200);
   }
 
-  function next() {
+  async function next() {
     if (step < 4) {
       setStep(step + 1);
       return;
     }
     if (!canSubmit) return;
-    showToast(draft.skipApproval ? "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ" : "ส่งอนุมัติแล้ว 1 รายการ");
+    setSubmitError(null);
+    const outcome = await api.submit();
+    if (!outcome.ok) {
+      // ไม่ปิดฟอร์ม ไม่ล้างค่า — ผู้ใช้แก้แล้วกดใหม่ได้ ไม่ต้องกรอกทั้งหมดอีกรอบ
+      setSubmitError(outcome.message);
+      return;
+    }
+    const n = outcome.transactionIds.length;
+    showToast(
+      outcome.replayed
+        ? "รายการนี้เพิ่งบันทึกไปแล้ว ระบบไม่ได้ลงซ้ำ"
+        : n > 1
+        ? `บันทึกเข้าสมุดบัญชีแล้ว ${n} รายการคู่กัน`
+        : "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ"
+    );
+    router.refresh();
     close();
   }
 
-  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && !canSubmit);
+  const nextDisabled =
+    (step === 1 && !draft.typeKey) || (step === 2 && !draft.holderId) || (step === 4 && !canSubmit);
 
   return (
     <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : close())}>
@@ -66,11 +89,17 @@ export function TxFormDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         </div>
 
         <DialogFooter>
-          <Button variant="secondary" onClick={() => (step > 1 ? setStep(step - 1) : close())}>
+          {/* อยู่ในส่วนท้ายเพื่อให้เห็นทันทีหลังกดปุ่ม — ไม่ใช่ด้านบนที่เลื่อนพ้นจอไปแล้ว */}
+          {submitError ? (
+            <div role="alert" className="w-full rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+              <b>บันทึกไม่สำเร็จ</b> — {submitError}
+            </div>
+          ) : null}
+          <Button variant="secondary" disabled={submitting} onClick={() => (step > 1 ? setStep(step - 1) : close())}>
             ย้อนกลับ
           </Button>
-          <Button onClick={next} disabled={nextDisabled}>
-            {step === 4 ? (draft.skipApproval ? "บันทึกเข้าสมุดบัญชี" : "ส่งอนุมัติ") : "ถัดไป"}
+          <Button onClick={() => void next()} disabled={nextDisabled}>
+            {step === 4 ? (submitting ? "กำลังบันทึก…" : "บันทึกเข้าสมุดบัญชี") : "ถัดไป"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -4,8 +4,8 @@ import * as React from "react";
 import { Pill } from "@/components/ui/pill";
 import { money } from "@/lib/format";
 import { previewPosting } from "@/lib/ledger/preview";
-// จุดเดียวที่ผูกพรีวิวกับข้อมูลจำลอง — ต่อ Supabase จริงให้สลับ resolver ที่บรรทัดนี้
-import { MOCK_RESOLVER } from "@/lib/mock/resolver";
+// resolver สร้างจากผู้ถือ/บัญชีจริงใน DB (สแนปช็อตเดียวกับที่ฟอร์มแสดงตัวเลือก)
+import { useResolver } from "@/components/reference/reference-provider";
 import type { PostingInput } from "@/lib/ledger/types";
 
 /**
@@ -22,8 +22,9 @@ export function JournalPreview({
   /** คำอธิบายภาษาคนใต้ตาราง — เปิดตอนยืนยัน ปิดในแผงย่อยเพราะยาวเกินไป */
   showSummary?: boolean;
 }) {
+  const resolver = useResolver();
   if (!input) return null;
-  const preview = previewPosting(input, MOCK_RESOLVER);
+  const preview = previewPosting(input, resolver);
 
   if (!preview.ok) {
     return (

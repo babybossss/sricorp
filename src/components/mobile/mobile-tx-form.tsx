@@ -20,20 +20,37 @@ export function MobileTxForm() {
   const router = useRouter();
   const api = useTxForm();
   const showToast = useApp((s) => s.showToast);
-  const { step, setStep, draft, canSubmit, reset } = api;
+  const { step, setStep, draft, canSubmit, reset, submitting } = api;
+  // ผลจาก DB ที่ต้องให้ผู้ใช้เห็นค้างไว้จนกว่าจะแก้ — ไม่ใช่ toast ที่หายเอง
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
 
-  function next() {
+  async function next() {
     if (step < 4) {
       setStep(step + 1);
       return;
     }
     if (!canSubmit) return;
-    showToast(draft.skipApproval ? "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ" : "ส่งอนุมัติแล้ว 1 รายการ");
+    setSubmitError(null);
+    const outcome = await api.submit();
+    if (!outcome.ok) {
+      // ไม่ล้างค่า ไม่เปลี่ยนหน้า — ผู้ใช้แก้แล้วกดใหม่ได้
+      setSubmitError(outcome.message);
+      return;
+    }
+    const n = outcome.transactionIds.length;
+    showToast(
+      outcome.replayed
+        ? "รายการนี้เพิ่งบันทึกไปแล้ว ระบบไม่ได้ลงซ้ำ"
+        : n > 1
+        ? `บันทึกเข้าสมุดบัญชีแล้ว ${n} รายการคู่กัน`
+        : "บันทึกเข้าสมุดบัญชีแล้ว 1 รายการ"
+    );
     reset();
     router.push("/m");
   }
 
-  const nextDisabled = (step === 1 && !draft.typeKey) || (step === 4 && !canSubmit);
+  const nextDisabled =
+    (step === 1 && !draft.typeKey) || (step === 2 && !draft.holderId) || (step === 4 && !canSubmit);
 
   return (
     <div className="min-h-screen bg-canvas py-6">
@@ -64,8 +81,13 @@ export function MobileTxForm() {
         </div>
 
         <div className="flex flex-col gap-2 border-t border-line p-[12px_16px_20px]">
-          <Button size="mobile" onClick={next} disabled={nextDisabled}>
-            {step === 4 ? (draft.skipApproval ? "บันทึกเข้าสมุดบัญชี" : "ส่งอนุมัติ") : "ถัดไป"}
+          {submitError ? (
+            <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+              <b>บันทึกไม่สำเร็จ</b> — {submitError}
+            </div>
+          ) : null}
+          <Button size="mobile" onClick={() => void next()} disabled={nextDisabled}>
+            {step === 4 ? (submitting ? "กำลังบันทึก…" : "บันทึกเข้าสมุดบัญชี") : "ถัดไป"}
           </Button>
           <Button size="mobile" variant="secondary" onClick={() => (step > 1 ? setStep(step - 1) : router.push("/m"))}>
             ย้อนกลับ

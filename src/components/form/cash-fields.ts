@@ -1,5 +1,6 @@
 import { findSub, movesCash } from "@/lib/rules/tx-rules";
 import type { IntercompanyNature } from "@/lib/ledger/types";
+import { todayDmy } from "@/lib/format";
 
 /**
  * ช่องทุกช่องของ **ฝั่งเงินสด** ในฟอร์มบันทึกรายการ
@@ -33,7 +34,8 @@ export const CASH_FIELD_KEYS = ["bankId", "cashDate", "transferToBankId", "inter
 /** ค่าตั้งต้นของช่องฝั่งเงินสด — `use-tx-form` เอาไปประกอบเป็นฟอร์มเปล่า */
 export const EMPTY_CASH_FIELDS: CashFields = {
   bankId: "",
-  cashDate: "03/09/2026",
+  // วันนี้ตามเวลากรุงเทพฯ — ของเดิมเป็นวันที่จำลอง (03/09/2026) ซึ่งจะถูกส่งลง DB จริงถ้าผู้ใช้ไม่แก้
+  cashDate: todayDmy(),
   transferToBankId: "",
   intercompanyNature: "",
 };

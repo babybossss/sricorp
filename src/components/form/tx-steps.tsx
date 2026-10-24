@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { TX_TYPES, impactLines, REQUIREMENT_LABEL, type TxTypeKey } from "@/lib/rules/tx-rules";
-import { HOLDERS, entityById } from "@/lib/mock/entities";
-import { ASSETS } from "@/lib/mock/assets";
-import { useOrderedBanks, useApp } from "@/lib/store";
+import { useReference, useReferenceState } from "@/components/reference/reference-provider";
+import type { RefBank, RefOwner, Reference } from "@/lib/db/reference-types";
+import { prepareImageForUpload, uploadAttachmentFromBrowser } from "@/lib/storage/browser";
 import { Field } from "@/components/ui/field";
 import { Input, AmountInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -22,8 +22,29 @@ import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { coa } from "@/lib/rules/coa";
 import { hasRealEvidence } from "@/lib/storage/evidence";
 import { isAttachmentRef, safeDisplayName } from "@/lib/storage/path";
-import { money, parseAmount } from "@/lib/format";
+import { dmyToIso, money, parseAmount } from "@/lib/format";
 import type { TxDraft, TxFormApi } from "./use-tx-form";
+
+/** ผู้ถือที่เลือกเป็นเจ้าของรายการได้ — ยังเป็น 'planned' (นิติบุคคลที่ยังไม่จดทะเบียน) ไม่โชว์ */
+const selectableHolders = (ref: Reference): RefOwner[] => ref.owners.filter((o) => o.status === "active");
+
+/** ชื่อผู้ถือ — หาไม่เจอแสดงตามจริงว่าไม่รู้จัก ไม่เดา */
+const ownerName = (ref: Reference, id: string): string => ref.owners.find((o) => o.id === id)?.name ?? "ผู้ถือที่ไม่รู้จัก";
+
+/** บัญชีเรียงตามลำดับที่ตั้งไว้ใน Config (`sort_order`) */
+const orderedBanks = (ref: Reference): RefBank[] => [...ref.banks].sort((a, b) => a.sortOrder - b.sortOrder);
+
+/** ข้อความเมื่อโหลดข้อมูลอ้างอิงจากฐานข้อมูลไม่สำเร็จ — บอกตรงๆ ไม่ซ่อนด้วยข้อมูลจำลอง */
+function ReferenceProblem() {
+  const state = useReferenceState();
+  if (state.ok) return null;
+  return (
+    <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+      โหลดรายชื่อผู้ถือ บัญชี ทรัพย์ และผู้ติดต่อจากฐานข้อมูลไม่สำเร็จ จึงยังบันทึกรายการไม่ได้: {state.error}
+      <div className="mt-1 text-sm">ลองโหลดหน้านี้ใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ</div>
+    </div>
+  );
+}
 
 /** ขั้น 1 — เลือกประเภทรายการ */
 export function StepType({ api, onPicked, narrow }: { api: TxFormApi; onPicked?: () => void; narrow?: boolean }) {
@@ -55,14 +76,18 @@ export function StepType({ api, onPicked, narrow }: { api: TxFormApi; onPicked?:
 
 /** ขั้น 2 — ผู้ถือกรรมสิทธิ์ (บัญชีธนาคารอยู่ขั้นรายละเอียด เพราะขึ้นกับว่าเงินเคลื่อนจริงหรือยัง) */
 export function StepHolder({ api }: { api: TxFormApi }) {
-  const isCorp = api.draft.holderId === "corp";
+  const ref = useReference();
+  const holders = selectableHolders(ref);
+  const picked = holders.find((h) => h.id === api.draft.holderId);
+  const isCorp = picked?.policy === "corporate_strict";
 
   return (
     <div className="flex flex-col gap-4">
+      <ReferenceProblem />
       <div>
         <div className="mb-1.5 text-sm text-ink-600">รายการนี้อยู่ในชื่อใคร (ผู้ถือกรรมสิทธิ์)</div>
         <div className="flex flex-wrap gap-2.5">
-          {HOLDERS.map((e) => {
+          {holders.map((e) => {
             const active = api.draft.holderId === e.id;
             return (
               <button
@@ -74,7 +99,7 @@ export function StepHolder({ api }: { api: TxFormApi }) {
                   active ? "border-brand-600 bg-brand-50" : "border-line bg-surface"
                 )}
               >
-                <span className="h-2.5 w-2.5 rounded-pill" style={{ background: e.color }} />
+                <span className="h-2.5 w-2.5 rounded-pill bg-holder-group" style={e.color ? { background: e.color } : undefined} />
                 {e.name}
               </button>
             );
@@ -83,7 +108,9 @@ export function StepHolder({ api }: { api: TxFormApi }) {
       </div>
 
       <div className="rounded border border-brand-100 bg-brand-50 p-[14px_16px] text-base leading-7">
-        {isCorp
+        {!picked
+          ? "ต้องเลือกผู้ถือกรรมสิทธิ์เอง ระบบไม่เลือกให้ — รายการจะลงในงบของคนที่เลือกเท่านั้น"
+          : isCorp
           ? "ถือในชื่อนิติบุคคล: ต้องแนบหลักฐาน (ใบเสร็จ/ใบแจ้งหนี้) และระบุคู่ค้าก่อนส่งอนุมัติ"
           : "ถือในชื่อบุคคล: เงินยังเป็นกองกลางของครอบครัว แนบหลักฐานภายหลังได้ แต่ต้องระบุคู่ค้าเพื่อการติดตาม"}
       </div>
@@ -94,8 +121,9 @@ export function StepHolder({ api }: { api: TxFormApi }) {
 /** ขั้น 3 — รายละเอียด (หมวดย่อยผูกกับประเภทตามตารางกฎ) */
 export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; contactLayer?: number; narrow?: boolean }) {
   const { draft, sub, subs, requires, patch } = api;
-  const orderedBanks = useOrderedBanks(false);
-  const bankOff = useApp((st) => st.bankOff);
+  const ref = useReference();
+  const allBanks = orderedBanks(ref);
+  const bankOff = (id: string) => !ref.banks.find((b) => b.id === id)?.isActive;
   /**
    * หมวดนี้มีเงินเคลื่อนเลยไหม — ถามตารางกฎผ่าน `showsBankField()`
    *
@@ -105,7 +133,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
   const usesBank = showsBankField(sub);
   // เงินเคลื่อนจริงเมื่อติ๊กยืนยันแล้ว หรือหมวดนี้ตั้งค้างไม่ได้ (ต้องเป็นเงินสดเสมอ)
   const moneyMoved = usesBank && !(draft.notYetPaid && api.canAccrue);
-  const banks = bankChoices(orderedBanks, (id) => !!bankOff[id], draft.holderId, draft.bankId);
+  const banks = bankChoices(allBanks, bankOff, draft.holderId, draft.bankId);
   const needsContact = requires("contact");
   const needsAsset = requires("asset");
   // ขายทรัพย์: ยอดเงินมาจาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงด้านล่าง ไม่ให้พิมพ์ทับ
@@ -128,8 +156,12 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       </Field>
 
       <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
-        <Field label="วันที่เอกสาร">
-          <Input value={draft.docDate} onChange={(e) => patch({ docDate: e.target.value })} />
+        <Field
+          label="วันที่เอกสาร"
+          hint="พิมพ์เป็น วว/ดด/ปปปป ปี ค.ศ. เช่น 24/10/2026"
+          error={draft.docDate && !dmyToIso(draft.docDate) ? "อ่านเป็นวันที่ไม่ได้ — ต้องเป็น วว/ดด/ปปปป ปี ค.ศ." : undefined}
+        >
+          <Input value={draft.docDate} onChange={(e) => patch({ docDate: e.target.value })} inputMode="numeric" />
         </Field>
         {/*
           วันที่เงินเข้า-ออก **ไม่มีสำหรับรายการที่ไม่มีเงินเคลื่อน**
@@ -138,8 +170,12 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           วันที่ที่ระบบจะทิ้งทันที ซึ่งทำให้คนอ่านงบคิดว่ามีเงินเคลื่อนวันนั้น
         */}
         {usesBank ? (
-          <Field label={draft.notYetPaid ? "วันที่ครบกำหนด" : "วันที่เงินเข้า/ออกจริง"}>
-            <Input value={draft.cashDate} onChange={(e) => patch({ cashDate: e.target.value })} />
+          <Field
+            label={draft.notYetPaid && api.canAccrue ? "วันที่ครบกำหนด (ไม่บันทึกลงสมุด)" : "วันที่เงินเข้า/ออกจริง"}
+            hint="พิมพ์เป็น วว/ดด/ปปปป ปี ค.ศ."
+            error={api.moneyMoved && !dmyToIso(draft.cashDate) ? "อ่านเป็นวันที่ไม่ได้ — ต้องเป็น วว/ดด/ปปปป ปี ค.ศ." : undefined}
+          >
+            <Input value={draft.cashDate} onChange={(e) => patch({ cashDate: e.target.value })} inputMode="numeric" />
           </Field>
         ) : (
           <Field label="วันที่เงินเข้า/ออกจริง" hint="ไม่มี — รายการปรับปรุงทางบัญชีไม่มีเงินเคลื่อน">
@@ -218,7 +254,7 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           {banks.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
-              {bankOff[b.id] ? " (ปิดใช้งานแล้ว)" : ""}
+              {bankOff(b.id) ? " (ปิดใช้งานแล้ว)" : ""}
             </option>
           ))}
         </Select>
@@ -259,11 +295,13 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         >
           <Select value={draft.assetId} onChange={(e) => patch({ assetId: e.target.value })}>
             <option value="">— ไม่ระบุโปรเจค —</option>
-            {ASSETS.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
+            {ref.assets
+              .filter((a) => a.status === "active" || a.id === draft.assetId)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} · {a.code}
+                </option>
+              ))}
           </Select>
         </Field>
       </div>
@@ -318,8 +356,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
  */
 function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) {
   const { draft, patch, pickTransferTo, transferToOwnerId, isCrossOwner } = api;
-  const banks = useOrderedBanks(true).filter((b) => b.id !== draft.bankId);
-  const toOwner = transferToOwnerId ? entityById(transferToOwnerId) : null;
+  const ref = useReference();
+  const banks = orderedBanks(ref).filter((b) => b.isActive && b.id !== draft.bankId);
+  const toOwner = transferToOwnerId ? ref.owners.find((o) => o.id === transferToOwnerId) ?? null : null;
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
@@ -336,7 +375,7 @@ function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) 
             <option value="">— เลือกบัญชีปลายทาง —</option>
             {banks.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name} · {entityById(b.ownerId).name}
+                {b.name} · {ownerName(ref, b.ownerId)}
               </option>
             ))}
           </Select>
@@ -366,7 +405,7 @@ function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) 
 
       {isCrossOwner ? (
         <div className="rounded border border-warn bg-warn-bg p-[12px_14px] text-sm leading-6 text-warn-fg">
-          ข้ามผู้ถือ — เงินออกจากชื่อ <b>{entityById(draft.holderId).name}</b> ไปเข้าชื่อ <b>{toOwner?.name}</b>{" "}
+          ข้ามผู้ถือ — เงินออกจากชื่อ <b>{ownerName(ref, draft.holderId)}</b> ไปเข้าชื่อ <b>{toOwner?.name ?? "ผู้ถือที่ไม่รู้จัก"}</b>{" "}
           ระบบจะสร้าง<b>สองรายการคู่กัน</b> ฝ่ายละหนึ่ง เพราะหนึ่งรายการมีผู้ถือได้คนเดียว
           {draft.intercompanyNature ? (
             <div className="mt-1 text-ink-600">{INTERCOMPANY_RULES[draft.intercompanyNature].note}</div>
@@ -485,10 +524,10 @@ export function ImpactPreview({ subCode, accrued }: { subCode: string; accrued?:
 /** ขั้น 4 — แนบไฟล์ & ยืนยัน */
 export function StepConfirm({ api }: { api: TxFormApi }) {
   const { draft, sub, missing, patch } = api;
-  const banks = useOrderedBanks(false);
-  const holder = HOLDERS.find((h) => h.id === draft.holderId);
-  const bank = banks.find((b) => b.id === draft.bankId);
-  const asset = ASSETS.find((a) => a.id === draft.assetId);
+  const ref = useReference();
+  const bank = ref.banks.find((b) => b.id === draft.bankId);
+  const holder = ref.owners.find((h) => h.id === draft.holderId);
+  const asset = ref.assets.find((a) => a.id === draft.assetId);
   const typeLabel = TX_TYPES.find((t) => t.key === draft.typeKey);
   const isCorp = holder?.policy === "corporate_strict";
 
@@ -507,41 +546,98 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
       k: "วันที่เอกสาร / เงินจริง",
       v: !showsBankField(sub)
         ? `${draft.docDate} · ไม่มีวันที่เงินเคลื่อน`
-        : `${draft.docDate} · ${draft.notYetPaid ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}`,
+        : `${draft.docDate} · ${draft.notYetPaid && api.canAccrue ? "ยังไม่ได้รับ-จ่าย" : draft.cashDate}`,
     },
     { k: "โปรเจค (ทรัพย์)", v: asset?.name ?? "—" },
   ];
 
-  // รอบนี้ฟอร์มยังไม่ได้ต่อ Supabase Storage — ปุ่มนี้แค่จำลองการ "เลือกไฟล์"
-  // **ไม่ได้อัปโหลดจริง** จึงยังไม่ใช่หลักฐานตามกติกา (D-095) และนิติบุคคลยังบันทึกไม่ได้
-  // ห้าม "สร้าง path หน้าตาเหมือนของจริง" ให้ผ่านด่าน — นั่นคือการทำให้สิ่งที่ผู้ใช้เห็น
-  // ต่างจากสิ่งที่ DB ยอมรับ (ซึ่งจะไปล้มตอน post แทนที่จะรู้ตัวที่นี่)
-  const addMockFile = () =>
-    patch({ attachments: [...draft.attachments, `หลักฐาน-${draft.attachments.length + 1}.pdf`] });
-  const removeFile = (i: number) =>
-    patch({ attachments: draft.attachments.filter((_, n) => n !== i) });
+  // ---- อัปโหลดไฟล์หลักฐานขึ้น Storage จริง (D-095 · D-104) ----
+  // ได้ path กลับมาเก็บใน draft.attachments · ล้มเหลว = บอกเหตุผลตรงๆ ไม่สร้างไฟล์จำลองให้ผ่านด่าน
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const pickRef = React.useRef<HTMLInputElement>(null);
+  const cameraRef = React.useRef<HTMLInputElement>(null);
+
+  async function onFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    if (!draft.holderId) {
+      setUploadError("เลือกผู้ถือกรรมสิทธิ์ก่อน — ไฟล์หลักฐานเก็บแยกตามผู้ถือ");
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    const added: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        const prepared = await prepareImageForUpload(file);
+        if (!prepared.ok) {
+          setUploadError(`${safeDisplayName(file.name)}: ${prepared.message}`);
+          continue;
+        }
+        const up = await uploadAttachmentFromBrowser(prepared.file, draft.holderId);
+        if (!up.ok) {
+          setUploadError(`${safeDisplayName(file.name)}: ${up.message}`);
+          continue;
+        }
+        added.push(up.ref);
+      }
+    } finally {
+      setUploading(false);
+      if (pickRef.current) pickRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
+    }
+    if (added.length) patch({ attachments: [...draft.attachments, ...added] });
+  }
+
+  const removeFile = (i: number) => patch({ attachments: draft.attachments.filter((_, n) => n !== i) });
 
   return (
     <div className="flex flex-col gap-4">
+      <ReferenceProblem />
+
       <div className="rounded-card border-2 border-dashed border-line bg-canvas p-6 text-center">
-        <div className="text-base font-semibold">ลากไฟล์มาวาง หรือเลือกไฟล์</div>
-        <div className="m-[4px_0_12px] text-sm text-ink-600">สลิปโอนเงิน · ใบเสร็จ · ใบแจ้งหนี้ (PDF/JPG)</div>
+        <div className="text-base font-semibold">แนบไฟล์หลักฐาน</div>
+        <div className="m-[4px_0_12px] text-sm text-ink-600">สลิปโอนเงิน · ใบเสร็จ · ใบแจ้งหนี้ (PDF/JPG/PNG) · ไฟล์ละไม่เกิน 4 MB</div>
+        <input
+          ref={pickRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+          multiple
+          hidden
+          onChange={(e) => void onFiles(e.target.files)}
+        />
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => void onFiles(e.target.files)}
+        />
         <div className="flex flex-wrap justify-center gap-2.5">
           <button
             type="button"
-            onClick={addMockFile}
-            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold"
+            disabled={uploading}
+            onClick={() => pickRef.current?.click()}
+            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold disabled:opacity-60"
           >
             เลือกไฟล์
           </button>
           <button
             type="button"
-            onClick={addMockFile}
-            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold"
+            disabled={uploading}
+            onClick={() => cameraRef.current?.click()}
+            className="min-h-control rounded border border-line bg-surface px-[18px] text-base font-semibold disabled:opacity-60"
           >
             ถ่ายรูป
           </button>
         </div>
+        {uploading ? <div role="status" className="mt-3 text-base text-ink-600">กำลังอัปโหลดไฟล์… อย่าปิดหน้านี้</div> : null}
+        {uploadError ? (
+          <div role="alert" className="mt-3 rounded border border-neg bg-neg-bg p-[10px_12px] text-sm leading-6 text-neg-fg">
+            อัปโหลดไม่สำเร็จ: {uploadError}
+          </div>
+        ) : null}
         {draft.attachments.length ? (
           <div className="mt-3 flex flex-wrap justify-center gap-2">
             {draft.attachments.map((f, i) => (
@@ -552,17 +648,15 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
                 className="flex min-h-[44px] items-center gap-2 rounded border border-line bg-surface px-3 text-sm"
               >
                 📎 {isAttachmentRef(f) ? `ไฟล์หลักฐาน ${i + 1}` : safeDisplayName(f)}{" "}
-                <span className="text-ink-400">เอาออก</span>
+                <span className="text-ink-400">เอาออกจากรายการนี้</span>
               </button>
             ))}
           </div>
         ) : null}
-        {/* ถามกฎชุดเดียวกับ engine (hasRealEvidence) ไม่ใช่นับความยาวอาร์เรย์ —
-            ไม่งั้นคำเตือนจะหายไปหลังกด "เลือกไฟล์" ทั้งที่ปุ่มบันทึกยังถูกกั้นอยู่ */}
+        {/* ถามกฎชุดเดียวกับ engine (hasRealEvidence) ไม่ใช่นับความยาวอาร์เรย์ */}
         {isCorp && !hasRealEvidence(draft.attachments, { ownerId: draft.holderId }) ? (
           <div className="mt-3 text-sm leading-6 text-warn-fg">
             {holder?.name} เป็นนิติบุคคล — ต้องมี <b>ไฟล์ที่อัปโหลดขึ้นระบบจริง</b> อย่างน้อยหนึ่งไฟล์ก่อนบันทึก
-            {draft.attachments.length ? " (ไฟล์ที่เลือกไว้ยังเป็นการจำลอง ยังไม่ได้อัปโหลด)" : null}
           </div>
         ) : null}
       </div>
@@ -595,10 +689,23 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
         </div>
       ) : null}
 
-      <label className="flex items-start gap-3 rounded border border-brand-100 bg-brand-50 p-3.5 text-base leading-[26px]">
-        <Checkbox className="mt-0.5 h-6 w-6" checked={draft.skipApproval} onChange={(e) => patch({ skipApproval: e.target.checked })} />
-        <span>บันทึกเข้าสมุดบัญชีทันที (ข้ามการอนุมัติ) — เฉพาะ Management</span>
-      </label>
+      {/* หมวดที่เส้นทางบันทึกจริงยังต่อไม่ครบ — บอกก่อนกด ไม่ใช่ให้กดแล้วเจอ error */}
+      {api.notWired ? (
+        <div className="rounded border border-warn bg-warn-bg p-[14px_16px] text-base leading-7 text-warn-fg">
+          ยังบันทึกไม่ได้: {api.notWired}
+        </div>
+      ) : null}
+
+      {!api.canPost ? (
+        <div className="rounded border border-warn bg-warn-bg p-[14px_16px] text-base leading-7 text-warn-fg">
+          บัญชีของคุณลงสมุดบัญชีโดยตรงไม่ได้ (ต้องมีสิทธิ์อนุมัติเข้าสมุด) — การส่งร่างให้ผู้อนุมัติยังไม่ได้ต่อกับฐานข้อมูล
+          จึงยังบันทึกจากหน้านี้ไม่ได้
+        </div>
+      ) : (
+        <div className="rounded border border-brand-100 bg-brand-50 p-[14px_16px] text-base leading-7">
+          กด “บันทึกเข้าสมุดบัญชี” แล้วรายการจะถูกลงสมุดทันที — ลบไม่ได้ แก้ได้ด้วยการกลับรายการเท่านั้น
+        </div>
+      )}
     </div>
   );
 }

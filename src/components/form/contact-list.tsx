@@ -1,15 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { useApp } from "@/lib/store";
-import { CONTACT_KIND_LABEL, contactFullName } from "@/lib/mock/contacts";
+import { useReference } from "@/components/reference/reference-provider";
+import { contactFullName, contactTypeLabel } from "@/lib/db/reference-types";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
 import { ContactPicker } from "./contact-picker";
 
 /** รายชื่อผู้ติดต่อทั้งหมด — คนที่สร้างจากในฟอร์มบันทึกรายการจะมาโผล่ที่นี่ด้วย */
 export function ContactList() {
-  const contacts = useApp((s) => s.contacts);
+  const { contacts } = useReference();
   const [picked, setPicked] = React.useState("");
 
   return (
@@ -39,7 +39,7 @@ export function ContactList() {
               <tr key={c.id} className={picked === c.id ? "bg-brand-50" : undefined}>
                 <Td className="p-[12px_14px] font-semibold">{contactFullName(c)}</Td>
                 <Td className="p-[12px_14px]">
-                  <Pill className="border-line bg-canvas text-ink-600">{CONTACT_KIND_LABEL[c.kind]}</Pill>
+                  <Pill className="border-line bg-canvas text-ink-600">{contactTypeLabel(c.types)}</Pill>
                 </Td>
                 <Td className="p-[12px_14px] text-ink-600">{c.phone || "—"}</Td>
                 <Td className="p-[12px_14px] text-ink-600">{c.lineId || "—"}</Td>

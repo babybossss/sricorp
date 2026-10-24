@@ -72,3 +72,56 @@ export function parseAmountOrNull(raw: string): number | null {
 export function parseAmount(raw: string): number {
   return parseAmountOrNull(raw) ?? 0;
 }
+
+/* ------------------------------------------------------------------ *
+ * วันที่ในฟอร์ม — ผู้ใช้พิมพ์ วว/ดด/ปปปป (ค.ศ.) · DB รับ YYYY-MM-DD
+ * ------------------------------------------------------------------ */
+
+/** วันนี้ตามเวลากรุงเทพฯ รูป วว/ดด/ปปปป — ระบุเขตเวลาเอง ไม่ให้ server (UTC) กับ browser ได้วันต่างกัน */
+export function todayDmy(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("day")}/${get("month")}/${get("year")}`;
+}
+
+/**
+ * แปลง "วว/ดด/ปปปป" เป็น "YYYY-MM-DD" · อ่านไม่ออกหรือไม่ใช่วันที่จริง = `null` (ไม่เดา)
+ *
+ * - ต้องเป็นวันที่ที่มีอยู่จริงในปฏิทิน (31/02 ไม่ผ่าน)
+ * - ปีต้องเป็น ค.ศ. 1900-2399 · ปี พ.ศ. (25xx) **ปฏิเสธ ไม่แปลงให้เอง** เพราะแปลงผิดทิศ = ลงบัญชีผิดปีเงียบๆ
+ * - รับ YYYY-MM-DD ที่ถูกต้องด้วย (กันค่าที่ผ่านการแปลงแล้วถูกส่งซ้ำ)
+ */
+export function dmyToIso(raw: string): string | null {
+  const t = raw.trim();
+  let d: number, m: number, y: number;
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (dmy) {
+    d = Number(dmy[1]);
+    m = Number(dmy[2]);
+    y = Number(dmy[3]);
+  } else if (iso) {
+    y = Number(iso[1]);
+    m = Number(iso[2]);
+    d = Number(iso[3]);
+  } else {
+    return null;
+  }
+  if (y < 1900 || y > 2399 || m < 1 || m > 12 || d < 1) return null;
+  const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (d > dim) return null;
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${p(y, 4)}-${p(m)}-${p(d)}`;
+}
+
+/** "YYYY-MM-DD" → "วว/ดด/ปปปป" สำหรับแสดงผล · ไม่ใช่รูปที่คาดไว้คืนค่าเดิม */
+export function isoToDmy(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}

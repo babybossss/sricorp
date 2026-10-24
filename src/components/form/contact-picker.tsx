@@ -7,14 +7,16 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useApp } from "@/lib/store";
-import { CONTACT_KIND_LABEL, contactFullName, type ContactKind } from "@/lib/mock/contacts";
+import { useAddContact, useReference } from "@/components/reference/reference-provider";
+import { CONTACT_TYPE_CHOICES, contactFullName, contactTypeLabel } from "@/lib/db/reference-types";
+import { createContact } from "@/app/actions/contacts";
 
 /**
  * Backlog ข้อ 3 — สร้าง contact ได้จากในฟอร์ม แล้วเด้งกลับมาที่ฟอร์มเดิม
  *
  * ปุ่ม "＋ สร้างผู้ติดต่อใหม่" เปิด dialog ซ้อนอีกชั้น (layer=1)
  * เมื่อบันทึก ระบบจะ:
- *   1. เพิ่มผู้ติดต่อเข้า store
+ *   1. สร้างผู้ติดต่อลง `sri_os.contacts` จริง (server action) — id เป็น uuid ที่รายการอ้างถึงได้
  *   2. เรียก onSelect ด้วย id ใหม่ → ฟอร์มเดิมเลือกคนนั้นไว้ให้แล้ว
  *   3. ปิดเฉพาะ dialog ลูก ฟอร์มรายการยังเปิดค้างพร้อมค่าที่กรอกไว้ทั้งหมด
  * ผู้ใช้จึงไม่ต้องกรอกฟอร์มรายการใหม่ทั้งหมด
@@ -35,35 +37,53 @@ export function ContactPicker({
   hint?: string;
   required?: boolean;
   layer?: number;
-  suggestKind?: ContactKind;
+  /** บทบาทที่เสนอให้ตอนสร้างใหม่ (tenant · lender · borrower · vendor · other) */
+  suggestKind?: string;
 }) {
-  const contacts = useApp((s) => s.contacts);
-  const addContact = useApp((s) => s.addContact);
+  const { contacts } = useReference();
+  const addToList = useAddContact();
   const showToast = useApp((s) => s.showToast);
   const [open, setOpen] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
 
   const [form, setForm] = React.useState({ firstName: "", lastName: "", phone: "", lineId: "", email: "", kind: suggestKind });
   const [touched, setTouched] = React.useState(false);
 
   const nameMissing = !form.firstName.trim();
 
-  function save() {
+  async function save() {
     setTouched(true);
-    if (nameMissing) return;
-    const created = addContact({
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim(),
-      phone: form.phone.trim(),
-      lineId: form.lineId.trim(),
-      email: form.email.trim(),
-      kind: form.kind,
-    });
-    // เลือกคนที่เพิ่งสร้างไว้ให้ในฟอร์มเดิมทันที
-    onSelect(created.id);
-    showToast(`เพิ่ม ${contactFullName(created)} แล้ว และเลือกไว้ในฟอร์มให้เรียบร้อย`);
-    setForm({ firstName: "", lastName: "", phone: "", lineId: "", email: "", kind: suggestKind });
-    setTouched(false);
-    setOpen(false);
+    if (nameMissing || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const out = await createContact({
+        firstName: form.firstName,
+        lastName: form.lastName,
+        phone: form.phone,
+        lineId: form.lineId,
+        email: form.email,
+        type: form.kind,
+      });
+      if (!out.ok) {
+        // ไม่ปิด dialog ไม่ล้างค่า — ผู้ใช้แก้แล้วกดใหม่ได้
+        setSaveError(out.message);
+        return;
+      }
+      addToList(out.contact);
+      // เลือกคนที่เพิ่งสร้างไว้ให้ในฟอร์มเดิมทันที
+      onSelect(out.contact.id);
+      showToast(`เพิ่ม ${contactFullName(out.contact)} แล้ว และเลือกไว้ในฟอร์มให้เรียบร้อย`);
+      setForm({ firstName: "", lastName: "", phone: "", lineId: "", email: "", kind: suggestKind });
+      setTouched(false);
+      setOpen(false);
+    } catch (e) {
+      console.error("createContact failed", e);
+      setSaveError("ติดต่อเซิร์ฟเวอร์ไม่ได้ ยังไม่ได้สร้างผู้ติดต่อ — ลองใหม่อีกครั้ง");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -73,7 +93,7 @@ export function ContactPicker({
           <option value="">— เลือกผู้ติดต่อ —</option>
           {contacts.map((c) => (
             <option key={c.id} value={c.id}>
-              {contactFullName(c)} · {CONTACT_KIND_LABEL[c.kind]}
+              {contactFullName(c)} · {contactTypeLabel(c.types)}
             </option>
           ))}
         </Select>
@@ -107,10 +127,10 @@ export function ContactPicker({
                 <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} inputMode="email" placeholder="name@example.com" />
               </Field>
               <Field label="ประเภทผู้ติดต่อ">
-                <Select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as ContactKind })}>
-                  {(Object.keys(CONTACT_KIND_LABEL) as ContactKind[]).map((k) => (
-                    <option key={k} value={k}>
-                      {CONTACT_KIND_LABEL[k]}
+                <Select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+                  {CONTACT_TYPE_CHOICES.map((k) => (
+                    <option key={k.value} value={k.value}>
+                      {k.label}
                     </option>
                   ))}
                 </Select>
@@ -118,10 +138,17 @@ export function ContactPicker({
             </div>
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setOpen(false)}>
+            {saveError ? (
+              <div role="alert" className="w-full rounded border border-neg bg-neg-bg p-[12px_14px] text-base leading-7 text-neg-fg">
+                สร้างผู้ติดต่อไม่สำเร็จ — {saveError}
+              </div>
+            ) : null}
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
               ยกเลิก
             </Button>
-            <Button onClick={save}>บันทึกและกลับไปที่ฟอร์ม</Button>
+            <Button onClick={() => void save()} disabled={saving}>
+              {saving ? "กำลังบันทึก…" : "บันทึกและกลับไปที่ฟอร์ม"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

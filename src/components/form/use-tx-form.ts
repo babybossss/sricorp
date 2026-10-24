@@ -10,16 +10,17 @@ import {
   type TxTypeKey,
   type SubCategory,
 } from "@/lib/rules/tx-rules";
-import { HOLDERS } from "@/lib/mock/entities";
-import { BANKS } from "@/lib/mock/banks";
-import { parseAmount } from "@/lib/format";
+import { dmyToIso, parseAmount, todayDmy } from "@/lib/format";
 import { computeDisposal, type DisposalResult } from "@/lib/disposal/capital-gain";
 import { splitRepayment, type RepaymentSplit } from "@/lib/disposal/repayment";
 import { buildPosting } from "@/lib/ledger/posting";
-// resolver ของผู้ถือ/บัญชี ส่งเข้า engine จากชั้นนี้ — engine ไม่ import ข้อมูลเองแล้ว
-// ต่อ Supabase จริงให้สลับ resolver ตรงบรรทัดนี้ ไม่ต้องแตะ lib/ledger
-import { MOCK_RESOLVER } from "@/lib/mock/resolver";
+// resolver ของผู้ถือ/บัญชี สร้างจากข้อมูลจริงใน DB แล้วส่งเข้า engine จากชั้นนี้ — engine ไม่ import ข้อมูลเอง
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { useReference, useReferenceState, useResolver } from "@/components/reference/reference-provider";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { postEntry, type PostEntryOutcome } from "@/app/actions/post-entry";
+import { notWiredReason } from "@/lib/db/post-entry";
+import { showsBankField } from "./bank-field";
 import { EMPTY_CASH_FIELDS, cashFieldsFor, type CashFields } from "./cash-fields";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
 import {
@@ -46,8 +47,7 @@ export type TxDraft = CashFields & {
   assetId: string;
   contactId: string;
   note: string;
-  skipApproval: boolean;
-  /** ชื่อไฟล์หลักฐานที่แนบ — นิติบุคคลต้องมีอย่างน้อยหนึ่งไฟล์ */
+  /** path ของไฟล์หลักฐานที่อัปโหลดขึ้น Storage แล้ว — นิติบุคคลต้องมีอย่างน้อยหนึ่งไฟล์ */
   attachments: string[];
   /** Backlog ข้อ 2 — เงื่อนไขสัญญา + ตารางงวด (เมื่อหมวดย่อยบังคับ loanTerms) */
   loanTerms: LoanTermsValue;
@@ -58,28 +58,34 @@ export type TxDraft = CashFields & {
 };
 
 /**
- * ค่าตั้งต้นของฟอร์ม — export เพื่อให้เทสต์เทียบ "คืนค่าตั้งต้น" ได้จริง
- * (เทสต์ที่เขียนค่าตั้งต้นซ้ำเอง จะยังเขียวต่อไปเมื่อค่าตั้งต้นในโค้ดเปลี่ยน)
+ * ค่าตั้งต้นของฟอร์ม
+ *
+ * ผู้ถือ **ไม่มีค่าตั้งต้น** — ต้องเลือกเอง (ของเดิมเลือกคนแรกให้ ซึ่งเมื่อเป็นเงินจริง
+ * คนที่กดผ่านโดยไม่อ่านจะลงรายการในชื่อคนผิดเงียบๆ)
+ * วันที่ตั้งต้นเป็นวันนี้ตามเวลากรุงเทพฯ (ของเดิมเป็นวันที่จำลอง 01/09/2026)
  */
-const EMPTY: TxDraft = {
+const freshDraft = (): TxDraft => ({
   ...EMPTY_CASH_FIELDS,
+  cashDate: todayDmy(),
   typeKey: null,
   subCode: "",
-  holderId: HOLDERS[0].id,
+  holderId: "",
   amount: "",
-  docDate: "01/09/2026",
+  docDate: todayDmy(),
   // ตั้งต้นเป็น "ยังไม่ได้รับ-จ่าย" ตามที่ลูกพี่สั่ง 06/10 — ต้องติ๊กยืนยันถึงจะเป็นเงินสด
   // สอดคล้องกับ D-068: เงินเข้าบัญชีต่อเมื่อมีคนยืนยันว่าเงินเคลื่อนจริง
   notYetPaid: true,
   assetId: "",
   contactId: "",
   note: "",
-  skipApproval: false,
   attachments: [],
   loanTerms: EMPTY_LOAN_TERMS,
   disposal: EMPTY_DISPOSAL,
   repayment: EMPTY_REPAYMENT,
-};
+});
+
+/** ค่า "ยังไม่ได้รับ-จ่าย" ตั้งต้น — อ้างจากฟอร์มเปล่าที่เดียว ไม่เขียนซ้ำ */
+const DEFAULT_NOT_YET_PAID = freshDraft().notYetPaid;
 
 /**
  * สถานะฟอร์มบันทึกรายการ ใช้ร่วมกันทั้ง desktop modal และ mobile stepper
@@ -106,12 +112,20 @@ function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boo
     return !!s && canAccrueFromForm(s);
   };
   if (!accruable(nextSub)) return false;
-  return accruable(prevSub) ? current : EMPTY.notYetPaid;
+  return accruable(prevSub) ? current : DEFAULT_NOT_YET_PAID;
 }
 
 export function useTxForm() {
   const [step, setStep] = React.useState(1);
-  const [draft, setDraft] = React.useState<TxDraft>(EMPTY);
+  const [draft, setDraft] = React.useState<TxDraft>(freshDraft);
+  const [submitting, setSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
+  const refState = useReferenceState();
+  const reference = useReference();
+  const resolver = useResolver();
+  const permissions = usePermissions();
+  /** ลงสมุดโดยตรงต้องมีสิทธิ์อนุมัติเข้าสมุด (RLS `txn_insert`) — ส่งร่างให้ผู้อนุมัติยังไม่ได้ต่อกับ DB */
+  const canPost = permissions.has("ledger.approve");
 
   const patch = React.useCallback((p: Partial<TxDraft>) => setDraft((d) => ({ ...d, ...p })), []);
 
@@ -148,19 +162,21 @@ export function useTxForm() {
    */
   const pickHolder = React.useCallback((holderId: string) => {
     setDraft((d) => {
-      const bank = BANKS.find((b) => b.id === d.bankId);
+      const bank = reference.banks.find((b) => b.id === d.bankId);
       const keepBank = bank?.ownerId === holderId;
       return {
         ...d,
         holderId,
         bankId: keepBank ? d.bankId : "",
+        // ไฟล์หลักฐานอยู่ใต้โฟลเดอร์ของผู้ถือที่อัปโหลดให้ — เปลี่ยนผู้ถือแล้วไฟล์เดิมใช้เป็นหลักฐานไม่ได้
+        attachments: holderId === d.holderId ? d.attachments : [],
         // ปลายทางเดิมอาจกลายเป็นบัญชีเดียวกับต้นทาง หรือเปลี่ยนจากข้ามผู้ถือเป็นในคนเดียวกัน
         // ค่าที่ค้างไว้จะกลายเป็นข้อมูลที่ไม่ตรงกับสิ่งที่เห็นบนจอ
         transferToBankId: "",
         intercompanyNature: "",
       };
     });
-  }, []);
+  }, [reference.banks]);
 
   /** เปลี่ยนบัญชีต้นทาง → ปลายทางที่ชนกันต้องหลุดไป ไม่งั้นจะได้รายการโอนเข้าบัญชีตัวเอง */
   const pickBank = React.useCallback((bankId: string) => {
@@ -191,6 +207,13 @@ export function useTxForm() {
    */
   const accrualWhy = accrual && !accrual.ok ? accrual.why : undefined;
   const subs = draft.typeKey ? allowedSubs(draft.typeKey) : [];
+  /**
+   * เงินเคลื่อนจริงในรายการนี้ไหม — มีช่องบัญชี (ตารางกฎ) และไม่ใช่รายการค้างรับ-ค้างจ่าย
+   * ใช้ตัดสินว่า "วันที่เงินเข้า/ออกจริง" ต้องกรอกหรือไม่ · ตัวตัดสินสุดท้ายคือบรรทัดที่ engine คืน (ดู toPostEntryPayload)
+   */
+  const moneyMoved = showsBankField(sub) && !(draft.notYetPaid && canAccrue);
+  /** หมวดที่เส้นทางบันทึกยังต่อไม่ครบ (สัญญากู้ · ขายทรัพย์) — บอกเหตุผล ไม่ใช่บันทึกครึ่งเดียว */
+  const notWired = notWiredReason(sub);
 
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);
 
@@ -199,17 +222,21 @@ export function useTxForm() {
    * (บทเรียนข้อ 2 ใน CLAUDE.md: อย่าเชื่อฟิลด์ที่ผู้ใช้เว้นได้)
    */
   const transferToOwnerId = React.useMemo(
-    () => BANKS.find((b) => b.id === draft.transferToBankId)?.ownerId ?? null,
-    [draft.transferToBankId]
+    () => reference.banks.find((b) => b.id === draft.transferToBankId)?.ownerId ?? null,
+    [reference.banks, draft.transferToBankId]
   );
   const isCrossOwner = !!transferToOwnerId && transferToOwnerId !== draft.holderId;
 
   /** ช่องที่ยังขาดตามกฎของหมวดย่อยที่เลือก */
   const missing = React.useMemo(() => {
     const out: string[] = [];
+    if (!draft.holderId) out.push("ผู้ถือกรรมสิทธิ์");
     if (!draft.typeKey) out.push("ประเภทรายการ");
     if (!draft.subCode) out.push("หมวดย่อย");
     if (!draft.amount.trim()) out.push("จำนวนเงิน");
+    // วันที่ต้องเป็นวันที่จริง (ปี ค.ศ.) — ถ้าอ่านไม่ออก server จะปฏิเสธ ไม่เดาให้
+    if (!dmyToIso(draft.docDate)) out.push("วันที่เอกสาร (วว/ดด/ปปปป)");
+    if (moneyMoved && !dmyToIso(draft.cashDate)) out.push("วันที่เงินเข้า/ออกจริง (วว/ดด/ปปปป)");
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
     if (requires("asset") && !draft.assetId) out.push("โปรเจค (ทรัพย์)");
     if (requires("transferTarget")) {
@@ -233,10 +260,10 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner]);
+  }, [draft, requires, isCrossOwner, moneyMoved]);
 
   const reset = React.useCallback(() => {
-    setDraft(EMPTY);
+    setDraft(freshDraft());
     setStep(1);
   }, []);
 
@@ -333,24 +360,66 @@ export function useTxForm() {
   const postingError = React.useMemo(() => {
     if (!postingInput) return null;
     try {
-      buildPosting(postingInput, MOCK_RESOLVER);
+      buildPosting(postingInput, resolver);
       return null;
     } catch (e) {
       // ห้ามโยนต่อระหว่าง render — จอจะขาวทั้งหน้า ทั้งที่แค่กรอกยังไม่ครบ
       if (e instanceof PostingError) return e.message;
       return e instanceof Error ? e.message : String(e);
     }
-  }, [postingInput]);
+  }, [postingInput, resolver]);
 
   /** กดบันทึกได้ก็ต่อเมื่อกรอกครบ **และ** engine ยอมรับ */
-  const canSubmit = missing.length === 0 && !postingError;
+  const canSubmit = missing.length === 0 && !postingError && !notWired && canPost && refState.ok && !submitting;
 
   /** ยอดสุทธิที่แผงขายทรัพย์คำนวณได้ ต้องเป็นจำนวนเงินของรายการเสมอ */
   const setDerivedAmount = React.useCallback((n: number) => {
     setDraft((d) => (parseAmount(d.amount) === n ? d : { ...d, amount: n.toFixed(2) }));
   }, []);
 
+  /**
+   * กดบันทึก → server action → `fn_post_entry`
+   *
+   * ส่งแค่ `PostingInput` + วันที่ที่พิมพ์ — server คิดบรรทัดบัญชีใหม่ด้วย `buildPosting()` ตัวจริงเอง
+   * (ไม่ส่งบรรทัดจาก browser · ไม่ส่ง draft ตรงๆ) · คืนผลให้ผู้เรียกแสดง **ห้ามกลืน error**
+   * กันกดซ้ำสองชั้น: ธง `submitting` ในฟอร์ม + fingerprint ที่ DB คิดเอง (ลงซ้ำในหน้าต่างเวลา = replay)
+   */
+  const submit = React.useCallback(async (): Promise<PostEntryOutcome> => {
+    if (submittingRef.current) return { ok: false, message: "กำลังบันทึกอยู่ — รอสักครู่ ห้ามกดซ้ำ" };
+    if (!postingInput || !canSubmit) {
+      return { ok: false, message: "ยังบันทึกไม่ได้ — ตรวจรายการที่ขึ้นเตือนสีแดงในหน้านี้ก่อน" };
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      return await postEntry({
+        input: postingInput,
+        docDate: draft.docDate,
+        // หมวดที่ไม่มีเงินเคลื่อนไม่ส่งวันที่เงิน (cash_date ต้องเป็น null) · ค้างรับ-ค้างจ่ายก็ไม่ส่ง
+        cashDate: moneyMoved ? draft.cashDate : "",
+      });
+    } catch (e) {
+      // เครือข่ายขาด/เซิร์ฟเวอร์ล้มกลางทาง = ไม่รู้ว่ารายการถูกบันทึกหรือยัง ต้องบอกตรงๆ ไม่ใช่เดาว่าล้ม
+      console.error("postEntry failed", e);
+      return {
+        ok: false,
+        message:
+          "ติดต่อเซิร์ฟเวอร์ไม่ได้ระหว่างบันทึก — ยังไม่ทราบว่ารายการถูกบันทึกหรือไม่ ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ",
+      };
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved]);
+
   return {
+    referenceState: refState,
+    reference,
+    canPost,
+    notWired,
+    moneyMoved,
+    submitting,
+    submit,
     step,
     setStep,
     draft,
