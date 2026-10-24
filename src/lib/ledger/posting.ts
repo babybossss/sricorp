@@ -294,6 +294,24 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
   // ไปถึงสาขาที่ **ไม่สนใจ `notYetPaid` เลย** แล้วลงบรรทัดเงินสดเงียบๆ
   if (input.notYetPaid) accrualAccount(sub);
 
+  /**
+   * ส่งข้อมูลการถูกหักภาษีมากับหมวดที่หักไม่ได้ → **ปฏิเสธ ไม่ใช่เมินทิ้ง**
+   *
+   * เมินทิ้งคือทางที่แพงที่สุด (รูปแบบเดียวกับบัญชีธนาคารบนรายการที่ไม่มีขาเงินสด):
+   * เส้นทางพิเศษทั้งสี่ (โอน · ขายทรัพย์ · แยกเงินต้น-ดอกเบี้ย · ตีราคา) ประกอบ
+   * บรรทัดเงินสดเองและ **ไม่เคยอ่าน `input.wht` เลย** → ยอดจะถูกลงเต็มจำนวน
+   * ทั้งที่เงินเข้าไม่เต็ม แล้วยอดธนาคารในระบบไม่ตรง statement (Money Invariant 5)
+   * ส่วนค่า `rate`/`certificateNo` จะยังติดไปกับรายการและถูกอ่านต่อตอนทำรายงานภาษี
+   *
+   * ถามจาก `whtCheck()` ในตารางกฎ ไม่ได้ไล่ชื่อหมวด — หมวดใหม่จึงไม่หลุด
+   */
+  if (input.wht && !whtCheck(sub).ok) {
+    throw new PostingError(
+      `หมวด "${sub.label}" ถูกหักภาษี ณ ที่จ่ายไม่ได้ — ${(whtCheck(sub) as { ok: false; why: string }).why} · ` +
+        "ภาษีหัก ณ ที่จ่ายหักจากเงินได้เท่านั้น ไม่ใช่จากการรับคืนเงินต้น เงินมัดจำ หรือการโอนเงินตัวเอง"
+    );
+  }
+
   const summary: string[] = [sub.plain];
   const transactions: PostingTransaction[] = [];
 
@@ -445,7 +463,71 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     } else {
       summary.push("ขายเท่าทุนพอดี ไม่มีกำไรหรือขาดทุน");
     }
-    summary.push("กำไรยังไม่รับรู้ของทรัพย์ชิ้นนี้ต้องถูกล้างออกพร้อมกัน");
+
+    /**
+     * ล้างส่วนเกินทุนจากการตีราคาของทรัพย์ชิ้นนี้ **พร้อมกับการขาย** (D-111 ข้อ 2)
+     *
+     * ก่อนหน้านี้บรรทัดนี้เป็นแค่ข้อความใน `summary` ว่า "ต้องถูกล้างออกพร้อมกัน"
+     * โดยที่ **ไม่มีบรรทัดบัญชีไหนล้างให้เลย** — คำเตือนที่ไม่มีใครทำตามได้
+     * ผลคือสองอย่างพร้อมกัน:
+     *   1. ส่วนเกินทุนค้างในส่วนของเจ้าของตลอดไป ทั้งที่ทรัพย์ไม่อยู่แล้ว
+     *   2. ยอดในบัญชีทรัพย์ไม่กลับเป็นศูนย์ (เครดิตแค่ต้นทุน แต่ยอดยกมาคือ
+     *      ต้นทุน + ส่วนเกิน) = ทรัพย์ผีค้างในงบดุลเท่าส่วนที่ตีราคาไว้
+     *
+     * ทิศทางอ่านจากเครื่องหมาย: เคยตีขึ้น (บวก) → เดบิต 3400 ล้างทุนที่เคยเพิ่ม
+     * คู่กับเครดิตบัญชีทรัพย์เพื่อตัดส่วนที่ตีเพิ่มออก · เคยตีลง (ลบ) → กลับทิศ
+     * ทั้งคู่หักกันในตัวเอง จึงไม่กระทบยอดสมดุลและ **ไม่แตะ P&L**
+     * (กำไร/ขาดทุนจริงคิดจากต้นทุนเดิมตาม FIFO ไปแล้วข้างบน — ถ้าเอาส่วนเกิน
+     *  มาคิดเป็นกำไรด้วย จะเป็นการนับซ้ำรอบที่สอง)
+     */
+    const surplus = r.unrealizedToReverse;
+    if (surplus !== 0) {
+      const magnitude = Math.abs(surplus);
+      if (surplus > 0) {
+        lines.push(
+          line({
+            coaCode: REVALUATION_SURPLUS_COA,
+            assetId: input.assetId,
+            debit: magnitude,
+            memo: "ล้างส่วนเกินทุนจากการตีราคาที่เคยตีขึ้น",
+          })
+        );
+        lines.push(
+          line({
+            coaCode: sub.cr,
+            assetId: input.assetId,
+            credit: magnitude,
+            cfCategory: sub.cashflow,
+            memo: "ตัดส่วนที่ตีราคาเพิ่มไว้ออกจากบัญชีทรัพย์",
+          })
+        );
+      } else {
+        lines.push(
+          line({
+            coaCode: sub.cr,
+            assetId: input.assetId,
+            debit: magnitude,
+            cfCategory: sub.cashflow,
+            memo: "กลับส่วนที่ตีราคาลดไว้ในบัญชีทรัพย์",
+          })
+        );
+        lines.push(
+          line({
+            coaCode: REVALUATION_SURPLUS_COA,
+            assetId: input.assetId,
+            credit: magnitude,
+            memo: "ล้างส่วนเกินทุนจากการตีราคาที่เคยตีลง",
+          })
+        );
+      }
+      summary.push(
+        `ล้างส่วนเกินทุนจากการตีราคาของทรัพย์ชิ้นนี้ ${surplus.toLocaleString("en-US")} บาทออกพร้อมกัน — ` +
+          (r.unrealizedIsLoss ? "เคยตีราคาลงไว้" : "เคยตีราคาขึ้นไว้") +
+          " ยอดในส่วนของเจ้าของและในบัญชีทรัพย์จึงกลับเป็นศูนย์ ไม่นับซ้ำกับกำไรจากการขาย"
+      );
+    } else {
+      summary.push("ทรัพย์ชิ้นนี้ไม่มีส่วนเกินทุนจากการตีราคาค้างอยู่ จึงไม่มีอะไรต้องล้าง");
+    }
 
     transactions.push({ ownerId: input.ownerId, lines });
   } else if (sub.requires?.includes("principalInterestSplit")) {
@@ -513,25 +595,94 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     const drIsCash = isCashAccount(drCode);
     const crIsCash = isCashAccount(crCode);
 
-    transactions.push({
-      ownerId: input.ownerId,
-      lines: [
+    /**
+     * ถูกหักภาษี ณ ที่จ่าย → ขาเงินสดแตกเป็นสองบรรทัด (D-111 ข้อ 1)
+     *
+     *   เงินสด            95  (dr)   ← ยอดที่เข้าบัญชีจริง ตรงกับ statement
+     *   ภาษีถูกหักรอเครดิต  5  (dr)   ← สินทรัพย์ เอาไปเครดิตภาษีปลายปี
+     *       รายได้               100  (cr)  ← **ยอดเต็มเสมอ**
+     *
+     * ตั้งค้างพร้อมกับถูกหักภาษีไม่ได้: ใบรับรองการหักออกตอน **จ่ายเงินจริง**
+     * ถ้ายังไม่จ่าย ก็ยังไม่มีใครหัก · ยอมให้ทำจะได้สินทรัพย์ภาษีจากเหตุการณ์
+     * ที่ยังไม่เกิด แล้วตอนเงินเข้าจริงจะหักอีกรอบ = เครดิตภาษีสองเท่า
+     */
+    const wht = input.wht ? whtAmounts(sub, amount, input.wht) : null;
+    if (wht && accrual) {
+      throw new PostingError(
+        "ยังไม่ได้รับเงิน จึงยังไม่มีใครหักภาษี ณ ที่จ่าย — ใบรับรองการหักออกตอนจ่ายเงินจริง · " +
+          "ให้ตั้งค้างรับยอดเต็มไว้ก่อน แล้วบันทึกการถูกหักภาษีตอนยืนยันเงินเข้าจริง"
+      );
+    }
+
+    const lines: PostingLine[] = [];
+    if (wht) {
+      lines.push(
+        line({
+          coaCode: drCode,
+          bankAccountId,
+          debit: wht.net,
+          cfCategory,
+          memo: `เงินรับสุทธิหลังถูกหักภาษี ${wht.rate}%`,
+        })
+      );
+      /**
+       * **ห้ามผูก `assetId` กับบรรทัดนี้** และห้ามผูก `bankAccountId`
+       *
+       * `bankAccountId`: 1800 ไม่ใช่บัญชี 11xx ด่าน `fn_assert_line_bank_owner`
+       * ฝั่ง DB ปฏิเสธบรรทัดที่ไม่ใช่เงินสดแต่มีบัญชีธนาคารติดมา (ข้อ 7 ของผู้ตรวจ)
+       *
+       * `assetId`: `fn_asset_cost_basis()` รวม **ทุกบรรทัดบัญชีสินทรัพย์ที่ผูกทรัพย์**
+       * เป็นต้นทุนของทรัพย์ชิ้นนั้น → ผูกที่นี่ = ต้นทุนคอนโดบวมขึ้นเท่าภาษีที่ถูกหัก
+       * จากค่าเช่าทุกเดือน แล้วกำไรจากการขาย (FIFO · D-038) จะต่ำกว่าจริงเรื่อยๆ
+       * โดยที่ทุกใบสมดุลและไม่มีอะไรฟ้อง · ภาษีที่ถูกหักเป็นเครดิตระดับผู้ถือ
+       * ไม่ใช่ต้นทุนของทรัพย์
+       */
+      lines.push(
+        line({
+          coaCode: wht.account,
+          debit: wht.withheld,
+          cfCategory,
+          memo:
+            `ภาษีหัก ณ ที่จ่าย ${wht.rate}%` +
+            (input.wht?.certificateNo ? ` · ใบรับรองเลขที่ ${input.wht.certificateNo}` : ""),
+        })
+      );
+    } else {
+      lines.push(
         line({
           coaCode: drCode,
           bankAccountId: drIsCash ? bankAccountId : undefined,
           assetId: coa(drCode).type === "asset" && !drIsCash ? input.assetId : undefined,
           debit: amount,
           cfCategory,
-        }),
-        line({
-          coaCode: crCode,
-          bankAccountId: crIsCash ? bankAccountId : undefined,
-          assetId: coa(crCode).type === "asset" && !crIsCash ? input.assetId : undefined,
-          credit: amount,
-          cfCategory,
-        }),
-      ],
-    });
+        })
+      );
+    }
+
+    lines.push(
+      line({
+        coaCode: crCode,
+        bankAccountId: crIsCash ? bankAccountId : undefined,
+        assetId: coa(crCode).type === "asset" && !crIsCash ? input.assetId : undefined,
+        // ยอดเต็มเสมอ — ไม่ว่าจะถูกหักภาษีไว้เท่าไร
+        credit: amount,
+        cfCategory,
+      })
+    );
+
+    transactions.push({ ownerId: input.ownerId, lines });
+
+    if (wht) {
+      summary.push(
+        `ถูกหักภาษี ณ ที่จ่าย ${wht.rate}% = ${wht.withheld.toLocaleString("en-US")} บาท · ` +
+          `เงินเข้าบัญชี ${wht.net.toLocaleString("en-US")} บาท แต่ ` +
+          `**รายได้รับรู้เต็ม ${amount.toLocaleString("en-US")} บาท**`
+      );
+      summary.push(
+        `ภาษีที่ถูกหักลงเป็น ${coaLabel(wht.account)} (สินทรัพย์) — ไม่ใช่ค่าใช้จ่าย · ` +
+          "เอาไปเครดิตภาษีปลายปี หรือขอคืนด้วยหมวด ลงทุน (ขาย/รับคืน) › รับคืนภาษีถูกหัก ณ ที่จ่าย"
+      );
+    }
 
     if (accrual) {
       summary.push(
