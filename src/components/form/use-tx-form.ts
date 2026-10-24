@@ -14,12 +14,14 @@ import {
 import { dmyToIso, parseAmount, todayDmy } from "@/lib/format";
 import { computeDisposal, type DisposalResult } from "@/lib/disposal/capital-gain";
 import { splitRepayment, type RepaymentSplit } from "@/lib/disposal/repayment";
-import { buildPosting } from "@/lib/ledger/posting";
+import { buildPosting, buildPostingDraft } from "@/lib/ledger/posting";
 // resolver ของผู้ถือ/บัญชี สร้างจากข้อมูลจริงใน DB แล้วส่งเข้า engine จากชั้นนี้ — engine ไม่ import ข้อมูลเอง
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { useReference, useReferenceState, useResolver } from "@/components/reference/reference-provider";
 import { usePermissions } from "@/components/auth/permissions-provider";
 import { postEntry, type PostEntryOutcome } from "@/app/actions/post-entry";
+import { listOpenSources, type OpenSource } from "@/app/actions/open-sources";
+import { accrualReductionsOf } from "@/lib/db/clearing-link";
 import { notWiredReason } from "@/lib/db/post-entry";
 import { showsBankField } from "./bank-field";
 import { EMPTY_CASH_FIELDS, cashFieldsFor, type CashFields } from "./cash-fields";
@@ -59,6 +61,8 @@ export type TxDraft = CashFields & {
   repayment: RepaymentValue;
   /** ผู้จ่ายหักภาษี ณ ที่จ่ายไว้ (เฉพาะหมวดที่ตารางกฎยอมให้หักได้และเงินเคลื่อนจริง) */
   wht: WhtDraft;
+  /** ใบค้างที่รายการนี้ชำระ — เลือกเมื่อรายการลดลูกหนี้/เจ้าหนี้และผู้ถือมีของค้างเปิดอยู่หลายใบ */
+  clearsSourceId: string;
 };
 
 /**
@@ -87,6 +91,7 @@ const freshDraft = (): TxDraft => ({
   disposal: EMPTY_DISPOSAL,
   repayment: EMPTY_REPAYMENT,
   wht: EMPTY_WHT,
+  clearsSourceId: "",
 });
 
 /** ค่า "ยังไม่ได้รับ-จ่าย" ตั้งต้น — อ้างจากฟอร์มเปล่าที่เดียว ไม่เขียนซ้ำ */
@@ -239,7 +244,7 @@ export function useTxForm() {
   const isCrossOwner = !!transferToOwnerId && transferToOwnerId !== draft.holderId;
 
   /** ช่องที่ยังขาดตามกฎของหมวดย่อยที่เลือก */
-  const missing = React.useMemo(() => {
+  const missingBase = React.useMemo(() => {
     const out: string[] = [];
     if (!draft.holderId) out.push("ผู้ถือกรรมสิทธิ์");
     if (!draft.typeKey) out.push("ประเภทรายการ");
@@ -370,6 +375,64 @@ export function useTxForm() {
   }, [draft, sub, canAccrue, disposal, repayment.split, whtOn]);
 
   /**
+   * รายการนี้ลดลูกหนี้/เจ้าหนี้ไหม — ถาม engine (ร่าง) แล้วอ่านบรรทัดที่ได้ ไม่ใช่เดาจากรหัสหมวด
+   * ถ้าลด → ไปอ่านของค้างที่ยังเปิดอยู่จาก DB (ยอดคงเหลือไม่คำนวณในหน้าจอ) ให้ผู้ใช้เลือกใบเมื่อมีหลายใบ
+   */
+  const reduction = React.useMemo(() => {
+    if (!postingInput) return null;
+    try {
+      const r = accrualReductionsOf(buildPostingDraft(postingInput, resolver).transactions);
+      return r.length === 1 ? r[0] : null;
+    } catch {
+      return null;
+    }
+  }, [postingInput, resolver]);
+  const reductionKey = reduction ? `${reduction.ownerId}|${reduction.account}` : null;
+  const [sources, setSources] = React.useState<{ key: string | null; items: OpenSource[]; loading: boolean; error: string | null }>({
+    key: null,
+    items: [],
+    loading: false,
+    error: null,
+  });
+  React.useEffect(() => {
+    if (!reductionKey) {
+      setSources({ key: null, items: [], loading: false, error: null });
+      setDraft((d) => (d.clearsSourceId ? { ...d, clearsSourceId: "" } : d));
+      return;
+    }
+    let live = true;
+    const [ownerId, account] = reductionKey.split("|");
+    setSources({ key: reductionKey, items: [], loading: true, error: null });
+    listOpenSources({ ownerId, account })
+      .then((r) => {
+        if (!live) return;
+        if (!r.ok) {
+          setSources({ key: reductionKey, items: [], loading: false, error: r.message });
+          return;
+        }
+        setSources({ key: reductionKey, items: r.items, loading: false, error: null });
+        // ใบที่เลือกไว้ไม่อยู่ในรายการแล้ว (เปลี่ยนผู้ถือ/หมวด หรือถูกชำระไปแล้ว) = ล้างทิ้ง ไม่ส่งค่าเก่า
+        setDraft((d) => (d.clearsSourceId && !r.items.some((i) => i.id === d.clearsSourceId) ? { ...d, clearsSourceId: "" } : d));
+      })
+      .catch(() => live && setSources({ key: reductionKey, items: [], loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงโหลดรายการค้างไม่ได้" }));
+    return () => {
+      live = false;
+    };
+  }, [reductionKey]);
+  const clearSources = sources;
+  /** ลดลูกหนี้/เจ้าหนี้ แต่ผู้ถือไม่มีของค้างเหลือเลย → บันทึกไม่ได้ (DB ปฏิเสธ) บอกทางออกตรงๆ */
+  const clearNoSource = !!reductionKey && !sources.loading && !sources.error && sources.key === reductionKey && sources.items.length === 0;
+
+  /** ช่องที่ยังขาด = ช่องของฟอร์ม + (มีของค้างหลายใบแต่ยังไม่เลือกใบที่ชำระ · ด่านของ DB) */
+  const missing = React.useMemo(
+    () =>
+      clearSources.items.length > 1 && !draft.clearsSourceId
+        ? [...missingBase, "ใบค้างที่ชำระ (มีของค้างหลายใบ)"]
+        : missingBase,
+    [missingBase, clearSources.items.length, draft.clearsSourceId]
+  );
+
+  /**
    * เหตุที่ engine จะปฏิเสธถ้ากดบันทึกตอนนี้
    *
    * เรียก `buildPosting()` **ตัวจริงที่ใช้ลงบัญชี** ไม่ใช่ตัวพรีวิว —
@@ -390,7 +453,7 @@ export function useTxForm() {
   }, [postingInput, resolver]);
 
   /** กดบันทึกได้ก็ต่อเมื่อกรอกครบ **และ** engine ยอมรับ */
-  const canSubmit = missing.length === 0 && !postingError && !notWired && canPost && refState.ok && !submitting;
+  const canSubmit = missing.length === 0 && !postingError && !notWired && !clearNoSource && canPost && refState.ok && !submitting;
 
   /** ยอดสุทธิที่แผงขายทรัพย์คำนวณได้ ต้องเป็นจำนวนเงินของรายการเสมอ */
   const setDerivedAmount = React.useCallback((n: number) => {
@@ -415,6 +478,8 @@ export function useTxForm() {
       return await postEntry({
         input: postingInput,
         docDate: draft.docDate,
+        // ส่งเฉพาะเมื่อเลือกไว้ (ค้างใบเดียว server ผูกให้เอง)
+        clearsSourceId: reductionKey && draft.clearsSourceId ? draft.clearsSourceId : undefined,
         // หมวดที่ไม่มีเงินเคลื่อนไม่ส่งวันที่เงิน (cash_date ต้องเป็น null) · ค้างรับ-ค้างจ่ายก็ไม่ส่ง
         cashDate: moneyMoved ? draft.cashDate : "",
       });
@@ -430,7 +495,7 @@ export function useTxForm() {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved]);
+  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved, reductionKey, draft.clearsSourceId]);
 
   return {
     referenceState: refState,
@@ -439,6 +504,8 @@ export function useTxForm() {
     notWired,
     moneyMoved,
     whtEligible,
+    clearSources,
+    clearNoSource,
     submitting,
     submit,
     step,

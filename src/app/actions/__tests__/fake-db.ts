@@ -9,7 +9,8 @@
  *   - ช่องที่ไม่รู้จักถูกปฏิเสธทั้งใบ · ทุกก้อนต้องสมดุล · มีบรรทัด 11xx ⟺ ต้องมี cash_date
  *   - fingerprint ซ้ำ = replay (ไม่ลงใหม่)
  */
-import { COA } from "@/lib/rules/coa";
+import { COA, coa } from "@/lib/rules/coa";
+import { accrualAccountCodes } from "@/lib/db/pending-accruals";
 import type { LedgerViewRow } from "@/lib/db/ledger-entries";
 import type { Reference, ReferenceState } from "@/lib/db/reference-types";
 
@@ -76,6 +77,80 @@ type Payload = Record<string, unknown> & { transactions?: Record<string, unknown
 export function createFakeDb() {
   const rows: LedgerViewRow[] = [];
   const fake = { maxRows: 1000 };
+  /** `transactions.clears_id` — DB เติมจาก source_ref เท่านั้น (ผู้เรียกตั้งเองไม่ได้) */
+  const clears = new Map<string, string>();
+  const ACCRUAL = new Set(accrualAccountCodes());
+  const REF = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-clr-[0-9]+$/i;
+
+  /** สำเนาของ fn_accrual_open_sources (20261025000007) — ของค้างที่ยังเปิดอยู่ของผู้ถือในบัญชีพักหนึ่ง */
+  function openSources(owner: string, account: string): { src: string; remaining: number }[] {
+    const mine = new Map<string, { id: string; rev: string | null; clr: string | null; net: number }>();
+    for (const r of rows) {
+      if (r.owner_id !== owner || COA_BY_ID[r.coa_id] !== account) continue;
+      const m = mine.get(r.transaction_id) ?? { id: r.transaction_id, rev: r.reverses_id, clr: clears.get(r.transaction_id) ?? null, net: 0 };
+      m.net += Number(r.debit) - Number(r.credit);
+      mine.set(r.transaction_id, m);
+    }
+    const all = [...mine.values()];
+    const isLiab = coa(account).type === "liability";
+    return all
+      .filter((m) => !m.rev && !m.clr && (isLiab ? m.net < -0.005 : m.net > 0.005))
+      .map((s) => {
+        const sg = Math.sign(s.net);
+        const linked = all.filter((m) => m.clr === s.id);
+        const linkedIds = new Set(linked.map((m) => m.id));
+        const clr = all.filter((m) => m.clr === s.id || (m.rev && linkedIds.has(m.rev))).reduce((t, m) => t + m.net, 0);
+        const rev = all.filter((m) => m.rev === s.id).reduce((t, m) => t + m.net, 0);
+        return { src: s.id, remaining: Math.round((Math.abs(s.net) + sg * clr + sg * rev) * 100) / 100 };
+      });
+  }
+
+  /** สำเนาของ fn_assert_clearing_not_over_for — ยิงกับใบที่ลดบัญชีพัก (ตัดสินจากบัญชี ไม่ใช่จากเลขอ้างอิง) */
+  function assertClearingNotOver(newId: string, owner: string, p: Payload, lines: Record<string, unknown>[]) {
+    if (p.reverses_id) return;
+    const reduced = new Map<string, number>();
+    for (const l of lines) {
+      const code = String(l.coa_code);
+      if (!ACCRUAL.has(code)) continue;
+      const v = coa(code).type === "liability" ? Number(l.debit) - Number(l.credit) : Number(l.credit) - Number(l.debit);
+      reduced.set(code, (reduced.get(code) ?? 0) + v);
+    }
+    const accounts = [...reduced].filter(([, v]) => v > 0).map(([c]) => c);
+    if (accounts.length === 0) return;
+    if (accounts.length > 1) throw new Error("ใบเดียวลดบัญชีพักหลายบัญชีพร้อมกัน");
+    const account = accounts[0];
+
+    const ref = (p.source_ref as string | undefined) ?? null;
+    const refSrc = ref && REF.test(ref) ? ref.slice(0, 36).toLowerCase() : null;
+    let src = refSrc && rows.some((r) => r.transaction_id.toLowerCase() === refSrc) ? refSrc : null;
+    if (src) clears.set(newId, src);
+    if (!src) {
+      if (refSrc) throw new Error(`ใบนี้อ้างเลขอ้างอิงการล้าง "${ref}" แต่ไม่มีรายการต้นทาง ${refSrc} อยู่ในสมุด`);
+      const open = openSources(owner, account).filter((o) => o.remaining > 0.005);
+      if (open.length === 0) throw new Error(`ใบนี้ลดยอดในบัญชีพัก ${account} ของผู้ถือนี้ แต่ไม่มีรายการต้นทางที่ยังมียอดค้างเหลืออยู่เลย`);
+      if (open.length > 1) {
+        throw new Error(`ใบนี้ลดยอดในบัญชีพัก ${account} แต่ผู้ถือนี้มีของค้างที่ยังเปิดอยู่ ${open.length} ใบ จึงไม่มีทางรู้ว่าล้างของใบไหน — ต้องระบุเลขอ้างอิงการล้าง`);
+      }
+      src = open[0].src; // ผูกให้ **เฉพาะการคุมยอด** — คอลัมน์ clears_id ของใบนี้ยังเป็น null (เหมือน SQL)
+    }
+    const srcOwner = rows.find((r) => r.transaction_id === src)?.owner_id;
+    if (srcOwner !== owner) throw new Error("ลิงก์ชี้ไปรายการต้นทางของผู้ถืออีกคน");
+  }
+
+  /** หลังใส่แถวของใบใหม่แล้ว: ยอดที่ล้างทั้งหมดของต้นทางห้ามเกินยอดตั้งค้าง (เหมือนส่วนท้ายของ SQL) */
+  function assertNotOverAfter(src: string, account: string) {
+    const sumOn = (pred: (r: LedgerViewRow) => boolean) =>
+      rows.filter((r) => COA_BY_ID[r.coa_id] === account && pred(r)).reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0);
+    const accrued = sumOn((r) => r.transaction_id === src || r.reverses_id === src);
+    if (Math.round(accrued * 100) === 0) throw new Error("รายการต้นทางที่ลิงก์ชี้ไปไม่มียอดค้างในบัญชีนั้นเลย");
+    const linked = new Set([...clears].filter(([, s]) => s === src).map(([t]) => t));
+    const cleared = sumOn((r) => linked.has(r.transaction_id) || (!!r.reverses_id && linked.has(r.reverses_id)));
+    const sign = Math.sign(accrued);
+    const over = -sign * cleared - Math.abs(accrued);
+    if (Math.round(over * 100) > 0) {
+      throw new Error(`ล้างยอดค้างเกิน: ต้นทาง ${src} ตั้งค้างไว้ ${Math.abs(accrued)} แต่ล้างรวม ${-sign * cleared}`);
+    }
+  }
   const rpcCalls: Payload[] = [];
   const seen = new Map<string, string[]>();
   let seq = 0;
@@ -117,9 +192,12 @@ export function createFakeDb() {
     if (!hasCash && p.cash_date) throw new Error("มี cash_date ทั้งที่ไม่มีบรรทัดเงินสด");
 
     const ids: string[] = [];
+    try {
     for (const t of txns) {
       const id = newId();
       ids.push(id);
+      // ด่านล้างยอดค้างของ DB — ยิงก่อนใส่แถวของใบนี้ (ใบนี้ไม่นับเป็นต้นทาง) ถ้าล้มทั้งคำขอไม่เขียนอะไร
+      assertClearingNotOver(id, t.owner_id as string, p, (t.lines as Record<string, unknown>[]) ?? []);
       for (const l of (t.lines as Record<string, unknown>[])) {
         rows.push({
           transaction_id: id,
@@ -147,6 +225,25 @@ export function createFakeDb() {
           line_memo: (l.memo as string) ?? null,
         });
       }
+    }
+    } catch (e) {
+      for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].transaction_id)) rows.splice(i, 1);
+      for (const id of ids) clears.delete(id);
+      throw e;
+    }
+
+    // หลังใส่แถว: ตรวจเพดานยอดของต้นทางที่ถูกล้าง (ถ้าล้ม ถอนแถวของคำขอนี้ออก = ธุรกรรมถูก rollback)
+    try {
+      for (const id of ids) {
+        const src = clears.get(id);
+        if (!src) continue;
+        const acct = [...ACCRUAL].find((a) => rows.some((r) => r.transaction_id === id && COA_BY_ID[r.coa_id] === a));
+        if (acct) assertNotOverAfter(src, acct);
+      }
+    } catch (e) {
+      for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].transaction_id)) rows.splice(i, 1);
+      for (const id of ids) clears.delete(id);
+      throw e;
     }
     seen.set(fp, ids);
     return { transaction_ids: ids, replayed: false };

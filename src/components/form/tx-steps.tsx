@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { TX_TYPES, impactLines, REQUIREMENT_LABEL, type TxTypeKey } from "@/lib/rules/tx-rules";
+import { TX_TYPES, impactLines, REQUIREMENT_LABEL, findSub, type TxTypeKey } from "@/lib/rules/tx-rules";
 import { useReference, useReferenceState } from "@/components/reference/reference-provider";
 import type { RefBank, RefOwner, Reference } from "@/lib/db/reference-types";
 import { prepareImageForUpload, uploadAttachmentFromBrowser } from "@/lib/storage/browser";
@@ -22,7 +22,7 @@ import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { coa } from "@/lib/rules/coa";
 import { hasRealEvidence } from "@/lib/storage/evidence";
 import { isAttachmentRef, safeDisplayName } from "@/lib/storage/path";
-import { dmyToIso, money, parseAmount } from "@/lib/format";
+import { dmyToIso, isoToDmy, money, parseAmount } from "@/lib/format";
 import type { TxDraft, TxFormApi } from "./use-tx-form";
 
 /** ผู้ถือที่เลือกเป็นเจ้าของรายการได้ — ยังเป็น 'planned' (นิติบุคคลที่ยังไม่จดทะเบียน) ไม่โชว์ */
@@ -306,6 +306,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         </Field>
       </div>
 
+      {/* ลดลูกหนี้/เจ้าหนี้ → บอกว่าชำระของใบไหน (เลือกเฉพาะเมื่อมีของค้างหลายใบ) */}
+      {api.clearSources.key ? <ClearSourceSection api={api} /> : null}
+
       {/* ผู้จ่ายหักภาษี ณ ที่จ่าย — โชว์เฉพาะหมวดที่ตารางกฎยอมให้หักได้ และเงินเคลื่อนจริง */}
       {api.whtEligible ? <WhtSection api={api} /> : null}
 
@@ -348,6 +351,68 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       {/* สรุปว่าจะลงบัญชีอย่างไร อยู่ล่างสุดเสมอ — อ่านหลังกรอกครบ ไม่ใช่คั่นกลางฟอร์ม */}
       {sub ? <ImpactPreview subCode={sub.code} accrued={draft.notYetPaid} /> : null}
     </div>
+  );
+}
+
+/**
+ * ชำระของค้างใบไหน — โชว์เมื่อรายการนี้ลดลูกหนี้/เจ้าหนี้ (ตัดสินจากบรรทัดที่ engine สร้าง)
+ *   - ค้างหลายใบ: ต้องเลือก (DB ปฏิเสธถ้าไม่ระบุ — ไม่งั้นใบหนึ่งติดลบโดยอีกใบคลุมยอดรวมไว้)
+ *   - ค้างใบเดียว: ไม่ต้องเลือก ระบบผูกให้เอง (บอกให้เห็นว่าผูกกับใบไหน)
+ * ยอดค้างคงเหลืออ่านจาก DB ทุกครั้ง ไม่คำนวณในหน้าจอ
+ */
+function ClearSourceSection({ api }: { api: TxFormApi }) {
+  const { draft, patch, clearSources: cs } = api;
+  const ref = useReference();
+  const describe = (i: (typeof cs.items)[number]) =>
+    [
+      findSub(i.subCode)?.sub.label ?? i.subCode,
+      i.assetId ? ref.assets.find((a) => a.id === i.assetId)?.name : undefined,
+      `วันที่ ${isoToDmy(i.docDate)}`,
+      `ค้าง ${money(i.outstanding)} บาท`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+  if (cs.loading) return <div role="status" className="rounded border border-line bg-canvas p-4 text-base text-ink-600">กำลังดูรายการค้างของผู้ถือรายนี้…</div>;
+  if (cs.error) {
+    return (
+      <div role="alert" className="rounded border border-warn bg-warn-bg p-4 text-base leading-7 text-warn-fg">
+        โหลดรายการค้างไม่สำเร็จ ({cs.error}) — ถ้ามีของค้างหลายใบ ระบบจะไม่ยอมบันทึกจนกว่าจะเลือกใบที่ชำระ ให้โหลดหน้าใหม่แล้วลองอีกครั้ง
+      </div>
+    );
+  }
+  if (cs.items.length === 0) {
+    return (
+      <div role="alert" className="rounded border border-neg bg-neg-bg p-4 text-base leading-7 text-neg-fg">
+        รายการนี้ลดลูกหนี้/เจ้าหนี้ แต่ผู้ถือรายนี้ไม่มีของค้างเหลืออยู่เลย จึงบันทึกไม่ได้ —
+        ถ้ารับเงินที่ยังไม่เคยตั้งค้างไว้ ให้ลงเป็นรายได้ตรงๆ แทน
+      </div>
+    );
+  }
+  if (cs.items.length === 1) {
+    return (
+      <div className="rounded border border-brand-100 bg-brand-50 p-4 text-base leading-7">
+        <b>ชำระของรายการนี้:</b> {describe(cs.items[0])}
+        <div className="text-sm text-ink-600">มีของค้างใบเดียว ระบบเลือกให้เอง ไม่ต้องทำอะไรเพิ่ม</div>
+      </div>
+    );
+  }
+  return (
+    <Field
+      label="ชำระของรายการไหน"
+      required
+      error={!draft.clearsSourceId ? `มีของค้าง ${cs.items.length} ใบ ต้องเลือกว่าชำระใบไหน` : undefined}
+      hint="ยอดค้างที่เห็นคือยอดคงเหลือจริงจากสมุดบัญชี"
+    >
+      <Select value={draft.clearsSourceId} onChange={(e) => patch({ clearsSourceId: e.target.value })}>
+        <option value="">— เลือกใบค้างที่ชำระ —</option>
+        {cs.items.map((i) => (
+          <option key={i.id} value={i.id}>
+            {describe(i)}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }
 

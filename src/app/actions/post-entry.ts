@@ -17,6 +17,9 @@ import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { findSub } from "@/lib/rules/tx-rules";
 import { dmyToIso } from "@/lib/format";
+import { MANY_OPEN_MESSAGE, accrualReductionsOf, openSourcesFor, type AccrualReduction } from "@/lib/db/clearing-link";
+import { clearingRefFor } from "@/lib/db/pending-accruals";
+import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
 
 /**
  * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
@@ -38,6 +41,11 @@ export type PostEntryRequest = {
   docDate: string;
   /** วันที่เงินเข้า/ออกจริง — ใช้เฉพาะเมื่อ engine ส่งบรรทัดเงินสดมา */
   cashDate: string;
+  /**
+   * ใบค้างที่รายการนี้ชำระ (id ของรายการต้นทาง) — **ต้องส่งเมื่อรายการนี้ลดลูกหนี้/เจ้าหนี้และผู้ถือมีของค้างเปิดอยู่หลายใบ**
+   * ค้างใบเดียว = ไม่ต้องส่ง (server ผูกให้เอง) · ไม่ต้องส่งเลขอ้างอิงรูปใบล้าง: server ประกอบเองจากประวัติใน DB
+   */
+  clearsSourceId?: string;
 };
 
 export type PostEntryOutcome =
@@ -45,6 +53,54 @@ export type PostEntryOutcome =
   | { ok: false; message: string };
 
 const fail = (message: string): PostEntryOutcome => ({ ok: false, message });
+
+/**
+ * หาว่ารายการที่ลดบัญชีพักนี้ล้างของใบไหน — อ่านยอดค้างคงเหลือสดจาก DB (ไม่คำนวณในหน้าจอ)
+ *   - ผู้ใช้เลือกใบมา → ต้องเป็นใบที่ยังค้างจริงของผู้ถือและบัญชีพักเดียวกัน และยอดไม่เกิน
+ *   - ไม่ได้เลือก + เปิดอยู่ใบเดียว → ผูกให้เอง (ไม่เพิ่มขั้นตอนให้ผู้ใช้)
+ *   - ไม่ได้เลือก + เปิดหลายใบ → ปฏิเสธ (นี่คือรูเดิม: ใบหนึ่งติดลบโดยอีกใบคลุมยอดรวมไว้)
+ *   - ไม่มีของค้างเลย → ปฏิเสธ
+ */
+async function resolveClearedSource(
+  r: AccrualReduction,
+  chosen: string | undefined,
+  coaCodeById: Record<string, string>
+): Promise<{ ok: true; sourceRef: string } | { ok: false; message: string }> {
+  let supabase;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+  const read = await readPendingAccruals(supabase, coaCodeById);
+  if (!read.ok) return { ok: false, message: `${read.error} — ยังไม่ได้บันทึกอะไร` };
+  const open = openSourcesFor(read.items, r.ownerId, r.account);
+
+  let target = chosen ? open.find((p) => p.id.toLowerCase() === String(chosen).toLowerCase()) : undefined;
+  if (chosen && !target) {
+    return { ok: false, message: "รายการค้างที่เลือกไม่มียอดค้างเหลือแล้ว (อาจถูกชำระไปแล้ว) — โหลดหน้าใหม่แล้วเลือกใหม่ · ยังไม่ได้บันทึกอะไร" };
+  }
+  if (!target) {
+    if (open.length === 0) {
+      return {
+        ok: false,
+        message:
+          "รายการนี้ลดลูกหนี้/เจ้าหนี้ แต่ผู้ถือนี้ไม่มีของค้างเหลืออยู่เลย — ถ้ารับเงินที่ยังไม่เคยตั้งค้างไว้ ให้ลงเป็นรายได้ตรงๆ · ยังไม่ได้บันทึกอะไร",
+      };
+    }
+    if (open.length > 1) return { ok: false, message: `${MANY_OPEN_MESSAGE} · ยังไม่ได้บันทึกอะไร` };
+    target = open[0];
+  }
+  if (r.amount > target.outstanding + 0.005) {
+    return {
+      ok: false,
+      message:
+        `ยอดที่ชำระ ${r.amount.toLocaleString("en-US")} บาท เกินยอดค้างคงเหลือของรายการนี้ (${target.outstanding.toLocaleString("en-US")} บาท) — ` +
+        "ถ้าได้รับมากกว่าที่ค้าง ส่วนเกินคือเงินรับล่วงหน้า ต้องลงเป็นรายการของตัวเอง · ยังไม่ได้บันทึกอะไร",
+    };
+  }
+  return { ok: true, sourceRef: clearingRefFor(target.id, target.postedClearings.length + 1) };
+}
 
 export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome> {
   // ---- ผู้ใช้ + สิทธิ์ (ความสะดวก · ด่านจริงคือ RLS `txn_insert` ที่ต้องมี ledger.approve) ----
@@ -84,7 +140,20 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   let payload;
   try {
     const result = buildPosting(input, makeResolver(refState.ref));
-    payload = toPostEntryPayload(input, result, { docDate, cashDate });
+
+    // ---- ใบที่ลดลูกหนี้/เจ้าหนี้ ต้องบอกได้ว่าล้างของใบไหน (ด่าน DB · 20261025000007) ----
+    let sourceRef: string | undefined;
+    const reductions = accrualReductionsOf(result.transactions);
+    if (reductions.length > 1) {
+      return fail("รายการเดียวลดลูกหนี้/เจ้าหนี้หลายบัญชีพร้อมกัน — แยกเป็นรายการละบัญชี เพื่อให้ตรวจยอดค้างของแต่ละใบได้ · ยังไม่ได้บันทึกอะไร");
+    }
+    if (reductions.length === 1) {
+      const linked = await resolveClearedSource(reductions[0], req.clearsSourceId, refState.ref.coaCodeById);
+      if (!linked.ok) return fail(linked.message);
+      sourceRef = linked.sourceRef;
+    }
+
+    payload = toPostEntryPayload(input, result, { docDate, cashDate, sourceRef });
   } catch (e) {
     if (e instanceof PostingError || e instanceof PayloadError) return fail(e.message);
     // ข้อผิดพลาดที่ไม่ได้คาดไว้ ห้ามกลืน — แต่ไม่ปล่อยข้อความดิบให้ผู้ใช้

@@ -275,10 +275,37 @@ async function collectRentByHand(amount: number, over: Partial<PostingInput> = {
   if (!out.ok) throw new Error(`ลงใบรับชำระเองไม่ได้: ${out.message}`);
 }
 
-describe("ลูกหนี้ถูกลดนอกแท็บ (ลงใบรับชำระเอง) — เงินสดผีต้องเกิดไม่ได้", () => {
+/**
+ * ใบรับชำระที่ **ไม่มีลิงก์** (ลงตรงผ่าน REST/ข้อมูลเก่าก่อนมีลิงก์) — DB ยอมเฉพาะตอนมีของค้างเปิดอยู่ใบเดียว
+ * ผ่านแอปจะถูกผูกลิงก์ให้เสมอ จึงต้องส่งตรงเข้า fn_post_entry เพื่อทดสอบการอนุมานจากยอดคงเหลือจริง
+ */
+async function collectRentUnlinked(amount: number) {
+  const out = await ctx.db.client.rpc("fn_post_entry", {
+    p_payload: {
+      txn_type_code: "inv.collect_rent",
+      doc_date: "2026-10-20",
+      cash_date: "2026-10-20",
+      asset_id: ASSET,
+      contact_id: CONTACT,
+      source: "manual",
+      transactions: [
+        {
+          owner_id: OWNER.tk,
+          lines: [
+            { coa_code: "1100", bank_account_id: BANK.tk, debit: amount, credit: 0, cf_category: "operating" },
+            { coa_code: "1200", asset_id: ASSET, debit: 0, credit: amount, cf_category: "operating" },
+          ],
+        },
+      ],
+    },
+  });
+  if (out.error) throw new Error(`ลงใบรับชำระตรงไม่ได้: ${out.error.message}`);
+}
+
+describe("ลูกหนี้ถูกลดนอกแท็บ (ใบรับชำระที่ไม่มีลิงก์) — เงินสดผีต้องเกิดไม่ได้", () => {
   it("ล้างครบด้วยใบใหม่เอง → ลูกหนี้เป็นศูนย์ → รายการหายจากรายการค้าง และกดยืนยันซ้ำไม่ได้", async () => {
     const id = await postAccrual(100000);
-    await collectRentByHand(100000);
+    await collectRentUnlinked(100000);
     expect(ctx.db.balance("1200")).toBe(0);
     expect(ctx.db.balance("1100")).toBe(100000);
 
@@ -297,7 +324,7 @@ describe("ลูกหนี้ถูกลดนอกแท็บ (ลงใ�
 
   it("ล้างบางส่วนเอง → ยอดค้างที่โชว์ = ยอดคงเหลือจริง (ไม่ใช่ยอดเต็ม) และล้างได้ไม่เกินนั้น", async () => {
     const id = await postAccrual(100000);
-    await collectRentByHand(40000);
+    await collectRentUnlinked(40000);
     expect(ctx.db.balance("1200")).toBe(60000);
     expect(await outstandingOf(id)).toBe(60000);
 
@@ -315,15 +342,15 @@ describe("ลูกหนี้ถูกลดนอกแท็บ (ลงใ�
   it("ผสม: ล้างผ่านแท็บ 30,000 + ลงเอง 50,000 → เหลือ 20,000 พอดี", async () => {
     const id = await postAccrual(100000);
     await confirmCash({ items: [item(id, { amount: "30000" })] });
-    await collectRentByHand(50000);
+    await collectRentUnlinked(50000);
     expect(ctx.db.balance("1200")).toBe(20000);
     expect(await outstandingOf(id)).toBe(20000);
   });
 
   it("หลายใบค้างในกลุ่มเดียวกัน: ลดนอกแท็บถูกหักจากใบเก่าสุดก่อน (FIFO) และยอดรวมค้าง = ยอดจริงของบัญชี", async () => {
     const older = await postAccrual(10000);
+    await collectRentUnlinked(10000); // ตอนนั้นเปิดอยู่ใบเดียว DB จึงยอมรับแม้ไม่มีลิงก์
     const newer = await postAccrual(20000);
-    await collectRentByHand(10000);
     expect(await outstandingOf(older)).toBe(0);
     expect(await outstandingOf(newer)).toBe(20000);
     expect(ctx.db.balance("1200")).toBe(20000);
@@ -333,6 +360,20 @@ describe("ลูกหนี้ถูกลดนอกแท็บ (ลงใ�
     const id = await postAccrual(1000);
     expect(await outstandingOf(id)).toBe(1000);
     expect(ctx.db.balance("1200")).toBe(1000);
+  });
+});
+
+describe("ลงใบรับชำระเองผ่านฟอร์ม (ค้างใบเดียว): แอปผูกลิงก์ให้ → แท็บยืนยันไม่ให้ล้างซ้ำ", () => {
+  it("ยอดค้างหายจากรายการ และกดยืนยันซ้ำถูกปฏิเสธ (ไม่เกิดเงินสดผี)", async () => {
+    const id = await postAccrual(100000);
+    await collectRentByHand(100000);
+    const link = ctx.db.rpcCalls[ctx.db.rpcCalls.length - 1].source_ref;
+    expect(link).toBe(`${id}-clr-1`);
+    expect(await outstandingOf(id)).toBe(0);
+    const again = await confirmCash({ items: [item(id, { amount: "100000", expectedClearedCount: 1 })] });
+    expect(again.ok).toBe(false);
+    expect(ctx.db.balance("1100")).toBe(100000);
+    expect(ctx.db.balance("1200")).toBe(0);
   });
 });
 

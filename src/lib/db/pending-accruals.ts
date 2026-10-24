@@ -43,6 +43,8 @@ export type PendingAccrual = {
   /** id ของรายการต้นทาง (transaction) */
   id: string;
   ownerId: string;
+  /** บัญชีพักที่ตั้งค้างไว้ (อ่านจากตารางกฎ) — ใช้จับคู่กับใบที่ลดบัญชีพักนี้ */
+  account: string;
   typeKey: TxTypeKey;
   subCode: string;
   docDate: string;
@@ -111,7 +113,7 @@ export function derivePendingAccruals(rows: Rows, coaCodeById: CoaCodeLookup): P
   const codeOf = (r: LedgerViewRow) => coaCodeById[r.coa_id] ?? "";
 
   // ---- รายการต้นทาง ----
-  type Src = Omit<PendingAccrual, "postedClearings" | "clearedOutside" | "outstanding"> & { account: string; createdAt: string };
+  type Src = Omit<PendingAccrual, "postedClearings" | "clearedOutside" | "outstanding"> & { createdAt: string };
   const sources: Src[] = [];
   for (const [txnId, lines] of groupBy(rows.candidates, (r) => r.transaction_id)) {
     const head = lines[0];
@@ -204,6 +206,6 @@ export function derivePendingAccruals(rows: Rows, coaCodeById: CoaCodeLookup): P
   return items.map(({ s, postedClearings, byRef }) => {
     const clearedOutside = outside.get(s.id) ?? 0;
     const { account: _account, createdAt: _createdAt, ...rest } = s; // eslint-disable-line @typescript-eslint/no-unused-vars
-    return { ...rest, postedClearings, clearedOutside, outstanding: round2(byRef - clearedOutside) };
+    return { ...rest, account: _account, postedClearings, clearedOutside, outstanding: round2(byRef - clearedOutside) };
   });
 }

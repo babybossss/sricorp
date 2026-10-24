@@ -211,6 +211,11 @@ export function humanizeDbError(err: DbErrorLike | null | undefined): string {
   const code = err?.code ?? "";
   const tail = message ? ` (รายละเอียดทางเทคนิค: ${[code, message].filter(Boolean).join(" · ")})` : "";
 
+  // ด่านล้างยอดค้างของ DB (กรณีแอปส่งลิงก์มาไม่ทัน เช่น มีคนลงของค้างใหม่ระหว่างเปิดฟอร์ม)
+  if (/ไม่มีทางรู้ว่าล้างของใบไหน/.test(message)) {
+    return "มีของค้างหลายใบ ต้องเลือกว่าชำระใบไหน — โหลดหน้าใหม่แล้วเลือกรายการที่ต้องการชำระก่อนบันทึก · ยังไม่ได้บันทึกอะไร";
+  }
+
   if (message && HAS_THAI.test(message)) return message;
 
   if (code === "42501" || /row-level security|permission denied/i.test(message)) {
