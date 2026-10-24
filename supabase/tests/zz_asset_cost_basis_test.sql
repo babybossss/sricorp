@@ -1,0 +1,535 @@
+-- ============================================================
+-- SRI OS · เทสต์ "ต้นทุนถัวเฉลี่ย + ล้างส่วนเกินทุนตามสัดส่วน" (D-112 ข้อ 1)
+--   migration ที่คุม: 20261025000002_asset_cost_basis_average.sql
+--
+-- ที่มาของไฟล์นี้ — ผู้ตรวจวัดได้บน PG16 ว่า `fn_asset_cost_basis()` คืน **กำไรปลอม**:
+--   ซื้อหุ้น 10 หน่วย 1,000,000 → ตีราคาขึ้น 460,000 → ขาย 3 หน่วย
+--   ต้นทุนคงเหลือคืน **240,000** (ที่ถูกคือ 700,000) → ส่วนที่เหลือจะโชว์ "กำไร"
+--   งอกมา 460,000 ที่ไม่มีอยู่จริง เพราะฟังก์ชันกันแต่บรรทัดของ **ใบตีราคา**
+--   ไม่ได้กันขา 1700 ที่คู่กับบรรทัดล้าง 3400 **ของใบขาย**
+--
+-- D-112 เปลี่ยนวิธีคิดทั้งก้อน:
+--   - หุ้นตัวเดียวกันเก็บเป็นล็อตเพื่อตรวจสอบ **แต่คิดต้นทุนแบบถัวเฉลี่ย**
+--   - ขายบางส่วน → ล้าง 3400 **ตามสัดส่วน** (ขาย 3 ใน 10 = 30%)
+--   - กำไรที่ยังไม่ขายโชว์ได้ แต่ห้ามเข้า P&L เด็ดขาด (D-111)
+--
+-- **จำนวนหน่วยยังไม่มีในฐานข้อมูล** (ไม่มีตารางล็อตและไม่มีคอลัมน์ quantity เลย)
+--   → สัดส่วนฝั่ง DB วัดด้วย **เงิน**: ต้นทุนที่ตัดออก ÷ ต้นทุนก่อนขาย
+--   ซึ่งเท่ากับสัดส่วนจำนวนหน่วยพอดีเมื่อคิดต้นทุนแบบถัวเฉลี่ย (ต้นทุน/หน่วยเท่ากันทุกหน่วย)
+--   ฝั่งจำนวนหน่วยมีเทสต์ของตัวเองที่ src/lib/ledger/__tests__/average-cost.test.ts
+--
+-- ทุกใบในไฟล์นี้ลงผ่าน **sri_os.fn_post_entry() เท่านั้น** ไม่มี insert เข้า
+--   transactions/transaction_lines ตรงๆ แม้แถวเดียว — เทสต์ที่ไม่เดินเส้นทางจริง
+--   ไม่ได้พิสูจน์ว่าผู้ใช้ลงรายการนี้ได้ (บทเรียนจากไฟล์ zz_wht_and_fx_test.sql เดิม)
+--
+-- ไล่ตาม "ถ้าถอดการแก้ออกแล้วต้องแดง":
+--   C1 ซื้อหลายล็อตคนละราคา → ต้นทุนรวม/ถัวเฉลี่ยถูก
+--   C2 ตีราคาขึ้นไม่เปลี่ยนต้นทุน (ของเดิมมีด่านนี้แล้ว · คงไว้กันถอยหลัง)
+--   C3 **ขายบางส่วน** → ต้นทุนคงเหลือ 700,000 · 3400 เหลือ 322,000 · กำไรคิดจากค่าเฉลี่ย
+--   C4 ขายบางส่วนแล้วล้าง 3400 **ทั้งก้อน** (พฤติกรรมของโค้ดวันนี้) → ต้องถูกปฏิเสธ
+--   C5 ขายบางส่วนแล้ว **ไม่ล้าง** 3400 → ต้องถูกปฏิเสธ
+--   C6 ขายส่วนที่เหลือทั้งหมด → ต้นทุนเหลือ 0 พอดี · 3400 ของทรัพย์นั้นเหลือ **ศูนย์พอดี**
+--   C7 ตีราคา → ขายบางส่วน → ตีราคาอีกเดือน → ยอดยังถูก
+--   C8 **MUTATION** · คืนนิยามเดิมของ fn_asset_cost_basis → ต้องได้ 240,000
+--      (ส่วนต่าง 460,000 ที่ผู้ตรวจวัดไว้) แล้ว rollback คืนของจริง
+--   C9 ขายจนต้นทุนติดลบ (ตัดทรัพย์เกินที่ถืออยู่) → ต้องถูกปฏิเสธ
+--
+-- ทั้งไฟล์อยู่ใน transaction เดียวและ **rollback** ปิดท้าย ไม่ทิ้งรายการเงินไว้
+-- ============================================================
+
+\set ON_ERROR_STOP 1
+
+begin;
+
+-- ------------------------------------------------------------
+-- fixtures
+-- ------------------------------------------------------------
+create temporary table t_uid (label text primary key, id uuid not null default gen_random_uuid());
+insert into t_uid(label) values ('mgmt');
+insert into auth.users(id) select id from t_uid;
+insert into sri_os.app_users(id, email, display_name, role, is_active)
+select u.id, 'cost-basis@local', 'mgmt', 'management', true from t_uid u;
+
+create or replace function pg_temp.login(p_label text) returns void
+language sql as $fn$
+  select set_config('test.uid', coalesce((select id::text from t_uid where label = p_label), ''), true);
+$fn$;
+
+insert into sri_os.user_owner_access(user_id, owner_id)
+select (select id from t_uid where label = 'mgmt'), o.id from sri_os.owners o;
+
+insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
+values ('00000000-0000-0000-0000-00000003b001',
+        (select id from sri_os.owners where code = 'THANAKORN'),
+        'BBL', 'ธนากร', 'ธนากร - BBL (ต้นทุนถัวเฉลี่ย)');
+
+-- หุ้นสองตัว: ตัวที่ใช้ทดสอบ และตัวควบคุมที่ต้องไม่ถูกกระทบ (กันฟังก์ชันนับข้ามทรัพย์)
+insert into sri_os.assets(id, code, name, class_id, category_id, owner_id, currency)
+select x.id, x.code, x.name, cat.class_id, cat.id,
+       (select id from sri_os.owners where code = 'THANAKORN'), 'THB'
+  from (values
+    ('00000000-0000-0000-0000-00000003a001'::uuid, 'ACB-STOCK', 'หุ้น ก (ทดสอบ)'),
+    ('00000000-0000-0000-0000-00000003a002'::uuid, 'ACB-OTHER', 'หุ้น ข (ตัวควบคุม)')
+  ) as x(id, code, name)
+  cross join (select id, class_id from sri_os.asset_categories order by id limit 1) cat;
+
+do $$
+declare s text := (select nspname from pg_namespace where oid = pg_my_temp_schema());
+begin
+  execute format('grant usage on schema %I to authenticated', s);
+  execute format('grant select on %I.t_uid to authenticated', s);
+end $$;
+
+/**
+ * ตัวช่วยประกอบ payload — **หนึ่งที่เดียวที่รู้รูปของ payload**
+ * ทุกเคสเรียกผ่าน pg_temp.post() จึงเดินเส้นทาง fn_post_entry เสมอ
+ */
+create or replace function pg_temp.owner() returns uuid
+language sql stable as $fn$ select id from sri_os.owners where code = 'THANAKORN' $fn$;
+
+create or replace function pg_temp.ln(p_code text, p_dr numeric, p_cr numeric,
+                                     p_asset uuid default null, p_cf text default null,
+                                     p_bank uuid default null) returns jsonb
+language sql immutable as $fn$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'coa_code', p_code, 'debit', p_dr, 'credit', p_cr,
+    'asset_id', p_asset, 'cf_category', p_cf, 'bank_account_id', p_bank));
+$fn$;
+
+create or replace function pg_temp.entry(p_type text, p_doc date, p_cash date,
+                                        p_memo text, p_asset uuid, p_lines jsonb)
+returns jsonb language sql stable as $fn$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'txn_type_code', p_type,
+    'doc_date', p_doc::text,
+    'cash_date', case when p_cash is null then null else p_cash::text end,
+    'memo', p_memo,
+    'asset_id', p_asset,
+    'transactions', jsonb_build_array(jsonb_build_object(
+      'owner_id', pg_temp.owner(), 'lines', p_lines))));
+$fn$;
+
+create or replace function pg_temp.post(p_payload jsonb) returns uuid
+language plpgsql as $fn$
+declare v jsonb;
+begin
+  v := sri_os.fn_post_entry(p_payload);
+  if (v ->> 'replayed')::boolean then
+    raise exception 'FAIL: fn_post_entry ถือว่าใบนี้เป็นการกดซ้ำ (memo ต้องไม่ซ้ำกันในไฟล์เทสต์)';
+  end if;
+  return ((v -> 'transaction_ids') ->> 0)::uuid;
+end $fn$;
+
+create or replace function pg_temp.must_fail_like(p_label text, p_sql text, p_needle text) returns void
+language plpgsql as $fn$
+declare v text;
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    v := sqlerrm;
+    if v like 'FAIL:%' then raise; end if;
+    if position(p_needle in v) = 0 then
+      raise exception 'FAIL: % — ปฏิเสธถูกแต่ข้อความไม่มี "%" · ได้: %', p_label, p_needle, v;
+    end if;
+    return;
+  end;
+  raise exception 'FAIL: % — คำสั่งควรถูกปฏิเสธแต่สำเร็จ', p_label;
+end $fn$;
+
+-- ค่าคงที่ของฉากทดสอบ (ตัวเลขชุดเดียวกับที่ผู้ตรวจวัดไว้)
+--   ซื้อล็อต 1: 10 หน่วย 1,000,000 (100,000/หน่วย)
+--   ตีราคาขึ้น 460,000 → 1700 = 1,460,000 · 3400 = 460,000
+--   ขาย 3 หน่วย ราคา 450,000 → ต้นทุนถัวเฉลี่ย 300,000 · กำไร 150,000
+--   ล้าง 3400 ตามสัดส่วน 300,000/1,000,000 = 30% ของ 460,000 = 138,000
+
+-- ============================================================
+-- C0 · โครงสร้าง — ไล่จาก catalog จริง
+-- ============================================================
+do $$
+declare r record;
+begin
+  foreach r in array array[]::record[] loop null; end loop;   -- (ไม่ใช้ · กัน lint)
+
+  if to_regprocedure('sri_os.fn_asset_cost_basis(uuid)') is null then
+    raise exception 'FAIL: ไม่มี fn_asset_cost_basis(uuid)';
+  end if;
+  if to_regprocedure('sri_os.fn_asset_revaluation_surplus(uuid)') is null then
+    raise exception 'FAIL: ไม่มี fn_asset_revaluation_surplus(uuid) — ส่วนเกินทุนที่ค้างต้องอ่านได้จากสมุด ไม่ใช่จาก state ของหน้าจอ';
+  end if;
+  if to_regprocedure('sri_os.fn_asset_ledger_parts(uuid,uuid)') is null then
+    raise exception 'FAIL: ไม่มี fn_asset_ledger_parts(uuid,uuid) — ต้นทุนกับส่วนเกินทุนต้องคิดจากนิพจน์ชุดเดียว ไม่ใช่สองสำเนา';
+  end if;
+
+  if not exists (select 1 from pg_trigger g
+                  where g.tgrelid = 'sri_os.transaction_lines'::regclass
+                    and g.tgname = 'trg_assert_asset_surplus_proportional'
+                    and not g.tgisinternal and g.tgdeferrable and g.tginitdeferred) then
+    raise exception 'FAIL: ไม่มี constraint trigger trg_assert_asset_surplus_proportional แบบ deferrable initially deferred บน transaction_lines — ด่านที่ต้องอ่านทุกบรรทัดของใบ ยิงตอนใส่บรรทัดแรกไม่ได้';
+  end if;
+
+  if has_function_privilege('anon', 'sri_os.fn_asset_cost_basis(uuid)', 'execute') then
+    raise exception 'FAIL: anon เรียก fn_asset_cost_basis ได้';
+  end if;
+
+  raise notice 'ok C0 · ฟังก์ชันต้นทุน/ส่วนเกินทุนครบ · ด่านสัดส่วนผูกกับตารางจริง';
+end $$;
+
+set local role authenticated;
+select pg_temp.login('mgmt');
+
+-- ============================================================
+-- C1 · ซื้อสองล็อตคนละราคา → ต้นทุนรวมถูก (ฐานของค่าเฉลี่ย)
+--
+-- ล็อต 1: 10 หน่วย 1,000,000 · ล็อต 2: 5 หน่วย 700,000 (140,000/หน่วย)
+-- ต้นทุนรวม 1,700,000 · 15 หน่วย → ถัวเฉลี่ย 113,333.33/หน่วย
+-- (เทสต์นี้ซื้อล็อต 2 แล้ว **ขายคืนทั้งล็อต** ก่อนเริ่มฉากหลัก เพื่อให้ฉากหลัง
+--  ใช้ตัวเลขชุดเดียวกับที่ผู้ตรวจวัดไว้ — ดู C1b)
+-- ============================================================
+do $$
+declare v_cost numeric; v_surplus numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('inv.buy_securities', '2026-10-01', '2026-10-01',
+    'ซื้อหุ้น ก ล็อต 1 · 10 หน่วย', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1700', 1000000, 0, '00000000-0000-0000-0000-00000003a001', 'investing'),
+      pg_temp.ln('1100', 0, 1000000, null, 'investing', '00000000-0000-0000-0000-00000003b001'))));
+
+  perform pg_temp.post(pg_temp.entry('inv.buy_securities', '2026-10-05', '2026-10-05',
+    'ซื้อหุ้น ก ล็อต 2 · 5 หน่วย ราคาต่างกัน', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1700', 700000, 0, '00000000-0000-0000-0000-00000003a001', 'investing'),
+      pg_temp.ln('1100', 0, 700000, null, 'investing', '00000000-0000-0000-0000-00000003b001'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 1700000 then
+    raise exception 'FAIL: C1 — ต้นทุนรวมสองล็อตควรเป็น 1,700,000 แต่ได้ %', v_cost;
+  end if;
+  if v_surplus <> 0 then
+    raise exception 'FAIL: C1 — ยังไม่เคยตีราคา ส่วนเกินทุนต้องเป็น 0 แต่ได้ %', v_surplus;
+  end if;
+
+  -- ทรัพย์ตัวควบคุมต้องไม่ถูกนับด้วย
+  if sri_os.fn_asset_cost_basis('00000000-0000-0000-0000-00000003a002') <> 0 then
+    raise exception 'FAIL: C1 — ต้นทุนของทรัพย์ตัวควบคุมไม่เป็นศูนย์ = ฟังก์ชันนับข้ามทรัพย์';
+  end if;
+
+  raise notice 'ok C1 · ซื้อสองล็อตคนละราคา ต้นทุนรวม 1,700,000 (ฐานถัวเฉลี่ย 113,333.33/หน่วย จาก 15 หน่วย)';
+end $$;
+
+-- ------------------------------------------------------------
+-- C1b · ขายล็อต 2 คืนทั้งก้อน (ยังไม่เคยตีราคา → ไม่มี 3400 ให้ล้าง)
+--        ต้นทุนที่ตัดคิดแบบ **ถัวเฉลี่ย**: 5 หน่วย × 113,333.33 = 566,666.65
+--        เหลือต้นทุน 1,133,333.35 สำหรับ 10 หน่วย
+--        → ฉากหลักต้องการต้นทุน 1,000,000 พอดี จึงขายเท่าทุนของล็อต 2 (700,000)
+--        แล้ว "กำไรคิดจากค่าเฉลี่ย" ของเคสนี้ = 700,000 − 566,666.65 = 133,333.35
+-- ------------------------------------------------------------
+do $$
+declare v_cost numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-10-06', '2026-10-06',
+    'ขายหุ้น ก 5 หน่วย (ต้นทุนถัวเฉลี่ย ไม่ใช่ราคาล็อตที่ขาย)',
+    '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1100', 700000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+      pg_temp.ln('1700', 0, 566666.65, '00000000-0000-0000-0000-00000003a001', 'investing'),
+      pg_temp.ln('4900', 0, 133333.35, '00000000-0000-0000-0000-00000003a001'))));
+
+  v_cost := sri_os.fn_asset_cost_basis('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 1133333.35 then
+    raise exception 'FAIL: C1b — ต้นทุนคงเหลือหลังขายตามค่าเฉลี่ยควรเป็น 1,133,333.35 แต่ได้ %', v_cost;
+  end if;
+  raise notice 'ok C1b · ขายบางล็อตแล้วต้นทุนที่ตัดคิดจากค่าเฉลี่ยของทั้งกอง (566,666.65) ไม่ใช่ราคาของล็อตที่ขาย (700,000)';
+end $$;
+
+-- ------------------------------------------------------------
+-- C1c · ปรับต้นทุนให้เท่ากับฉากของผู้ตรวจ (1,000,000 · 10 หน่วย)
+--        ด้วยการขายเศษ 133,333.35 ที่เหลือจากการปัดของค่าเฉลี่ยออกเท่าทุน
+--        **ไม่ใช่การแก้สมุด** — เป็นใบขายปกติที่ขายเท่าทุน (กำไร 0)
+-- ------------------------------------------------------------
+do $$
+declare v_cost numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-10-07', '2026-10-07',
+    'ขายเศษหุ้น ก เท่าทุน (จัดฉากให้ต้นทุนเหลือ 1,000,000 พอดี)',
+    '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1100', 133333.35, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+      pg_temp.ln('1700', 0, 133333.35, '00000000-0000-0000-0000-00000003a001', 'investing'))));
+
+  v_cost := sri_os.fn_asset_cost_basis('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 1000000 then
+    raise exception 'FAIL: C1c — ต้นทุนตั้งต้นของฉากหลักต้องเป็น 1,000,000 แต่ได้ %', v_cost;
+  end if;
+  raise notice 'ok C1c · ฉากหลักพร้อม: ต้นทุน 1,000,000 · 10 หน่วย · 100,000/หน่วย';
+end $$;
+
+-- ============================================================
+-- C2 · ตีราคาขึ้น 460,000 → **ต้นทุนไม่ขยับ** · ส่วนเกินทุน 460,000
+-- ============================================================
+do $$
+declare v_cost numeric; v_surplus numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('adj.revalue_securities_up', '2026-10-31', null,
+    'ตีราคาหุ้น ก ขึ้น 460,000 (ยังไม่ขาย)', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1700', 460000, 0, '00000000-0000-0000-0000-00000003a001', 'none'),
+      pg_temp.ln('3400', 0, 460000, '00000000-0000-0000-0000-00000003a001', 'none'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 1000000 then
+    raise exception 'FAIL: C2 — ตีราคาแล้วต้นทุนต้องยังเป็น 1,000,000 แต่ได้ % (ใบตีราคาถูกนับเป็นต้นทุน)', v_cost;
+  end if;
+  if v_surplus <> 460000 then
+    raise exception 'FAIL: C2 — ส่วนเกินทุนที่ค้างควรเป็น 460,000 แต่ได้ %', v_surplus;
+  end if;
+  raise notice 'ok C2 · ตีราคาขึ้นไม่เปลี่ยนต้นทุน (1,000,000) · ส่วนเกินทุนค้าง 460,000';
+end $$;
+
+-- ============================================================
+-- C4 · **เคสที่ทำให้เกิดกำไรปลอม** — ขาย 3 ใน 10 หน่วย แต่ล้าง 3400 ทั้งก้อน
+--      (คือสิ่งที่ posting.ts ทำวันนี้: unrealizedToReverse = ส่วนเกินทั้งก้อน)
+--      ต้องถูกปฏิเสธ **ก่อน** ที่เคสที่ถูกต้อง (C3) จะถูกลง
+-- ============================================================
+do $$
+begin
+  perform pg_temp.must_fail_like('C4 ขายบางส่วนแต่ล้างส่วนเกินทุนทั้งก้อน',
+    $q$ select pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-11-05', '2026-11-05',
+          'ขาย 3 หน่วย แต่ล้าง 3400 ทั้ง 460,000 (ผิด)',
+          '00000000-0000-0000-0000-00000003a001',
+          jsonb_build_array(
+            pg_temp.ln('1100', 450000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+            pg_temp.ln('1700', 0, 300000, '00000000-0000-0000-0000-00000003a001', 'investing'),
+            pg_temp.ln('4900', 0, 150000, '00000000-0000-0000-0000-00000003a001'),
+            pg_temp.ln('3400', 460000, 0, '00000000-0000-0000-0000-00000003a001'),
+            pg_temp.ln('1700', 0, 460000, '00000000-0000-0000-0000-00000003a001', 'investing')))) $q$,
+    'ตามสัดส่วน');
+  raise notice 'ok C4 · ขายบางส่วนแล้วล้างส่วนเกินทุนทั้งก้อนถูกปฏิเสธ (ถ้าผ่าน = ต้นทุนคงเหลือหายไป 460,000 และกำไรงอกเท่านั้น)';
+end $$;
+
+-- ============================================================
+-- C5 · ขายบางส่วนแล้ว **ไม่ล้าง** 3400 เลย → ปฏิเสธ
+--      (ส่วนเกินทุนของหน่วยที่ขายไปแล้วจะค้างในส่วนของเจ้าของตลอดไป)
+-- ============================================================
+do $$
+begin
+  perform pg_temp.must_fail_like('C5 ขายบางส่วนแต่ไม่ล้างส่วนเกินทุน',
+    $q$ select pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-11-06', '2026-11-06',
+          'ขาย 3 หน่วย ไม่ล้าง 3400 เลย (ผิด)',
+          '00000000-0000-0000-0000-00000003a001',
+          jsonb_build_array(
+            pg_temp.ln('1100', 450000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+            pg_temp.ln('1700', 0, 300000, '00000000-0000-0000-0000-00000003a001', 'investing'),
+            pg_temp.ln('4900', 0, 150000, '00000000-0000-0000-0000-00000003a001')))) $q$,
+    'ตามสัดส่วน');
+  raise notice 'ok C5 · ขายบางส่วนแล้วไม่ล้างส่วนเกินทุนถูกปฏิเสธ';
+end $$;
+
+-- ============================================================
+-- C3 · **เคสที่ถูกต้อง** — ขาย 3 ใน 10 หน่วย
+--      ต้นทุนที่ตัด 300,000 (ถัวเฉลี่ย 100,000 × 3) · กำไร 150,000
+--      ล้าง 3400 ตามสัดส่วน 30% = 138,000
+--      → ต้นทุนคงเหลือ **700,000** (ไม่ใช่ 240,000) · 3400 เหลือ **322,000**
+-- ============================================================
+do $$
+declare v_cost numeric; v_surplus numeric; v_book numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-11-07', '2026-11-07',
+    'ขายหุ้น ก 3 หน่วย · ล้างส่วนเกินทุน 30%', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1100', 450000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+      pg_temp.ln('1700', 0, 300000, '00000000-0000-0000-0000-00000003a001', 'investing'),
+      pg_temp.ln('4900', 0, 150000, '00000000-0000-0000-0000-00000003a001'),
+      pg_temp.ln('3400', 138000, 0, '00000000-0000-0000-0000-00000003a001'),
+      pg_temp.ln('1700', 0, 138000, '00000000-0000-0000-0000-00000003a001', 'investing'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 700000 then
+    raise exception 'FAIL: C3 — ต้นทุนคงเหลือหลังขาย 3 ใน 10 หน่วยต้องเป็น 700,000 แต่ได้ % (ส่วนต่าง % คือกำไรปลอมที่ผู้ตรวจวัดไว้)',
+      v_cost, 700000 - v_cost;
+  end if;
+  if v_surplus <> 322000 then
+    raise exception 'FAIL: C3 — ส่วนเกินทุนที่ยังค้างต้องเป็น 322,000 (70%% ของ 460,000) แต่ได้ %', v_surplus;
+  end if;
+
+  -- ยอดในบัญชีทรัพย์ต้องเท่ากับ ต้นทุนคงเหลือ + ส่วนเกินทุนคงเหลือ เสมอ
+  select coalesce(sum(l.debit - l.credit), 0) into v_book
+    from sri_os.transaction_lines l
+    join sri_os.transactions t on t.id = l.transaction_id
+    join sri_os.chart_of_accounts c on c.id = l.coa_id
+   where l.asset_id = '00000000-0000-0000-0000-00000003a001'
+     and t.status = 'posted' and c.code = '1700';
+  if v_book <> v_cost + v_surplus then
+    raise exception 'FAIL: C3 — ยอดบัญชี 1700 (%) ไม่เท่ากับ ต้นทุน (%) + ส่วนเกินทุน (%)', v_book, v_cost, v_surplus;
+  end if;
+
+  raise notice 'ok C3 · ขายบางส่วน: ต้นทุนคงเหลือ 700,000 · 3400 เหลือ 322,000 · กำไร 150,000 คิดจากค่าเฉลี่ย 100,000/หน่วย · ยอด 1700 = 1,022,000 = 700,000 + 322,000';
+end $$;
+
+-- ============================================================
+-- C7 · ตีราคาอีกเดือน (กลับของเดือนก่อนแล้วลงยอดสะสมใหม่ · mark-to-market.ts)
+--      ต้นทุนต้องยัง 700,000 และส่วนเกินทุนต้องเป็นยอดใหม่พอดี
+--      มูลค่าตลาดสิ้น พ.ย. = 1,100,000 → ส่วนเกินทุนเป้าหมาย 400,000
+-- ============================================================
+do $$
+declare v_cost numeric; v_surplus numeric;
+begin
+  -- ใบที่ 1 · กลับส่วนเกินทุนที่ค้างอยู่ 322,000 ให้เป็นศูนย์
+  perform pg_temp.post(pg_temp.entry('adj.revalue_securities_down', '2026-11-30', null,
+    'กลับรายการตีราคาที่ค้างอยู่ 322,000', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('3400', 322000, 0, '00000000-0000-0000-0000-00000003a001', 'none'),
+      pg_temp.ln('1700', 0, 322000, '00000000-0000-0000-0000-00000003a001', 'none'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 700000 or v_surplus <> 0 then
+    raise exception 'FAIL: C7a — หลังกลับรายการ ต้นทุนต้อง 700,000 (ได้ %) และส่วนเกินทุนต้อง 0 (ได้ %)', v_cost, v_surplus;
+  end if;
+
+  -- ใบที่ 2 · ลงยอดสะสมของเดือนนี้ทั้งก้อน
+  perform pg_temp.post(pg_temp.entry('adj.revalue_securities_up', '2026-11-30', null,
+    'ตีราคาสะสมจากต้นทุน 400,000 (มูลค่าตลาด 1,100,000)', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1700', 400000, 0, '00000000-0000-0000-0000-00000003a001', 'none'),
+      pg_temp.ln('3400', 0, 400000, '00000000-0000-0000-0000-00000003a001', 'none'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 700000 then
+    raise exception 'FAIL: C7b — ตีราคาเดือนที่สองแล้วต้นทุนต้องยังเป็น 700,000 แต่ได้ %', v_cost;
+  end if;
+  if v_surplus <> 400000 then
+    raise exception 'FAIL: C7b — ส่วนเกินทุนควรเป็น 400,000 (= มูลค่าตลาด 1,100,000 − ต้นทุน 700,000) แต่ได้ %', v_surplus;
+  end if;
+  raise notice 'ok C7 · ตีราคา → ขายบางส่วน → ตีราคาอีกเดือน: ต้นทุน 700,000 คงที่ · ส่วนเกินทุน 400,000 = มูลค่าตลาด − ต้นทุนคงเหลือ';
+end $$;
+
+-- ============================================================
+-- C9 · ตัดทรัพย์เกินต้นทุนที่ถืออยู่ → ปฏิเสธ (ต้นทุนคงเหลือติดลบไม่ได้)
+-- ============================================================
+do $$
+begin
+  perform pg_temp.must_fail_like('C9 ขายเกินต้นทุนที่ถืออยู่',
+    $q$ select pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-12-01', '2026-12-01',
+          'ตัดทรัพย์ 900,000 ทั้งที่ต้นทุนเหลือ 700,000 (ผิด)',
+          '00000000-0000-0000-0000-00000003a001',
+          jsonb_build_array(
+            pg_temp.ln('1100', 900000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+            pg_temp.ln('1700', 0, 900000, '00000000-0000-0000-0000-00000003a001', 'investing')))) $q$,
+    'ต้นทุนคงเหลือ');
+  raise notice 'ok C9 · ตัดทรัพย์เกินต้นทุนที่ถืออยู่ถูกปฏิเสธ (ต้นทุนคงเหลือติดลบไม่ได้)';
+end $$;
+
+-- ============================================================
+-- C6 · ขายส่วนที่เหลือทั้งหมด (7 หน่วย) → ต้นทุน 0 พอดี · 3400 **ศูนย์พอดี**
+--      ต้นทุน 700,000 · ส่วนเกินทุน 400,000 · ขายได้ 1,200,000 → กำไร 500,000
+-- ============================================================
+do $$
+declare v_cost numeric; v_surplus numeric; v_book numeric;
+begin
+  perform pg_temp.post(pg_temp.entry('inv.sell_securities', '2026-12-02', '2026-12-02',
+    'ขายหุ้น ก ที่เหลือทั้งหมด 7 หน่วย', '00000000-0000-0000-0000-00000003a001',
+    jsonb_build_array(
+      pg_temp.ln('1100', 1200000, 0, null, 'investing', '00000000-0000-0000-0000-00000003b001'),
+      pg_temp.ln('1700', 0, 700000, '00000000-0000-0000-0000-00000003a001', 'investing'),
+      pg_temp.ln('4900', 0, 500000, '00000000-0000-0000-0000-00000003a001'),
+      pg_temp.ln('3400', 400000, 0, '00000000-0000-0000-0000-00000003a001'),
+      pg_temp.ln('1700', 0, 400000, '00000000-0000-0000-0000-00000003a001', 'investing'))));
+
+  select cost_basis, surplus into v_cost, v_surplus
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+  if v_cost <> 0 then
+    raise exception 'FAIL: C6 — ขายหมดแล้วต้นทุนคงเหลือต้องเป็น 0 พอดี แต่ได้ %', v_cost;
+  end if;
+  if v_surplus <> 0 then
+    raise exception 'FAIL: C6 — ขายหมดแล้วส่วนเกินทุนของทรัพย์นี้ต้องเหลือศูนย์พอดี แต่ได้ % (ค้างในส่วนของเจ้าของทั้งที่ทรัพย์ไม่อยู่แล้ว)', v_surplus;
+  end if;
+
+  select coalesce(sum(l.debit - l.credit), 0) into v_book
+    from sri_os.transaction_lines l
+    join sri_os.transactions t on t.id = l.transaction_id
+    join sri_os.chart_of_accounts c on c.id = l.coa_id
+   where l.asset_id = '00000000-0000-0000-0000-00000003a001'
+     and t.status = 'posted' and c.code = '1700';
+  if v_book <> 0 then
+    raise exception 'FAIL: C6 — ขายหมดแล้วยอดบัญชี 1700 ของทรัพย์นี้ต้องเป็น 0 แต่ได้ % (ทรัพย์ผีค้างในงบดุล)', v_book;
+  end if;
+
+  raise notice 'ok C6 · ขายหมด: ต้นทุน 0 · 3400 ศูนย์พอดี · ยอด 1700 ของทรัพย์นี้เป็น 0 (ไม่มีทรัพย์ผีค้าง)';
+end $$;
+
+reset role;
+
+-- ============================================================
+-- C8 · **MUTATION** — คืนนิยามเดิมของ fn_asset_cost_basis (รุ่นที่กันแต่ใบตีราคา)
+--      แล้ววัดต้นทุนคงเหลือของฉาก "ขาย 3 ใน 10 หน่วย" ซ้ำ
+--      ต้องได้ **240,000** = ต่ำกว่าความจริง **460,000** ตามที่ผู้ตรวจวัดไว้
+--
+-- ทำบน savepoint แล้ว rollback → นิยามจริงกลับมาเอง (DDL อยู่ในธุรกรรมเดียวกัน)
+-- ถ้าเคสนี้ไม่แดง แปลว่าเทสต์ทั้งไฟล์ไม่ได้พิสูจน์ว่าการแก้มีผล
+-- ============================================================
+savepoint before_mutation;
+
+-- ย้อนสมุดกลับไปที่สภาพหลัง C3 (ตัดใบของ C6/C7 ออก) เพื่อวัดฉากเดียวกับผู้ตรวจ
+delete from sri_os.transaction_lines l
+ using sri_os.transactions t
+ where t.id = l.transaction_id and t.doc_date > '2026-11-07';
+delete from sri_os.transactions t where t.doc_date > '2026-11-07';
+
+create or replace function sri_os.fn_asset_cost_basis(p_asset uuid)
+returns numeric
+language sql stable set search_path = '' as $fn$
+  -- นิยามเดิมจาก 20261024000001_wht_and_fx.sql (ข้อ 8) — กันแต่ใบตีราคา
+  select coalesce(sum(l.debit - l.credit), 0)
+    from sri_os.transaction_lines l
+    join sri_os.transactions t on t.id = l.transaction_id
+    join sri_os.chart_of_accounts c on c.id = l.coa_id
+   where l.asset_id = p_asset
+     and t.status = 'posted'
+     and c.type = 'asset'
+     and c.code !~ '^11[0-9][0-9]$'
+     and not exists (
+       select 1 from sri_os.txn_types ty
+        where ty.code = t.txn_type_code
+          and '3400' in (ty.dr_coa_code, ty.cr_coa_code)
+     );
+$fn$;
+
+do $$
+declare v_old numeric; v_true numeric;
+begin
+  v_old  := sri_os.fn_asset_cost_basis('00000000-0000-0000-0000-00000003a001');
+  select cost_basis into v_true
+    from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000003a001');
+
+  if v_true <> 700000 then
+    raise exception 'FAIL: C8 — ฉากที่วัดไม่ใช่ฉากของผู้ตรวจ (ต้นทุนจริงต้องเป็น 700,000 ได้ %)', v_true;
+  end if;
+  if v_old <> 240000 then
+    raise exception 'FAIL: C8 — นิยามเดิมควรคืน 240,000 (ต่ำกว่าจริง 460,000) แต่ได้ % → เคส mutation นี้ไม่ได้พิสูจน์อะไร', v_old;
+  end if;
+  if v_true - v_old <> 460000 then
+    raise exception 'FAIL: C8 — ส่วนต่างต้องเป็น 460,000 พอดี แต่ได้ %', v_true - v_old;
+  end if;
+  raise notice 'ok C8 · MUTATION · นิยามเดิมคืน 240,000 · นิยามที่แก้แล้วคืน 700,000 · ส่วนต่าง 460,000 คือกำไรปลอมที่ถูกปิดไปแล้ว';
+end $$;
+
+rollback to savepoint before_mutation;
+
+do $$
+declare v numeric;
+begin
+  v := sri_os.fn_asset_cost_basis('00000000-0000-0000-0000-00000003a001');
+  if v <> 0 then
+    raise exception 'FAIL: C8 — หลัง rollback นิยามจริงต้องกลับมา (ต้นทุนหลังขายหมด = 0) แต่ได้ %', v;
+  end if;
+  raise notice 'ok C8b · นิยามจริงกลับมาหลัง rollback (ไม่ทิ้งฟังก์ชันกลายพันธุ์ไว้)';
+end $$;
+
+do $$ begin raise notice '=== ต้นทุนถัวเฉลี่ย + ล้างส่วนเกินทุนตามสัดส่วน (D-112) ผ่านทั้งหมด ==='; end $$;
+
+rollback;
