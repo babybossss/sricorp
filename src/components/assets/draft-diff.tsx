@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/utils";
-import type { AssetDraft, AssetRef } from "@/lib/mock/assets";
+import type { AssetView, DraftView } from "@/lib/db/assets-model";
 import { computeDiff, type DiffChange } from "./asset-drafts";
 
 const CHANGE: Record<DiffChange, { label: string; tone: string }> = {
@@ -22,7 +22,7 @@ const EMPTY = "(ว่าง — ไม่มีค่า)";
  * - ความต่างไม่พึ่งสีอย่างเดียว: มีป้ายข้อความ + คำว่า "เดิม"/"ใหม่" ทุกแถว
  * - ช่องที่ร่างไม่ได้พูดถึง = ไม่แตะ (ไม่โชว์) · ช่องที่เสนอค่าเท่าเดิมโชว์แยกว่า "ไม่เปลี่ยน"
  */
-export function DiffPanel({ draft, asset }: { draft: AssetDraft; asset: AssetRef | undefined }) {
+export function DiffPanel({ draft, asset }: { draft: Pick<DraftView, "kind" | "patch">; asset: AssetView | undefined }) {
   const diff = computeDiff(draft, asset);
   const changed = diff.rows.filter((r) => r.change !== "unchanged");
   const unchanged = diff.rows.filter((r) => r.change === "unchanged");

@@ -1,135 +1,215 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 import Link from "next/link";
 import {
-  monthlyFor, monthlyOf, currentValue, yieldPct, portfolioTotals, holdingMix,
-  FREQUENCY_LABEL, HOLDING_LABEL, KIND_LABEL, VALUE_BASIS_LABEL,
-  type AssetRef, type AssetDraft, type HoldingType,
-} from "@/lib/mock/assets";
-import { entityById } from "@/lib/mock/entities";
-import { money, signedMoney } from "@/lib/format";
+  DEFAULT_FILTER,
+  FAMILY_OWNER,
+  GROUP_BY_LABEL,
+  allTags,
+  filterAssets,
+  groupAssets,
+  iconKindFor,
+  sumReports,
+  type AssetFilter,
+  type AssetView,
+  type GroupBy,
+  VALUE_NOT_ACCOUNTING,
+} from "@/lib/db/assets-model";
+import type { RegisterData } from "@/lib/db/assets-server";
+import type { RefOwner } from "@/lib/db/reference-types";
+import { isoToDmy, money } from "@/lib/format";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
-import { Pill } from "@/components/ui/pill";
-import { Button } from "./tall-button";
-import { Select } from "./fields";
 import { Field } from "@/components/ui/field";
-import { Dialog, SheetContent, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
-import { AssetMap } from "./asset-map";
-import { MapsLinkField } from "./maps-link-field";
+import { Input, Select } from "./fields";
+import { Button } from "./tall-button";
 import { AssetKindIcon } from "./asset-kind-icon";
-import { useApp } from "@/lib/store";
-import { cn } from "@/lib/utils";
+import { Money, NO_LEDGER_NOTE, Notice, OwnerDot, StatusChip, TagChips } from "./asset-parts";
+import { LINK_BUTTON_CLASS } from "./draft-parts";
 import { usePermissions } from "@/components/auth/permissions-provider";
-import { useAssetStore } from "./asset-store";
-import { canSeeDraftQueue, registerMode, sheetActions, visibleDrafts, type Perms } from "./asset-drafts";
-import { LINK_BUTTON_CLASS, SheetHeader } from "./draft-parts";
-import { ProposeEditDialog } from "./propose-edit-dialog";
+import { canSeeDraftQueue, registerMode, type Perms } from "./asset-drafts";
+import { cn } from "@/lib/utils";
 
-type Layout = "table" | "cards" | "map";
-type SortKey = "name" | "value" | "net" | "yield" | "cost";
+type Layout = "table" | "cards";
+type SortKey = "name" | "cost" | "income" | "value";
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: "net", label: "สุทธิ/เดือน มากไปน้อย" },
-  { key: "yield", label: "ผลตอบแทน มากไปน้อย" },
-  { key: "value", label: "มูลค่าปัจจุบัน มากไปน้อย" },
-  { key: "cost", label: "ต้นทุน มากไปน้อย" },
   { key: "name", label: "ชื่อทรัพย์ ก–ฮ" },
+  { key: "cost", label: "ต้นทุนรวม มากไปน้อย" },
+  { key: "income", label: "รายได้สะสม มากไปน้อย" },
+  { key: "value", label: "มูลค่าประเมิน มากไปน้อย" },
+];
+
+const STATUS_OPTIONS: { key: AssetFilter["status"]; label: string }[] = [
+  { key: "all", label: "ทั้งหมด" },
+  { key: "active", label: "ใช้งานอยู่" },
+  { key: "inactive", label: "หยุดไว้" },
+  { key: "closed", label: "ขายแล้ว / ไถ่ถอนแล้ว" },
 ];
 
 /**
- * สีประจำประเภทการถือ — ใช้ทั้งแถบสัดส่วนและจุดในคำอธิบาย ให้ตาจับคู่กันได้
- * เป็นคลาสโทเคนจาก `tailwind.config.ts` (เดิมเป็น hex ตรงๆ ซึ่งผิดกติกา) ·
- * ความหมายอ่านได้จากข้อความ+เปอร์เซ็นต์ข้างจุดเสมอ ไม่พึ่งสีอย่างเดียว
- */
-const HOLDING_TONE: Record<HoldingType, string> = {
-  rental: "bg-brand-600",
-  srr: "bg-info",
-  mortgage: "bg-pos",
-  loan: "bg-warn",
-  for_sale: "bg-ink-600",
-  unset: "bg-ink-400",
-};
-
-/**
- * หน้าบริหารสินทรัพย์
+ * หน้าบริหารสินทรัพย์ — ข้อมูลจริงจากทะเบียนและสมุดบัญชี (ไม่มีข้อมูลจำลอง)
  *
- * ตัวเลขทุกตัวเป็น**ต่อเดือน** · โครงข้อมูลอ้างอิงไฟล์ ASSET HOLDING ของลูกพี่
- * หน้านี้เป็นต้นทางของ Auto-Key (D-067) และของราคาประเมินที่ใช้ตีมูลค่าในงบดุล
+ * **ต้นทุนแสดงรายชิ้นเท่านั้น** (ลูกพี่สั่ง 25/10) — การจัดกลุ่มมีไว้ "ดู" ส่วนหัวกลุ่มบอกแค่ชื่อกลุ่มกับจำนวนชิ้น
+ * ไม่มีต้นทุนรวมหรือต้นทุนเฉลี่ยต่อกลุ่ม · แถว "รวม" ท้ายตารางเป็นผลบวกของยอดแต่ละชิ้นไว้กระทบกับงบเท่านั้น
+ * **มูลค่าประเมินแยกคอลัมน์และแยกกรอบ** — ไม่ใช่ตัวเลขทางบัญชี ไม่เข้างบดุล
  */
-export function AssetManager({ currentUser }: { currentUser: { id: string; name: string } }) {
+export function AssetManager({ data, initialOwner }: { data: RegisterData; initialOwner?: string }) {
   const perms: Perms = usePermissions();
-  /*
-    **ทุกยอดในหน้านี้อ่านจาก `assets` (อนุมัติแล้ว) เท่านั้น** — ร่างอยู่ใน `drafts` แยกต่างหาก
-    และไม่เคยถูกส่งเข้า `portfolioTotals` / `holdingMix` (ADR 0001)
-  */
-  const assets = useAssetStore((s) => s.assets);
-  const allDrafts = useAssetStore((s) => s.drafts);
+  const { assets, owners, reports, values, drafts, ledgerAccess } = data;
+
+  const ownerIds = owners.map((o) => o.id);
+  const [filter, setFilter] = React.useState<AssetFilter>({
+    ...DEFAULT_FILTER,
+    owner: initialOwner && ownerIds.includes(initialOwner) ? initialOwner : FAMILY_OWNER,
+  });
+  const [groupBy, setGroupBy] = React.useState<GroupBy>("none");
+  const [sort, setSort] = React.useState<SortKey>("name");
   const [layout, setLayout] = React.useState<Layout>("table");
-  const [holding, setHolding] = React.useState<HoldingType | "all">("all");
-  const [status, setStatus] = React.useState<"all" | "active" | "inactive">("all");
-  const [sort, setSort] = React.useState<SortKey>("net");
-  const [openId, setOpenId] = React.useState<string | null>(null);
+
+  const ownerOf = React.useCallback((id: string) => owners.find((o) => o.id === id), [owners]);
+  const valueOf = (a: AssetView) => values[a.id]?.value ?? null;
 
   const rows = React.useMemo(() => {
-    const out = assets.filter(
-      (a) => (holding === "all" || a.holding === holding) && (status === "all" || a.status === status)
-    );
-    const by: Record<SortKey, (a: AssetRef) => number | string> = {
+    const out = filterAssets(assets, filter);
+    const by: Record<SortKey, (a: AssetView) => number | string> = {
       name: (a) => a.name,
-      value: (a) => -currentValue(a).value,
-      net: (a) => -monthlyFor(a).net,
-      yield: (a) => -(yieldPct(a) ?? -Infinity),
-      cost: (a) => -a.cost,
+      cost: (a) => -(reports?.[a.id]?.costTotal ?? -Infinity),
+      income: (a) => -(reports?.[a.id]?.income ?? -Infinity),
+      value: (a) => -(values[a.id]?.value ?? -Infinity),
     };
     return [...out].sort((x, y) => {
       const a = by[sort](x);
       const b = by[sort](y);
       return typeof a === "string" ? a.localeCompare(b as string, "th") : (a as number) - (b as number);
     });
-  }, [assets, holding, status, sort]);
+  }, [assets, filter, sort, reports, values]);
 
-  const openAsset = React.useCallback((id: string) => setOpenId(id), []);
+  const groups = React.useMemo(() => groupAssets(rows, groupBy, (id) => ownerOf(id)?.name ?? "ไม่ทราบผู้ถือ"), [rows, groupBy, ownerOf]);
+  const totals = reports ? sumReports(rows, reports) : null;
+  const valued = rows.filter((a) => valueOf(a) !== null);
+  const valueSum = valued.reduce((t, a) => t + Math.round((valueOf(a) ?? 0) * 100), 0) / 100;
+  const tags = React.useMemo(() => allTags(assets), [assets]);
+
+  const mode = registerMode(perms);
+  const queue = canSeeDraftQueue(perms);
+  const pendingDrafts = drafts.filter((d) => d.status === "pending").length;
+
+  function setOwner(owner: string) {
+    setFilter((f) => ({ ...f, owner }));
+    // เก็บมุมมองไว้ใน URL ให้ส่งลิงก์/รีเฟรชแล้วได้มุมมองเดิม (รูปเดียวกับหน้างบการเงิน)
+    const url = new URL(window.location.href);
+    if (owner === FAMILY_OWNER) url.searchParams.delete("owner");
+    else url.searchParams.set("owner", owner);
+    window.history.replaceState(null, "", url);
+  }
+
+  const visibleOwners = owners.filter((o) => o.status === "active" || assets.some((a) => a.ownerId === o.id));
 
   return (
     <div className="flex flex-col gap-4 pb-24">
-      <DraftStrip perms={perms} allDrafts={allDrafts} userId={currentUser.id} />
-      <Dashboard assets={assets} />
+      {/* ทางเข้าลงทะเบียน + คิวร่าง — บอกตรงนี้ว่ามีร่างค้างกี่รายการที่ "ยังไม่อยู่ในตัวเลขด้านล่าง" */}
+      {mode !== "none" || queue ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface p-[14px_18px] shadow-card" data-testid="draft-strip">
+          {pendingDrafts > 0 ? (
+            <div className="mr-auto text-base" data-testid="draft-strip-note">
+              <b>มีร่างรออนุมัติ {pendingDrafts} รายการ</b>
+              <span className="text-ink-600"> — ยังไม่ถูกนับในตัวเลขของหน้านี้</span>
+            </div>
+          ) : (
+            <div className="mr-auto text-base text-ink-600">ไม่มีร่างค้างอนุมัติ</div>
+          )}
+          {mode !== "none" ? (
+            <Link href="/assets/new" className={cn(LINK_BUTTON_CLASS, "border-brand-600 bg-brand-600 text-white hover:bg-brand-700")}>
+              ลงทะเบียนทรัพย์
+            </Link>
+          ) : null}
+          {queue ? (
+            <Link href="/assets/drafts" className={cn(LINK_BUTTON_CLASS, "border-line bg-surface text-ink-900 hover:border-ink-400")}>
+              คิวร่าง ({pendingDrafts})
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!ledgerAccess ? <Notice tone="info">{NO_LEDGER_NOTE}</Notice> : null}
+      {data.unclassifiedLines > 0 ? (
+        <Notice tone="warn">
+          มี {data.unclassifiedLines} บรรทัดในสมุดที่ใช้รหัสบัญชีนอกผังบัญชี จึงไม่ถูกรวมในตัวเลขรายทรัพย์ — แจ้งผู้ดูแลระบบ
+        </Notice>
+      ) : null}
+
+      <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+        <section aria-label="ตัวเลขตามสมุดบัญชี" className="flex flex-col gap-2 rounded-card border border-line bg-surface p-[16px_20px] shadow-card">
+          <div className="text-base font-semibold">ตัวเลขตามสมุดบัญชี (คำนวณใหม่ทุกครั้งที่เปิดหน้า)</div>
+          <div className="flex flex-wrap gap-x-8 gap-y-3">
+            <Figure label="จำนวนทรัพย์ที่แสดง" value={`${rows.length} ชิ้น`} sub={`จากทั้งหมด ${assets.length} ชิ้นที่คุณเห็น`} />
+            <Figure label="ต้นทุนรวมของทุกชิ้น" value={totals ? money(totals.costTotal, { dash: false }) : "ไม่มีสิทธิ์ดู"} sub="ผลบวกต้นทุนของแต่ละชิ้น" />
+            <Figure label="รายได้สะสมรวม" value={totals ? money(totals.income, { dash: false }) : "ไม่มีสิทธิ์ดู"} sub="ค่าเช่า ดอกเบี้ย ฯลฯ ตามสมุด" />
+          </div>
+        </section>
+
+        {/* กรอบประเมิน — แยกจากตัวเลขบัญชีให้เห็นชัดว่าคนละเรื่อง */}
+        <section aria-label="มูลค่าประเมิน" className="flex flex-col gap-2 rounded-card border-2 border-dashed border-warn bg-canvas p-[16px_20px]">
+          <div className="text-base font-semibold">มูลค่าประเมินปัจจุบัน (ไม่ใช่ตัวเลขทางบัญชี)</div>
+          <div className="flex flex-wrap gap-x-8 gap-y-3">
+            <Figure label="ผลบวกราคาประเมินล่าสุด" value={money(valueSum, { dash: false })} sub={`${valued.length} จาก ${rows.length} ชิ้นมีราคาประเมิน`} />
+          </div>
+          <div className="text-sm leading-6 text-ink-600">{VALUE_NOT_ACCOUNTING}</div>
+        </section>
+      </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-card border border-line bg-surface p-[14px_18px] shadow-card">
-        <Field label="ประเภททรัพย์" className="min-w-[220px]">
-          <Select value={holding} onChange={(e) => setHolding(e.target.value as HoldingType | "all")}>
-            <option value="all">ทุกประเภท ({assets.length})</option>
-            {(Object.keys(HOLDING_LABEL) as HoldingType[]).map((h) => {
-              const n = assets.filter((a) => a.holding === h).length;
-              return (
-                <option key={h} value={h} disabled={n === 0}>
-                  {HOLDING_LABEL[h]} ({n})
-                </option>
-              );
-            })}
+        <Field label="ผู้ถือ" className="min-w-[220px]">
+          <Select value={filter.owner} onChange={(e) => setOwner(e.target.value)}>
+            <option value={FAMILY_OWNER}>SRI Family (รวมทุกชื่อ)</option>
+            {visibleOwners.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
           </Select>
         </Field>
-
+        <Field label="หมวดใหญ่" className="min-w-[200px]">
+          <Select value={filter.classCode} onChange={(e) => setFilter((f) => ({ ...f, classCode: e.target.value }))}>
+            <option value="all">ทุกหมวด</option>
+            {data.taxonomy.classes.map((c) => (
+              <option key={c.id} value={c.code}>{c.nameTh}</option>
+            ))}
+          </Select>
+        </Field>
         <Field label="สถานะ" className="min-w-[180px]">
-          <Select value={status} onChange={(e) => setStatus(e.target.value as "all" | "active" | "inactive")}>
-            <option value="all">ทั้งหมด</option>
-            <option value="active">ใช้งานอยู่</option>
-            <option value="inactive">หยุดไว้</option>
+          <Select value={filter.status} onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value as AssetFilter["status"] }))}>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.key} value={s.key}>{s.label}</option>
+            ))}
           </Select>
         </Field>
-
-        <Field label="เรียงตาม" className="min-w-[250px]">
+        <Field label="ป้ายกำกับ (TAG)" className="min-w-[180px]">
+          <Select value={filter.tag} onChange={(e) => setFilter((f) => ({ ...f, tag: e.target.value }))}>
+            <option value="">ทุกป้าย</option>
+            {tags.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="ค้นหา (ชื่อ รหัส ที่ตั้ง)" className="min-w-[220px] flex-1">
+          <Input value={filter.q} onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))} autoComplete="off" />
+        </Field>
+        <Field label="จัดกลุ่มเพื่อดู" className="min-w-[230px]">
+          <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
+            {(Object.keys(GROUP_BY_LABEL) as GroupBy[]).map((g) => (
+              <option key={g} value={g}>{GROUP_BY_LABEL[g]}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="เรียงตาม" className="min-w-[220px]">
           <Select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
             {SORTS.map((s) => (
               <option key={s.key} value={s.key}>{s.label}</option>
             ))}
           </Select>
         </Field>
-
         <div className="ml-auto flex gap-2">
-          {([["table", "ตาราง"], ["cards", "การ์ด"], ["map", "แผนที่"]] as [Layout, string][]).map(([k, label]) => (
+          {([["table", "ตาราง"], ["cards", "การ์ด"]] as [Layout, string][]).map(([k, label]) => (
             <Button key={k} variant={layout === k ? "primary" : "secondary"} onClick={() => setLayout(k)}>
               {label}
             </Button>
@@ -137,226 +217,148 @@ export function AssetManager({ currentUser }: { currentUser: { id: string; name:
         </div>
       </div>
 
-      {layout === "table" ? <TableLayout rows={rows} onOpen={openAsset} /> : null}
-      {layout === "cards" ? <CardLayout rows={rows} onOpen={openAsset} /> : null}
-      {layout === "map" ? <AssetMap rows={rows} onOpen={openAsset} /> : null}
+      {groupBy !== "none" ? (
+        <Notice tone="info" className="py-2">
+          จัดกลุ่มไว้เพื่อ<b>ดู</b>เท่านั้น — ต้นทุนของแต่ละห้อง/แต่ละชิ้นยังแยกกัน ระบบไม่เอาต้นทุนของคนละชิ้นมารวมคิดกัน
+        </Notice>
+      ) : null}
 
-      <AssetSheet asset={assets.find((a) => a.id === openId) ?? null} perms={perms} currentUser={currentUser} onClose={() => setOpenId(null)} />
-    </div>
-  );
-}
-
-/* ---------- ทางเข้าลงทะเบียน + คิวร่าง ---------- */
-
-/**
- * ปุ่มลงทะเบียน/คิวร่าง — โชว์ตามสิทธิ์ (ความสะดวก ไม่ใช่ความปลอดภัย · RLS คือของจริง)
- * และบอกตรงนี้เลยว่ามีร่างค้างกี่รายการ **ที่ยังไม่อยู่ในตัวเลขด้านล่าง** — คนอ่านพอร์ตจะได้ไม่งง
- * ว่าทรัพย์ที่เพิ่งลงไปหายไปไหน
- */
-function DraftStrip({ perms, allDrafts, userId }: { perms: Perms; allDrafts: AssetDraft[]; userId: string }) {
-  const mode = registerMode(perms);
-  const queue = canSeeDraftQueue(perms);
-  const pending = visibleDrafts(allDrafts, perms, userId).filter((d) => d.status === "pending").length;
-  if (mode === "none" && !queue) return null;
-
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface p-[14px_18px] shadow-card" data-testid="draft-strip">
-      {pending > 0 ? (
-        <div className="mr-auto text-base" data-testid="draft-strip-note">
-          <b>มีร่างรออนุมัติ {pending} รายการ</b>
-          <span className="text-ink-600"> — ยังไม่ถูกนับในตัวเลขของหน้านี้</span>
+      {rows.length === 0 ? (
+        <div className="rounded-card border border-line bg-surface p-6 text-base text-ink-600 shadow-card" data-testid="no-assets">
+          {assets.length === 0
+            ? "ยังไม่มีทรัพย์ในทะเบียนที่คุณมีสิทธิ์เห็น"
+            : "ไม่มีทรัพย์ที่ตรงกับตัวกรองนี้ — ลองเปลี่ยนผู้ถือหรือล้างคำค้นหา"}
         </div>
+      ) : layout === "table" ? (
+        <TableLayout groups={groups} grouped={groupBy !== "none"} reports={reports} values={values} ownerOf={ownerOf} totals={totals} valueSum={valueSum} valuedCount={valued.length} total={rows.length} />
       ) : (
-        <div className="mr-auto text-base text-ink-600">ไม่มีร่างค้างอนุมัติ</div>
+        <CardLayout groups={groups} grouped={groupBy !== "none"} reports={reports} values={values} ownerOf={ownerOf} />
       )}
-      {mode !== "none" ? (
-        <Link href="/assets/new" className={cn(LINK_BUTTON_CLASS, "border-brand-600 bg-brand-600 text-white hover:bg-brand-700")}>
-          ลงทะเบียนทรัพย์
-        </Link>
-      ) : null}
-      {queue ? (
-        <Link href="/assets/drafts" className={cn(LINK_BUTTON_CLASS, "border-line bg-surface text-ink-900 hover:border-ink-400")}>
-          คิวร่าง ({pending})
-        </Link>
-      ) : null}
     </div>
   );
 }
 
-/* ---------- แถบสรุปข้างบน ---------- */
-
-function Dashboard({ assets }: { assets: AssetRef[] }) {
-  const t = portfolioTotals(assets);
-  const totalValue = t.value;
-  const totalCost = t.cost;
-  const netMonth = t.netMonth;
-  const netYear = t.netYear;
-  const mix = holdingMix(assets);
-
-  return (
-    <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-      <div className="flex flex-col gap-2.5 rounded-card border border-line bg-surface p-[16px_20px] shadow-card">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-base font-semibold">สัดส่วนประเภททรัพย์</span>
-          <span className="text-sm text-ink-600">คิดจากมูลค่าปัจจุบัน {money(totalValue)} (ไม่รวมร่าง)</span>
-        </div>
-        <div className="flex h-3 overflow-hidden rounded-pill">
-          {mix.map((m) => (
-            <div key={m.h} className={HOLDING_TONE[m.h]} style={{ width: `${m.pct}%` }} title={HOLDING_LABEL[m.h]} />
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-          {mix.map((m) => (
-            <span key={m.h} className="inline-flex items-center gap-1.5 text-base">
-              <span className={cn("h-2.5 w-2.5 flex-none rounded-pill", HOLDING_TONE[m.h])} />
-              {HOLDING_LABEL[m.h]}
-              <b className="tabular-nums">{m.pct.toFixed(1)}%</b>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-card border border-line bg-surface p-[16px_20px] shadow-card">
-        <Figure label="ผลตอบแทนต่อปี" value={totalCost ? `${((netYear / totalCost) * 100).toFixed(2)}%` : "—"} tone="pos" strong
-          sub="คิดจากต้นทุนรวม" />
-        <Figure label="สุทธิต่อเดือน" value={signedMoney(netMonth)} tone={netMonth < 0 ? "neg" : "pos"}
-          sub={`ทรัพย์ที่สร้างรายได้ ${t.activeCount} / ${t.count}`} />
-      </div>
-    </div>
-  );
-}
-
-function Figure({ label, value, sub, tone, strong }: { label: string; value: string; sub?: string; tone?: "pos" | "neg"; strong?: boolean }) {
+function Figure({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
       <div className="text-sm text-ink-600">{label}</div>
-      <div className={cn("tabular-nums font-semibold", strong ? "text-h1" : "text-h2", tone === "pos" && "text-pos-fg", tone === "neg" && "text-neg-fg")}>
-        {value}
-      </div>
+      <div className="text-h2 font-semibold tabular-nums">{value}</div>
       {sub ? <div className="text-sm text-ink-600">{sub}</div> : null}
     </div>
   );
 }
 
-/* ---------- ชิ้นส่วนร่วม ---------- */
+type OwnerOf = (id: string) => RefOwner | undefined;
 
-/** รูปถ่ายถ้ามี ไม่มีก็ไอคอนประจำชนิดทรัพย์ — คอลัมน์นี้ห้ามว่าง */
-function Photo({ asset, size }: { asset: AssetRef; size: number }) {
-  const muted = asset.status !== "active";
-  if (!asset.photo) return <AssetKindIcon kind={asset.kind} size={size} muted={muted} />;
+function AssetName({ a }: { a: AssetView }) {
   return (
-    <Image
-      src={asset.photo}
-      alt=""
-      width={size}
-      height={size}
-      className={cn("flex-none rounded-card object-cover", muted && "opacity-55 grayscale")}
-      style={{ width: size, height: size }}
-    />
-  );
-}
-
-function StatusChip({ asset }: { asset: AssetRef }) {
-  const stopped = asset.status !== "active";
-  return (
-    <Pill className={cn("whitespace-nowrap", stopped ? "border-line bg-canvas text-ink-600" : "border-pos bg-pos-bg text-pos-fg")}>
-      {stopped ? "หยุดไว้" : "ใช้งานอยู่"}
-    </Pill>
-  );
-}
-
-function Owner({ ownerId }: { ownerId: string }) {
-  const o = entityById(ownerId);
-  return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <span className="h-2.5 w-2.5 flex-none rounded-pill" style={{ background: o.color }} />
-      {o.name}
+    <span className="min-w-0">
+      <span className="block font-semibold">{a.name}</span>
+      <span className="block text-sm text-ink-600">
+        {a.code} · {a.className} › {a.categoryName}
+      </span>
+      {a.location ? <span className="block text-sm text-ink-600">{a.location}</span> : null}
+      <TagChips tags={a.tags} />
     </span>
   );
 }
 
-function Net({ asset, className }: { asset: AssetRef; className?: string }) {
-  const m = monthlyFor(asset);
-  if (asset.status !== "active") return <span className={cn("text-ink-600", className)}>—</span>;
-  return <span className={cn("tabular-nums font-semibold", m.net < 0 ? "text-neg-fg" : "text-pos-fg", className)}>{signedMoney(m.net)}</span>;
-}
-
-function AssetName({ asset }: { asset: AssetRef }) {
+function ValueCell({ a, values }: { a: AssetView; values: RegisterData["values"] }) {
+  const v = values[a.id];
+  if (!v || v.value === null) return <span className="text-sm text-ink-600">ยังไม่เคยตีราคา</span>;
   return (
-    <span className="min-w-0">
-      <span className="block whitespace-nowrap font-semibold">{asset.name}</span>
+    <span className="whitespace-nowrap tabular-nums">
+      {money(v.value, { dash: false })}
       <span className="block text-sm text-ink-600">
-        {KIND_LABEL[asset.kind]} · {HOLDING_LABEL[asset.holding]}
+        ณ {isoToDmy(v.asOf)}
+        {v.isStale ? " · ราคาเก่าเกิน 7 วัน" : ""}
       </span>
     </span>
   );
 }
 
-/* ---------- แบบ A · ตาราง ---------- */
-
-function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
-  const pt = portfolioTotals(rows);
-  const totals = { cost: pt.cost, value: pt.value, net: pt.netMonth };
-
+function TableLayout({
+  groups, grouped, reports, values, ownerOf, totals, valueSum, valuedCount, total,
+}: {
+  groups: ReturnType<typeof groupAssets<AssetView>>;
+  grouped: boolean;
+  reports: RegisterData["reports"];
+  values: RegisterData["values"];
+  ownerOf: OwnerOf;
+  totals: ReturnType<typeof sumReports> | null;
+  valueSum: number;
+  valuedCount: number;
+  total: number;
+}) {
   return (
     <TableShell>
-      <Table minWidth={1040}>
+      <Table minWidth={1180}>
         <thead>
           <tr>
             <Th className="min-w-[280px]">ทรัพย์</Th>
             <Th>ถือในชื่อ</Th>
             <Th>สถานะ</Th>
-            <Th align="right">ต้นทุนมูลค่า</Th>
-            <Th align="right">มูลค่าปัจจุบัน</Th>
-            <Th align="right">สุทธิ/เดือน</Th>
-            <Th align="right">ผลตอบแทน/ปี</Th>
+            <Th align="right">ต้นทุนซื้อ</Th>
+            <Th align="right">ค่าปรับปรุงสะสม</Th>
+            <Th align="right">ค่าซ่อมสะสม</Th>
+            <Th align="right">รายได้สะสม</Th>
+            <Th align="right" className="border-l-2 border-dashed border-warn">มูลค่าประเมิน (ไม่ใช่ตัวเลขบัญชี)</Th>
+            <Th>{""}</Th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((a) => {
-            const cv = currentValue(a);
-            const y = yieldPct(a);
-            return (
-              <tr key={a.id} className="bg-surface">
-                <Td className="p-0">
-                  <button
-                    type="button"
-                    className="flex min-h-control w-full items-center gap-3 p-[10px_16px] text-left hover:bg-brand-50"
-                    onClick={() => onOpen(a.id)}
-                  >
-                    <Photo asset={a} size={40} />
-                    <AssetName asset={a} />
-                  </button>
-                </Td>
-                <Td><Owner ownerId={a.ownerId} /></Td>
-                <Td className="whitespace-nowrap"><StatusChip asset={a} /></Td>
-                <Td align="right" className="whitespace-nowrap tabular-nums">{money(a.cost)}</Td>
-                <Td align="right" className="whitespace-nowrap tabular-nums">
-                  {money(cv.value)}
-                  {cv.basis === "cost" ? <span className="block text-sm text-ink-600">ยังไม่ประเมิน</span> : null}
-                </Td>
-                <Td align="right" className="whitespace-nowrap"><Net asset={a} /></Td>
-                <Td align="right" className="whitespace-nowrap tabular-nums">
-                  {y === null ? <span className="text-ink-600">—</span> : <b className={y < 0 ? "text-neg-fg" : "text-pos-fg"}>{y.toFixed(2)}%</b>}
-                </Td>
-              </tr>
-            );
-          })}
+          {groups.map((g) => (
+            <React.Fragment key={g.key}>
+              {grouped ? (
+                <tr data-testid="group-row">
+                  <Td colSpan={9} className="bg-canvas font-semibold">
+                    {g.title} <span className="font-normal text-ink-600">({g.assets.length} ชิ้น)</span>
+                  </Td>
+                </tr>
+              ) : null}
+              {g.assets.map((a) => {
+                const r = reports?.[a.id] ?? null;
+                return (
+                  <tr key={a.id} className="bg-surface" data-testid={`asset-row-${a.id}`}>
+                    <Td className="p-[10px_12px]">
+                      <span className="flex items-start gap-3">
+                        <AssetKindIcon kind={iconKindFor(a)} size={40} muted={a.status !== "active"} />
+                        <AssetName a={a} />
+                      </span>
+                    </Td>
+                    <Td><OwnerDot owner={ownerOf(a.ownerId)} /></Td>
+                    <Td className="whitespace-nowrap"><StatusChip status={a.status} /></Td>
+                    <Td align="right"><Money value={r?.purchase} /></Td>
+                    <Td align="right"><Money value={r?.renovation} /></Td>
+                    <Td align="right"><Money value={r?.repair} /></Td>
+                    <Td align="right"><Money value={r?.income} /></Td>
+                    <Td align="right" className="border-l-2 border-dashed border-warn"><ValueCell a={a} values={values} /></Td>
+                    <Td className="whitespace-nowrap">
+                      <Link href={`/assets/${a.id}`} className={cn(LINK_BUTTON_CLASS, "border-line bg-surface text-ink-900 hover:border-ink-400")} aria-label={`ดูรายงานของ ${a.name}`}>
+                        ดูรายงาน
+                      </Link>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </React.Fragment>
+          ))}
         </tbody>
-        {/* รวมท้ายตาราง — รวมเฉพาะแถวที่กรองอยู่ ไม่ใช่ทั้งทะเบียน */}
+        {/* รวมท้ายตาราง — ผลบวกของยอดแต่ละชิ้นที่แสดงอยู่ (ไม่ใช่ค่าเฉลี่ย) ไว้กระทบกับงบ */}
         <tfoot>
-          <tr className="bg-canvas">
-            <Td className="font-semibold">รวม {rows.length} รายการ</Td>
+          <tr className="bg-canvas font-semibold">
+            <Td>รวม {total} ชิ้น <span className="font-normal text-ink-600">(ผลบวกของแต่ละชิ้น)</span></Td>
             <Td />
             <Td />
-            <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">{money(totals.cost)}</Td>
-            <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">{money(totals.value)}</Td>
-            <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">
-              <span className={totals.net < 0 ? "text-neg-fg" : "text-pos-fg"}>{signedMoney(totals.net)}</span>
+            <Td align="right"><Money value={totals?.purchase} /></Td>
+            <Td align="right"><Money value={totals?.renovation} /></Td>
+            <Td align="right"><Money value={totals?.repair} /></Td>
+            <Td align="right"><Money value={totals?.income} /></Td>
+            <Td align="right" className="border-l-2 border-dashed border-warn whitespace-nowrap tabular-nums">
+              {money(valueSum, { dash: false })}
+              <span className="block text-sm font-normal text-ink-600">{valuedCount} จาก {total} ชิ้น</span>
             </Td>
-            <Td align="right" className="whitespace-nowrap tabular-nums font-semibold">
-              {totals.cost ? `${(((totals.net * 12) / totals.cost) * 100).toFixed(2)}%` : "—"}
-            </Td>
+            <Td />
           </tr>
         </tfoot>
       </Table>
@@ -364,310 +366,57 @@ function TableLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) 
   );
 }
 
-/* ---------- แบบ B · การ์ด ---------- */
-
-function CardLayout({ rows, onOpen }: { rows: AssetRef[]; onOpen: (id: string) => void }) {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {rows.map((a) => {
-        const cv = currentValue(a);
-        return (
-          <button
-            key={a.id}
-            type="button"
-            onClick={() => onOpen(a.id)}
-            className="flex flex-col overflow-hidden rounded-card border border-line bg-surface text-left shadow-card hover:border-brand-100"
-          >
-            {a.photo ? (
-              <Image
-                src={a.photo}
-                alt=""
-                width={480}
-                height={200}
-                className={cn("h-[140px] w-full object-cover", a.status !== "active" && "opacity-55 grayscale")}
-              />
-            ) : (
-              <div className={cn("flex h-[140px] w-full items-center justify-center border-b border-line", a.status !== "active" ? "bg-canvas" : "bg-brand-50")}>
-                <AssetKindIcon kind={a.kind} size={88} muted={a.status !== "active"} className="border-0 bg-transparent" />
-              </div>
-            )}
-            <div className="flex flex-1 flex-col gap-2.5 p-[16px_18px]">
-              <div className="flex items-start gap-2">
-                <div className="mr-auto min-w-0">
-                  <div className="font-semibold">{a.name}</div>
-                  <div className="text-sm text-ink-600">{KIND_LABEL[a.kind]} · {HOLDING_LABEL[a.holding]}</div>
-                </div>
-                <StatusChip asset={a} />
-              </div>
-              <Owner ownerId={a.ownerId} />
-              <div className="mt-auto flex items-end justify-between border-t border-line pt-2.5">
-                <div className="text-sm text-ink-600">
-                  <div>ต้นทุน {money(a.cost)}</div>
-                  <div>มูลค่า {money(cv.value)}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm text-ink-600">สุทธิ/เดือน</div>
-                  <Net asset={a} className="text-h2" />
-                </div>
-              </div>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ---------- แผงขวา ---------- */
-
-function AssetSheet({
-  asset,
-  perms,
-  currentUser,
-  onClose,
+function CardLayout({
+  groups, grouped, reports, values, ownerOf,
 }: {
-  asset: AssetRef | null;
-  perms: Perms;
-  currentUser: { id: string; name: string };
-  onClose: () => void;
+  groups: ReturnType<typeof groupAssets<AssetView>>;
+  grouped: boolean;
+  reports: RegisterData["reports"];
+  values: RegisterData["values"];
+  ownerOf: OwnerOf;
 }) {
-  const showToast = useApp((s) => s.showToast);
-  const drafts = useAssetStore((s) => s.drafts);
-  const [proposing, setProposing] = React.useState(false);
-  if (!asset) return null;
-
-  // ร่างแก้ไขที่ค้างของทรัพย์นี้ (เฉพาะที่ผู้ใช้มีสิทธิ์เห็น) — บอกไว้ว่ายังไม่มีผลกับตัวเลขข้างบน
-  const pendingEdits = visibleDrafts(drafts, perms, currentUser.id).filter(
-    (d) => d.status === "pending" && d.kind === "update" && d.targetAssetId === asset.id
-  ).length;
-
-  const m = monthlyFor(asset);
-  const cv = currentValue(asset);
-  const y = yieldPct(asset);
-  const stopped = asset.status !== "active";
-
   return (
-    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
-      <SheetContent aria-describedby={undefined} width="max-w-[620px]">
-        <DialogPrimitive.Title className="sr-only">รายละเอียดทรัพย์</DialogPrimitive.Title>
-        <SheetHeader title={asset.name} onClose={onClose} />
-
-        <div className="flex flex-1 flex-col gap-5 overflow-auto p-[20px_24px]">
-          <div className="flex gap-4">
-            <Photo asset={asset} size={96} />
-            <div className="flex flex-col items-start gap-2">
-              <StatusChip asset={asset} />
-              <div className="text-base text-ink-600">{KIND_LABEL[asset.kind]} · {HOLDING_LABEL[asset.holding]}</div>
-              <Owner ownerId={asset.ownerId} />
-              <Button variant="secondary" onClick={() => showToast("ตัวอย่างหน้าจอ — ต่อ Supabase Storage แล้วจะอัพรูปได้จริง")}>
-                เปลี่ยนรูป
-              </Button>
-            </div>
-          </div>
-          {asset.statusNote ? <div className="text-base text-ink-600">{asset.statusNote}</div> : null}
-          {pendingEdits > 0 ? (
-            <div role="note" className="rounded border border-warn bg-warn-bg p-[10px_12px] text-base leading-7 text-warn-fg">
-              มีร่างแก้ไขทรัพย์นี้รออนุมัติ {pendingEdits} รายการ — ข้อมูลข้างล่างยังเป็นค่าเดิม
-            </div>
+    <div className="flex flex-col gap-5">
+      {groups.map((g) => (
+        <section key={g.key} className="flex flex-col gap-3">
+          {grouped ? (
+            <h2 className="m-0 text-h2 font-semibold" data-testid="group-row">
+              {g.title} <span className="text-base font-normal text-ink-600">({g.assets.length} ชิ้น)</span>
+            </h2>
           ) : null}
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Mini label="ต้นทุน" value={money(asset.cost)} />
-            <Mini label="มูลค่าปัจจุบัน" value={money(cv.value)} sub={VALUE_BASIS_LABEL[cv.basis]} />
-            <Mini label="สุทธิ/เดือน" value={stopped ? "—" : signedMoney(m.net)} />
-            <Mini label="ผลตอบแทน/ปี" value={y === null ? "—" : `${y.toFixed(2)}%`} sub="จากต้นทุน" />
-          </div>
-
-          <Section title="ทำเล">
-            <Rows
-              items={[
-                ["จังหวัด", asset.location?.province],
-                ["ที่ตั้ง", asset.location?.address],
-              ]}
-            />
-            <MapsLinkField
-              key={asset.id}
-              value={asset.location?.mapsUrl ?? ""}
-              lat={asset.location?.lat}
-              lng={asset.location?.lng}
-            />
-          </Section>
-
-          <Section title="เอกสารสิทธิ์">
-            <Rows
-              items={[
-                ["ชื่อหลังโฉนด", asset.legal?.titleDeedName],
-                ["สำนักงานที่ดิน", asset.legal?.landOffice],
-                ["ขนาด", asset.legal?.sizeLabel],
-                ["เลขที่โฉนด", asset.legal?.deedNo],
-              ]}
-            />
-            {asset.legal?.titleDeedName && asset.legal.titleDeedName !== entityById(asset.ownerId).name ? (
-              <div className="rounded border border-warn bg-warn-bg p-[10px_12px] text-sm leading-6 text-warn-fg">
-                ⚠ ชื่อหลังโฉนดเป็น <b>{asset.legal.titleDeedName}</b> แต่ผู้ถือตามบัญชีคือ{" "}
-                <b>{entityById(asset.ownerId).name}</b> — ถือแทน ต้องมีเอกสารรองรับ
-              </div>
-            ) : null}
-          </Section>
-
-          <Section title="ราคาประเมิน">
-            <Rows
-              items={[
-                ["ราคาประเมินกรมที่ดิน", asset.valuation?.appraised ? money(asset.valuation.appraised) : undefined],
-                ["ราคาตลาด", asset.valuation?.market ? money(asset.valuation.market) : undefined],
-                ["ประเมินเมื่อ", asset.valuation?.asOf],
-              ]}
-            />
-          </Section>
-
-          {asset.bank ? (
-            <Section title="ภาระกับธนาคาร">
-              <Rows
-                items={[
-                  ["ธนาคาร", asset.bank.lender],
-                  ["ยอดค้าง", asset.bank.outstanding ? money(asset.bank.outstanding) : undefined],
-                  ["ผ่อนต่อเดือน", asset.bank.instalmentPerMonth ? money(asset.bank.instalmentPerMonth) : undefined],
-                ]}
-              />
-              <div className="text-sm leading-6 text-ink-600">
-                ยอดค้างเป็น<b>หนี้สินในงบดุล</b> ไม่ได้เอาไปหักมูลค่าทรัพย์ — ทรัพย์กับหนี้อยู่คนละฝั่งของงบ
-              </div>
-            </Section>
-          ) : null}
-
-          {asset.tenancy ? (
-            <Section title="ผู้เช่า">
-              <Rows
-                items={[
-                  ["ชื่อผู้เช่า", asset.tenancy.tenantName],
-                  ["เบอร์ติดต่อ", asset.tenancy.tenantPhone],
-                  ["เงินมัดจำ", asset.tenancy.depositAmount ? money(asset.tenancy.depositAmount) : undefined],
-                  ["สัญญา", asset.tenancy.contractStart ? `${asset.tenancy.contractStart} – ${asset.tenancy.contractEnd ?? "—"}` : undefined],
-                ]}
-              />
-            </Section>
-          ) : null}
-
-          {asset.contract ? (
-            <Section title="สัญญา">
-              <Rows
-                items={[
-                  ["คู่สัญญา", asset.contract.counterparty],
-                  ["รับมาจาก", asset.contract.referredBy],
-                  ["เงินต้นที่ปล่อย", asset.contract.principal ? money(asset.contract.principal) : undefined],
-                  ["ดอกเบี้ย/เดือน", asset.contract.ratePerMonth ? `${(asset.contract.ratePerMonth * 100).toFixed(2)}%` : undefined],
-                  ["หักล่วงหน้า", asset.contract.prepaidMonths ? `${asset.contract.prepaidMonths} เดือน` : undefined],
-                  ["สินไถ่", asset.contract.redemptionValue ? money(asset.contract.redemptionValue) : undefined],
-                  ["อายุสัญญา", asset.contract.startDate ? `${asset.contract.startDate} – ${asset.contract.endDate ?? "—"}` : undefined],
-                  ["งวดถัดไป", asset.contract.nextDueDate],
-                  ["ช่วงส่ง Notice", asset.contract.noticeWindow],
-                ]}
-              />
-              {asset.contract.noticeWindow ? (
-                <div
-                  className={cn(
-                    "rounded border p-[10px_12px] text-sm leading-6",
-                    asset.contract.noticeSent ? "border-pos bg-pos-bg text-pos-fg" : "border-warn bg-warn-bg text-warn-fg"
-                  )}
-                >
-                  {asset.contract.noticeSent ? "✓ ส่ง Notice แล้ว" : "⚠ ยังไม่ได้ส่ง Notice — พ้นช่วงแล้วบังคับตามสัญญาไม่ได้"}
-                </div>
-              ) : null}
-            </Section>
-          ) : null}
-
-          <Section title="รายการประจำ">
-            {asset.recurring.length === 0 ? (
-              <div className="text-base text-ink-600">ยังไม่มีรายการประจำ</div>
-            ) : (
-              <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                {asset.recurring.map((r) => (
-                  <li key={r.id} className="flex flex-wrap items-center gap-2 rounded-card border border-line bg-canvas p-[12px_14px]">
-                    <div className="mr-auto">
-                      <div className="text-base font-semibold">{r.label}</div>
-                      <div className="text-sm text-ink-600">
-                        {FREQUENCY_LABEL[r.frequency]} · {money(r.amount)} ต่องวด · เฉลี่ย {money(monthlyOf(r))} ต่อเดือน
-                      </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {g.assets.map((a) => {
+              const r = reports?.[a.id] ?? null;
+              return (
+                <article key={a.id} className="flex flex-col gap-3 rounded-card border border-line bg-surface p-[16px_18px] shadow-card" data-testid={`asset-card-${a.id}`}>
+                  <div className="flex items-start gap-3">
+                    <AssetKindIcon kind={iconKindFor(a)} size={48} muted={a.status !== "active"} />
+                    <div className="min-w-0 flex-1">
+                      <AssetName a={a} />
                     </div>
-                    <Pill className={r.direction === "income" ? "border-pos bg-pos-bg text-pos-fg" : "border-neg bg-neg-bg text-neg-fg"}>
-                      {r.direction === "income" ? "รายได้" : "ค่าใช้จ่าย"}
-                    </Pill>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {stopped && asset.recurring.length ? (
-              <div className="rounded border border-warn bg-warn-bg p-[10px_12px] text-sm leading-6 text-warn-fg">
-                ⚠ ทรัพย์หยุดไว้ — รายการประจำข้างบนจะ<b>ไม่ถูกสร้างอัตโนมัติ</b>จนกว่าจะกลับมาใช้งาน
-              </div>
-            ) : null}
-          </Section>
-        </div>
-
-        {/*
-          ปุ่มตามสิทธิ์ — ไม่โชว์ปุ่มที่กดแล้วถูกปฏิเสธ
-          **ซ่อนปุ่มคือความสะดวก ไม่ใช่ความปลอดภัย** ความปลอดภัยจริงอยู่ที่ RLS ใน DB
-          (`assets_update` · `asset_drafts_insert` · `valuations_insert`)
-          - ตีราคา: asset.value เท่านั้น (Manager ไม่มี)
-          - แก้ตรง: asset.manage · เสนอแก้เป็นร่าง: คนที่แก้ตรงไม่ได้ (Staff)
-        */}
-        <DialogFooter className="justify-between">
-          <Button variant="secondary" asChild>
-            <Link href={`/assets/${asset.id}`} className="no-underline hover:no-underline">
-              ดูทะเบียนเต็ม
-            </Link>
-          </Button>
-          <div className="flex flex-wrap gap-2">
-            {sheetActions(perms).map((a) => (
-              <Button
-                key={a.id}
-                variant={a.id === "value" ? "secondary" : "primary"}
-                onClick={() => (a.id === "propose" ? setProposing(true) : showToast("ตัวอย่างหน้าจอ ยังไม่เขียนลงฐานข้อมูล"))}
-              >
-                {a.label}
-              </Button>
-            ))}
+                    <StatusChip status={a.status} />
+                  </div>
+                  <OwnerDot owner={ownerOf(a.ownerId)} />
+                  <dl className="m-0 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 border-t border-line pt-3 text-base">
+                    <dt className="text-ink-600">ต้นทุนซื้อ</dt><dd className="m-0 text-right"><Money value={r?.purchase} /></dd>
+                    <dt className="text-ink-600">ค่าปรับปรุงสะสม</dt><dd className="m-0 text-right"><Money value={r?.renovation} /></dd>
+                    <dt className="text-ink-600">ค่าซ่อมสะสม</dt><dd className="m-0 text-right"><Money value={r?.repair} /></dd>
+                    <dt className="text-ink-600">รายได้สะสม</dt><dd className="m-0 text-right"><Money value={r?.income} /></dd>
+                  </dl>
+                  <div className="rounded border-2 border-dashed border-warn bg-canvas p-[8px_12px] text-base">
+                    <div className="text-sm text-ink-600">มูลค่าประเมิน (ไม่ใช่ตัวเลขบัญชี)</div>
+                    <ValueCell a={a} values={values} />
+                  </div>
+                  <Link href={`/assets/${a.id}`} className={cn(LINK_BUTTON_CLASS, "border-brand-600 bg-brand-600 text-white hover:bg-brand-700")}>
+                    ดูรายงานรายชิ้น
+                  </Link>
+                </article>
+              );
+            })}
           </div>
-        </DialogFooter>
-      </SheetContent>
-      {proposing ? (
-        <ProposeEditDialog asset={asset} perms={perms} currentUser={currentUser} onClose={() => setProposing(false)} />
-      ) : null}
-    </Dialog>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="text-base font-semibold">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-/** แสดงเฉพาะช่องที่มีค่า — ช่องว่างเปล่าเต็มหน้าทำให้หาของที่มีจริงยากขึ้น */
-function Rows({ items }: { items: [string, React.ReactNode | undefined][] }) {
-  const shown = items.filter(([, v]) => v !== undefined && v !== null && v !== "");
-  if (shown.length === 0) return <div className="text-base text-ink-600">ยังไม่ได้กรอก</div>;
-  return (
-    <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-base">
-      {shown.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <dt className="whitespace-nowrap text-ink-600">{k}</dt>
-          <dd className="m-0">{v}</dd>
-        </React.Fragment>
+        </section>
       ))}
-    </dl>
-  );
-}
-
-function Mini({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-card border border-line bg-canvas p-[12px_14px]">
-      <div className="text-sm text-ink-600">{label}</div>
-      <div className="text-base font-semibold tabular-nums">{value}</div>
-      {sub ? <div className="text-sm text-ink-600">{sub}</div> : null}
     </div>
   );
 }
+

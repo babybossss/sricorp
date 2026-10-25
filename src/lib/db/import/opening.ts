@@ -1,7 +1,9 @@
 /**
- * นำเข้ายอดตั้งต้นงบดุล (ไฟล์ 2 · `templates/SRI_OS_2_ยอดตั้งต้นงบดุล.xlsx`) — **อ่าน + ตรวจ + วางแผน ยังไม่ลงสมุด**
+ * นำเข้ายอดตั้งต้นงบดุล (ไฟล์ 2 · `templates/SRI_OS_2_ยอดตั้งต้นงบดุล.xlsx`) — **อ่าน + ตรวจ + วางแผน**
  *
- * ไฟล์นี้ทำสามอย่างเท่านั้น และทั้งหมดเป็นฟังก์ชันล้วน (ไม่แตะ DB ไม่แตะ Excel โดยตรง):
+ * ไฟล์นี้ไม่เขียนสมุดเอง — การลงจริงอยู่ที่ `opening-post.ts` (ประกอบรายการผ่าน `buildPosting()`)
+ * กับ `opening-run.ts` (เรียกประตู `fn_reimport_opening` ที่ฝั่ง DB) · ที่นี่ทำสามอย่างเท่านั้น
+ * และทั้งหมดเป็นฟังก์ชันล้วน (ไม่แตะ DB ไม่แตะ Excel โดยตรง):
  *   1. `parseOpeningWorkbook()`  — ตรวจไฟล์ทั้งเล่ม **ทุกช่อง ทุกชีท** แล้วรวบรวมความผิดทั้งหมดในครั้งเดียว
  *                                  มีแม้แต่จุดเดียว = ปฏิเสธทั้งไฟล์ (ไม่นำเข้าบางส่วน) พร้อมบอกชีท/แถว
  *   2. `fingerprintOf()`         — ลายนิ้วมือของ "เนื้อหา" ที่นำเข้า (ไม่ใช่ของไฟล์) ไว้ตัดสินว่าอัปโหลดซ้ำเหมือนเดิมไหม
@@ -11,14 +13,16 @@
  * หลักที่ยึด
  *  - **ตารางเทียบรหัสบัญชีอยู่ในไฟล์เทมเพลต/คู่มือ (`docs/IMPORT_GUIDE.md`) และรหัสในไฟล์คือรหัสบัญชีจริง** — ไม่คิดการเทียบใหม่
  *    รหัสทุกตัวต้องมีในผังบัญชีและอยู่ในโครงงบดุล (`BS_LAYOUT`) ไม่งั้นปฏิเสธ
- *  - **วันตัดยอดไม่ fix ในโค้ด** (กฎเหล็กข้อ 5) — ผู้ใช้ระบุตอนนำเข้า และทุกชีทต้องเป็นวันเดียวกับที่ระบุ
+ *  - **วันตัดยอดไม่ fix ในโค้ด** (กฎเหล็กข้อ 5) — อ่านจากหัวชีท (`detectCutoff()`) หรือผู้ใช้ระบุ
+ *    และทุกชีทต้องเป็นวันเดียวกัน · ผู้ใช้ระบุแล้วไม่ตรงกับในชีท = ปฏิเสธ ไม่เลือกข้างใดข้างหนึ่งให้
  *    (คนละวันกัน = งบดุลไม่ลงตัวและหาสาเหตุไม่ได้ · templates/README.md)
  *  - ยอดทุกช่องมาจากช่องที่คน **กรอก** เท่านั้น — ช่องที่เป็นสูตรไม่ถูกเชื่อ (ระบบรวมยอดเองใหม่ทุกครั้ง)
  *  - ขาคู่ของยอดตั้งต้นคือส่วนของเจ้าของ (3100 ทุน · 3300 กำไรสะสม) ที่ **ผู้ใช้กรอกมาเอง** ระบบไม่เติมให้:
  *    ถ้าสินทรัพย์ − หนี้สิน − ส่วนของเจ้าของ ≠ 0 = ปฏิเสธ (ไม่ดัดตัวเลขอื่นให้ตรง · คู่มือข้อ "ผลต่างรอกระทบยอด")
  *  - เงินสดทุกบาทต้องผูกบัญชีธนาคารจริงของผู้ถือนั้น และบัญชีต้องยังเปิดอยู่ (Money Invariant 2 · D-092)
- *
- * **ยังลงสมุดไม่ได้ในรอบนี้** — เหตุผลอยู่ที่ `OPENING_POSTING_READY`
+ *  - **ล็อตสกุลต่างประเทศต้องมี "อัตรา ณ วันซื้อ"** — ไม่มี = ปฏิเสธทั้งไฟล์ ไม่เดาอัตรา (เดาแล้วต้นทุนผิดและกำไรตอนขายผิดทั้งก้อน)
+ *    ต้นทุนบาท = ปัด 2 ตำแหน่ง(ยอดสกุลเดิม × อัตรา) ด้วยเลขจำนวนเต็ม ไม่ใช้ทศนิยมลอยตัว
+ *    เพราะ DB ตรวจ `cost_thb = round(amount_original × fx_rate, 2)` **พอดี** (ไม่ยอมเศษสตางค์)
  */
 
 import { createHash } from "node:crypto";
@@ -26,17 +30,8 @@ import { COA, coa } from "@/lib/rules/coa";
 import { BS_LAYOUT } from "@/lib/rules/statements";
 import { parseAmountOrNull } from "@/lib/format";
 import { unrealisedEquityCodes } from "../statements";
+import { CURRENCIES } from "@/lib/rules/currency";
 import { cellAt, type Cell, type Sheet, type Workbook } from "./xlsx";
-
-/**
- * ลงสมุดจริงได้หรือยัง — **ยังไม่ได้** (`false`)
- *
- * `buildPosting()` ลงได้เฉพาะหมวดที่อยู่ในตารางกฎ (`txn_types`) และ DB ตรวจว่าทุกบรรทัดใช้บัญชีที่หมวดนั้นประกาศ
- * แต่ **ยังไม่มีประเภทรายการ "ยอดตั้งต้น" ในตารางกฎเลย** (D-046 ข้อ 3: "ต้องเพิ่มด้วย /new-txn-type") ·
- * และการกลับรายการชุดเดิมเมื่ออัปโหลดใหม่ต้องมีหลักยึดที่ DB กำหนดให้ (ไม่ใช่ป้ายที่ผู้เรียกส่งมา · D-115)
- * ทั้งสองอย่างเป็น migration/ตารางกฎ ซึ่งนอกขอบเขตของงานหน้าจอ → ต้องให้ผู้รับผิดชอบฐานข้อมูลทำก่อน
- */
-export const OPENING_POSTING_READY = false;
 
 /* ---------------------------------------------------------------- ชนิด */
 
@@ -83,7 +78,14 @@ export type Lot = {
   units: number;
   pricePerUnit: number;
   fee: number;
+  /** ต้นทุน **เป็นบาทเสมอ** (ล็อตสกุลต่างประเทศ = ยอดสกุลเดิม × อัตรา ปัด 2 ตำแหน่ง) */
   cost: number;
+  /** สกุลเงินของราคา/ค่าธรรมเนียมในไฟล์ (THB / USD / JPY / CNY) */
+  currency: string;
+  /** ล็อตสกุลต่างประเทศเท่านั้น: ยอดในสกุลเดิม = จำนวน × ราคา + ค่าธรรมเนียม (ปัด 6 ตำแหน่ง ตามคอลัมน์ใน DB) */
+  amountOriginal?: number;
+  /** ล็อตสกุลต่างประเทศเท่านั้น: บาทต่อหนึ่งหน่วย ณ วันซื้อ ตามที่ผู้ใช้กรอกในไฟล์ */
+  fxRate?: number;
   /** 1700 หลักทรัพย์ · 1720 ทองคำและสินทรัพย์ทางเลือก */
   coaCode: "1700" | "1720";
   row: number;
@@ -178,6 +180,49 @@ function amountFrom(
   return Math.round(n * scale) / scale;
 }
 
+/* ---------------------------------------------------------------- วันตัดยอดจากในชีท */
+
+/** วันตัดยอดที่เขียนไว้หัวชีท ("ณ วันที่ วว/ดด/ปปปป" ในแถว 1–3) — ไม่พบ/อ่านไม่ออก = null */
+function sheetCutoff(sheet: Sheet): string | null {
+  for (let r = 1; r <= 3; r++) {
+    const t = text(cellAt(sheet, r, "A")) || text(cellAt(sheet, r, "B"));
+    if (/ณ วันที่/.test(t)) return dateFromText(t);
+  }
+  return null;
+}
+
+export type DetectCutoffResult = { ok: true; cutoff: string } | { ok: false; issues: ImportIssue[] };
+
+/**
+ * **เติมวันตัดยอดจากในชีทให้** เมื่อผู้ใช้ไม่ได้ระบุ — ทุกชีทผู้ถือ (`BS-…`) ต้องเขียนวันเดียวกัน
+ *
+ * ไม่เลือกให้เมื่อชีทขัดกันเอง (คนละวัน = งบดุลไม่ลงตัวและหาสาเหตุไม่ได้) และไม่เลือกให้เมื่อ
+ * ไม่มีชีทไหนระบุวัน · **ผู้ใช้ระบุเองแล้วไม่ตรงกับในชีท ยังถูกปฏิเสธเหมือนเดิม** (ที่ `readOwnerSheet`)
+ * — ฟังก์ชันนี้แค่ตอบว่า "ไฟล์นี้บอกว่าวันไหน" ไม่ได้ตัดสินแทนผู้ใช้
+ */
+export function detectCutoff(wb: Workbook): DetectCutoffResult {
+  const issues: ImportIssue[] = [];
+  const byDate = new Map<string, string[]>();
+  for (const sh of wb.sheets) {
+    if (!sh.name.startsWith(SHEET_PREFIX)) continue;
+    const d = sheetCutoff(sh);
+    if (!d) {
+      issues.push({ sheet: sh.name, row: 2, message: 'ไม่พบ "ณ วันที่ วว/ดด/ปปปป" ในหัวชีท — อ่านวันตัดยอดจากไฟล์ไม่ได้ (ระบุวันตัดยอดเองได้ แต่ทุกชีทยังต้องเขียนวันที่ไว้)' });
+      continue;
+    }
+    byDate.set(d, [...(byDate.get(d) ?? []), sh.name]);
+  }
+  if (byDate.size === 0 && issues.length === 0) {
+    issues.push({ sheet: "(ทั้งไฟล์)", message: "ไม่พบชีทผู้ถือ (ชื่อขึ้นต้น BS-) จึงอ่านวันตัดยอดไม่ได้" });
+  }
+  if (byDate.size > 1) {
+    const detail = [...byDate].map(([d, names]) => `${d}: ${names.join(", ")}`).join(" · ");
+    issues.push({ sheet: "(ทั้งไฟล์)", message: `ชีทแต่ละผู้ถือเขียนวันตัดยอดไม่ตรงกัน (${detail}) — ต้องเป็นวันเดียวกันทั้งไฟล์ ไม่งั้นงบดุลไม่ลงตัวและหาสาเหตุไม่ได้` });
+  }
+  if (issues.length) return { ok: false, issues };
+  return { ok: true, cutoff: [...byDate.keys()][0] };
+}
+
 /* ---------------------------------------------------------------- อ่านชีทผู้ถือ */
 
 type OwnerSheet = {
@@ -193,15 +238,7 @@ function readOwnerSheet(sheet: Sheet, owner: OwnerRef, ctx: ParseContext, issues
   const out: OwnerSheet = { owner, sheet: name, amounts: new Map(), cash: [], hasAnything: false };
 
   // วันตัดยอด (แถว 2) ต้องมีและตรงกับที่ผู้ใช้ระบุ
-  let cutoffText = "";
-  for (let r = 1; r <= 3; r++) {
-    const t = text(cellAt(sheet, r, "A")) || text(cellAt(sheet, r, "B"));
-    if (/ณ วันที่/.test(t)) {
-      cutoffText = t;
-      break;
-    }
-  }
-  const fileCutoff = cutoffText ? dateFromText(cutoffText) : null;
+  const fileCutoff = sheetCutoff(sheet);
   if (!fileCutoff) {
     issues.push({ sheet: name, row: 2, message: 'ไม่พบ "ณ วันที่ วว/ดด/ปปปป" ในหัวชีท — ทุกชีทต้องระบุวันตัดยอด และต้องเป็นวันเดียวกันทั้งไฟล์' });
   } else if (fileCutoff !== ctx.cutoff) {
@@ -389,6 +426,56 @@ function buildJournal(os: OwnerSheet, ctx: ParseContext, issues: ImportIssue[]):
 
 /* ---------------------------------------------------------------- รายล็อต */
 
+/**
+ * คอลัมน์ของชีทรายล็อต — **อ่านจากหัวตาราง** ไม่ผูกกับตำแหน่ง เพราะเทมเพลตเพิ่มคอลัมน์ "อัตรา ณ วันซื้อ"
+ * เข้ามาทีหลังและตำแหน่งอาจขยับได้ · หัวที่หาไม่เจอ (ไฟล์รุ่นเก่า) ใช้ตำแหน่งเดิมของเทมเพลตรุ่นแรก
+ * ยกเว้นคอลัมน์อัตรา ซึ่งไม่มีตำแหน่งเดิม (ไม่พบหัว = ไม่มีคอลัมน์ → ล็อตสกุลต่างประเทศถูกปฏิเสธ)
+ */
+type LotColumns = { owner: string; kind: string; name: string; date: string; units: string; price: string; fee: string; currency: string; rate: string | null };
+
+const LOT_HEADERS: { key: keyof LotColumns; startsWith: string; fallback: string | null }[] = [
+  { key: "owner", startsWith: "ถือในชื่อ", fallback: "A" },
+  { key: "kind", startsWith: "ประเภท", fallback: "B" },
+  { key: "name", startsWith: "ชื่อ", fallback: "C" },
+  { key: "date", startsWith: "วันที่ซื้อ", fallback: "D" },
+  { key: "units", startsWith: "จำนวนหน่วย", fallback: "E" },
+  { key: "price", startsWith: "ราคาต่อหน่วย", fallback: "F" },
+  { key: "fee", startsWith: "ค่าธรรมเนียม", fallback: "G" },
+  { key: "currency", startsWith: "สกุลเงิน", fallback: "I" },
+  { key: "rate", startsWith: "อัตรา", fallback: null },
+];
+
+function lotColumns(sheet: Sheet, headerRow: number): LotColumns {
+  const row = sheet.rows.get(headerRow) ?? new Map<string, Cell>();
+  const norm = (c: Cell) => text(c).replace(/[\s*＊]/g, "");
+  const out = {} as Record<string, string | null>;
+  for (const h of LOT_HEADERS) {
+    const hit = [...row].find(([, c]) => norm(c).startsWith(h.startsWith.replace(/\s/g, "")));
+    out[h.key] = hit ? hit[0] : h.fallback;
+  }
+  return out as LotColumns;
+}
+
+/** ตัวเลข → จำนวนเต็มที่คูณ 10^dp (ไม่ผ่านการคูณทศนิยมลอยตัว) — ค่าที่ผ่าน `amountFrom` มีทศนิยมไม่เกิน dp อยู่แล้ว */
+const scaled = (n: number, dp: number): bigint => BigInt(n.toFixed(dp).replace(".", ""));
+/** หารแล้วปัดครึ่งขึ้น (ค่าบวกเท่านั้น) */
+const divRound = (num: bigint, den: bigint): bigint => (num + den / BigInt(2)) / den;
+const pow10 = (n: number): bigint => BigInt("1" + "0".repeat(n));
+
+/**
+ * ต้นทุนของล็อตด้วยเลขจำนวนเต็ม — คืนทั้งยอดสกุลเดิม (ปัด 6 ตำแหน่ง) และต้นทุนบาท (ปัด 2 ตำแหน่ง)
+ *
+ * DB บังคับ `cost_thb = round(amount_original × fx_rate, 2)` พอดีกับค่าที่เก็บ จึงต้องคำนวณจาก
+ * `amount_original` ที่ปัดแล้ว (ไม่ใช่จากผลคูณเต็ม) และต้องไม่คลาดเพราะทศนิยมลอยตัวแม้ 1 สตางค์
+ * `rate` เป็น null = ล็อตบาท (ต้นทุน = ยอดรวมปัด 2 ตำแหน่ง)
+ */
+export function lotCost(units: number, price: number, fee: number, rate: number | null): { amountOriginal: number; costThb: number } {
+  const gross12 = scaled(units, 6) * scaled(price, 6) + scaled(fee, 2) * pow10(10); // ทศนิยม 12 ตำแหน่ง
+  const original6 = divRound(gross12, pow10(6)); // ทศนิยม 6 ตำแหน่ง
+  const cost2 = rate === null ? divRound(gross12, pow10(10)) : divRound(original6 * scaled(rate, 8), pow10(12));
+  return { amountOriginal: Number(original6) / 1e6, costThb: Number(cost2) / 100 };
+}
+
 function readLots(sheet: Sheet, ownersByName: Map<string, OwnerRef>, ctx: ParseContext, issues: ImportIssue[]): Lot[] {
   const rowNumbers = [...sheet.rows.keys()].sort((a, b) => a - b);
   const header = rowNumbers.find((r) => text(cellAt(sheet, r, "A")).startsWith("ถือในชื่อ"));
@@ -396,39 +483,50 @@ function readLots(sheet: Sheet, ownersByName: Map<string, OwnerRef>, ctx: ParseC
     issues.push({ sheet: sheet.name, message: 'ไม่พบแถวหัวตาราง "ถือในชื่อ" — โครงชีทรายล็อตผิดไปจากเทมเพลต' });
     return [];
   }
+  const col = lotColumns(sheet, header);
   const lots: Lot[] = [];
   for (const r of rowNumbers.filter((x) => x > header)) {
-    const a = text(cellAt(sheet, r, "A"));
+    const a = text(cellAt(sheet, r, col.owner));
     if (a.startsWith("ต้องตรงกับ")) continue; // แถวคำอธิบายของเทมเพลต
-    const cols = ["A", "B", "C", "D", "E", "F", "G", "I"].map((c) => cellAt(sheet, r, c));
-    if (cols.every((c) => !c || c.value === null || String(c.value).trim() === "")) continue;
+    const watched = [col.owner, col.kind, col.name, col.date, col.units, col.price, col.fee, col.currency, ...(col.rate ? [col.rate] : [])];
+    if (watched.every((c) => { const v = cellAt(sheet, r, c); return !v || v.value === null || String(v.value).trim() === ""; })) continue;
     const where = { sheet: sheet.name, row: r, label: "ล็อต" };
     const before = issues.length;
 
     const owner = ownersByName.get(a);
     if (!owner) issues.push({ ...where, message: `ถือในชื่อ "${a || "(ว่าง)"}" ไม่ตรงกับผู้ถือคนใดในระบบ` });
-    const kind = text(cellAt(sheet, r, "B"));
+    const kind = text(cellAt(sheet, r, col.kind));
     if (!LOT_KINDS.has(kind)) issues.push({ ...where, message: `ประเภท "${kind || "(ว่าง)"}" ไม่อยู่ในรายการ (${[...LOT_KINDS].join(" / ")})` });
-    const nm = text(cellAt(sheet, r, "C"));
+    const nm = text(cellAt(sheet, r, col.name));
     if (!nm) issues.push({ ...where, message: "ไม่ได้ระบุชื่อ/รหัสหลักทรัพย์" });
-    const boughtOn = dateFromCell(cellAt(sheet, r, "D"));
+    const boughtOn = dateFromCell(cellAt(sheet, r, col.date));
     if (!boughtOn) issues.push({ ...where, message: "วันที่ซื้ออ่านเป็นวันที่ไม่ได้ (รับ วว/ดด/ปปปป ค.ศ. หรือวันที่ของ Excel)" });
     else if (boughtOn > ctx.cutoff) issues.push({ ...where, message: `วันที่ซื้อ ${boughtOn} หลังวันตัดยอด ${ctx.cutoff} — ล็อตที่ซื้อหลังวันตัดยอดต้องบันทึกเป็นรายการซื้อ ไม่ใช่ยอดตั้งต้น` });
-    const units = amountFrom(cellAt(sheet, r, "E"), { ...where, label: "จำนวนหน่วย" }, issues, 6);
-    const price = amountFrom(cellAt(sheet, r, "F"), { ...where, label: "ราคาต่อหน่วย" }, issues, 6);
-    const fee = amountFrom(cellAt(sheet, r, "G"), { ...where, label: "ค่าธรรมเนียม" }, issues) ?? 0;
-    const cur = text(cellAt(sheet, r, "I"));
-    if (cur !== "THB") {
-      issues.push({
-        ...where,
-        message: `สกุลเงิน "${cur || "(ว่าง)"}" — ตอนนี้นำเข้าได้เฉพาะ THB เพราะไฟล์ไม่มีอัตราแลกเปลี่ยน ณ วันตัดยอด และระบบไม่เดาอัตราให้`,
-      });
+    const units = amountFrom(cellAt(sheet, r, col.units), { ...where, label: "จำนวนหน่วย" }, issues, 6);
+    const price = amountFrom(cellAt(sheet, r, col.price), { ...where, label: "ราคาต่อหน่วย" }, issues, 6);
+    const fee = amountFrom(cellAt(sheet, r, col.fee), { ...where, label: "ค่าธรรมเนียม" }, issues) ?? 0;
+    const cur = text(cellAt(sheet, r, col.currency));
+    const rate = col.rate ? amountFrom(cellAt(sheet, r, col.rate), { ...where, label: "อัตรา ณ วันซื้อ" }, issues, 8) : null;
+
+    const known = (CURRENCIES as readonly string[]).includes(cur);
+    if (!known) {
+      issues.push({ ...where, message: `สกุลเงิน "${cur || "(ว่าง)"}" ไม่อยู่ในรายการที่รับ (${CURRENCIES.join(" / ")})` });
+    } else if (cur === "THB") {
+      if (rate !== null && rate !== 1) issues.push({ ...where, message: `ล็อตสกุลบาทมีอัตรา ${rate} — ล็อตบาทไม่ต้องใส่อัตรา (ถ้าเป็นหุ้น/คริปโตต่างประเทศให้เปลี่ยนสกุลเป็นสกุลจริงของล็อต)` });
+    } else if (!col.rate) {
+      issues.push({ ...where, message: `ล็อตสกุล ${cur} ต้องมีอัตรา ณ วันซื้อ แต่ไม่พบคอลัมน์ "อัตรา ณ วันซื้อ" ในชีท — ใช้เทมเพลตรุ่นล่าสุด · ระบบไม่เดาอัตราให้ (เดาแล้วต้นทุนผิดและกำไรตอนขายผิดทั้งก้อน)` });
+    } else if (rate === null) {
+      issues.push({ ...where, message: `ล็อตสกุล ${cur} ต้องมีอัตรา ณ วันซื้อ (บาทต่อ 1 ${cur}) — ช่องนี้ว่าง · ระบบไม่เดาอัตราให้ เพราะเดาแล้วต้นทุนผิดและกำไรตอนขายผิดทั้งก้อน` });
+    } else if (rate <= 0) {
+      issues.push({ ...where, message: `อัตรา ณ วันซื้อต้องมากกว่า 0 (ได้ ${rate})` });
     }
     if (units === null || units <= 0) issues.push({ ...where, message: "จำนวนหน่วยต้องมากกว่า 0" });
     if (price === null || price < 0) issues.push({ ...where, message: "ราคาต่อหน่วยต้องไม่ติดลบ" });
     if (fee < 0) issues.push({ ...where, message: "ค่าธรรมเนียมต้องไม่ติดลบ" });
     if (issues.length > before || !owner || units === null || price === null || !boughtOn) continue;
 
+    const foreign = cur !== "THB";
+    const { amountOriginal, costThb } = lotCost(units, price, fee, foreign ? rate : null);
     lots.push({
       ownerId: owner.id,
       ownerName: owner.name,
@@ -438,7 +536,9 @@ function readLots(sheet: Sheet, ownersByName: Map<string, OwnerRef>, ctx: ParseC
       units,
       pricePerUnit: price,
       fee,
-      cost: round2(units * price + fee),
+      cost: costThb,
+      currency: cur,
+      ...(foreign ? { amountOriginal, fxRate: rate! } : {}),
       coaCode: COMMODITY_KINDS.has(kind) ? "1720" : "1700",
       row: r,
     });
@@ -530,7 +630,7 @@ export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext): ParseResu
 /** ลายนิ้วมือของ "เนื้อหาที่จะนำเข้า" — ไม่ผูกกับตัวไฟล์ (บันทึกใหม่/จัดรูปใหม่แล้วเนื้อเหมือนเดิมต้องได้ค่าเดิม) */
 export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lots">): string {
   const canon = {
-    v: 1,
+    v: 2,
     cutoff: p.cutoff,
     journals: [...p.journals]
       .sort((a, b) => a.ownerId.localeCompare(b.ownerId))
@@ -541,7 +641,7 @@ export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lo
           .sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])),
       })),
     lots: p.lots
-      .map((l) => [l.ownerId, l.coaCode, l.kind, l.name, l.boughtOn, l.units, l.pricePerUnit, cents(l.fee)] as const)
+      .map((l) => [l.ownerId, l.coaCode, l.kind, l.name, l.boughtOn, l.units, l.pricePerUnit, cents(l.fee), l.currency, l.fxRate ?? null, cents(l.cost)] as const)
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
   };
   return createHash("sha256").update(JSON.stringify(canon)).digest("hex");

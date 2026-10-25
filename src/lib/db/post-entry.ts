@@ -59,7 +59,8 @@ export type PostEntryPayload = {
   wht_rate?: number;
   wht_amount?: number;
   wht_certificate_no?: string;
-  source: "manual";
+  /** `import` = ยอดตั้งต้นที่นำเข้าจากไฟล์ (`fn_reimport_opening`) · ที่เหลือ (ฟอร์ม) เป็น `manual` เสมอ */
+  source: "manual" | "import";
   transactions: PostEntryTransaction[];
 };
 
@@ -76,7 +77,7 @@ const blank = (s: string | undefined | null): string | undefined => (s && s.trim
 export function toPostEntryPayload(
   input: PostingInput,
   result: PostingResult,
-  header: { docDate: string; cashDate: string | null; sourceRef?: string }
+  header: { docDate: string; cashDate: string | null; sourceRef?: string; source?: "manual" | "import" }
 ): PostEntryPayload {
   if (!result.transactions.length) {
     throw new PayloadError("เครื่องยนต์บัญชีไม่ได้คืนรายการเลย — ไม่ส่งอะไรไปฐานข้อมูล");
@@ -114,7 +115,7 @@ export function toPostEntryPayload(
     wht_rate: input.wht ? input.wht.rate : undefined,
     wht_amount: input.wht ? input.wht.amount : undefined,
     wht_certificate_no: blank(input.wht?.certificateNo),
-    source: "manual",
+    source: header.source ?? "manual",
     transactions: result.transactions.map((t) => ({
       owner_id: t.ownerId,
       counter_owner_id: t.counterOwnerId,

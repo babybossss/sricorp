@@ -152,22 +152,27 @@ export function createFakeDb() {
     }
   }
   const rpcCalls: Payload[] = [];
+  /** การเรียกประตูอัปโหลดยอดตั้งต้นใหม่ (`fn_reimport_opening`) — ตัวจริงอยู่ที่ DB (พิสูจน์กับ Postgres ในเครื่อง) ที่นี่จำลองแค่ว่าถูกเรียกด้วยอะไร */
+  const reimportCalls: { p_owner: string; p_payload: { entries: Payload[]; lots: Record<string, unknown>[] } }[] = [];
   const seen = new Map<string, string[]>();
   let seq = 0;
   /** ทำให้ rpc ล้ม — ใช้ทดสอบเส้นทาง error ของ DB */
   const control: {
     rpcError: { message: string; code?: string } | null;
     rpcData: unknown | "default";
+    /** ตอบแทนประตูอัปโหลดยอดตั้งต้นใหม่ — ไม่ตั้ง = ตอบว่าลงครบตามที่ส่ง */
+    reimport: ((call: { p_owner: string; p_payload: { entries: Payload[]; lots: Record<string, unknown>[] } }) => { data: unknown; error: { message: string; code?: string } | null }) | null;
     /** ตารางที่ RLS ปฏิเสธการเขียน — INSERT = error 42501 · UPDATE/DELETE = ไม่มีแถวถูกแก้ (ตรงกับ PostgREST จริง) */
     denyWrites: Set<string>;
   } = {
     rpcError: null,
     rpcData: "default",
+    reimport: null,
     denyWrites: new Set(),
   };
   /** ตารางทั่วไป (ไม่ใช่สมุด) — เท่าที่ action ตั้งค่า/ข้อมูลอ้างอิงใช้ */
   const tables: Record<string, Record<string, unknown>[]> = {
-    owners: [], bank_accounts: [], assets: [], contacts: [], chart_of_accounts: [],
+    owners: [], bank_accounts: [], assets: [], contacts: [], chart_of_accounts: [], fx_rates: [],
   };
   /** การเขียนที่ action ยิงมา — ไว้ตรวจว่าส่งอะไรไป (และต้องไม่มี delete) */
   const writes: { table: string; op: "insert" | "update" | "delete"; payload: unknown; denied: boolean }[] = [];
@@ -328,6 +333,7 @@ export function createFakeDb() {
       update: (patch: unknown) => ((mode = "update"), (payload = patch), q),
       delete: () => ((mode = "delete"), q),
       eq: (c: string, v: unknown) => (preds.push((r) => r[c] === v), q),
+      in: (c: string, vals: unknown[]) => (preds.push((r) => vals.includes(r[c])), q),
       order: (col: string, o?: { ascending?: boolean }) => (orders.push({ col, asc: o?.ascending !== false }), q),
       limit: (n: number) => ((cap = n), q),
       single: async () => {
@@ -380,6 +386,12 @@ export function createFakeDb() {
   const client = {
     from,
     rpc: async (fn: string, args: { p_payload: Payload }) => {
+      if (fn === "fn_reimport_opening") {
+        const call = args as unknown as (typeof reimportCalls)[number];
+        reimportCalls.push(call);
+        if (control.reimport) return control.reimport(call);
+        return { data: { changed: true, reversed: 0, posted: call.p_payload.entries.length, lots: call.p_payload.lots.length }, error: null };
+      }
       if (fn !== "fn_post_entry") throw new Error(`ไม่รู้จัก rpc ${fn}`);
       rpcCalls.push(args.p_payload);
       if (control.rpcError) return { data: null, error: control.rpcError };
@@ -400,7 +412,7 @@ export function createFakeDb() {
         .reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0) * 100
     ) / 100;
 
-  return { client, rows, rpcCalls, control, balance, fake, tables, writes };
+  return { client, rows, rpcCalls, reimportCalls, control, balance, fake, tables, writes };
 }
 
 export type FakeDb = ReturnType<typeof createFakeDb>;

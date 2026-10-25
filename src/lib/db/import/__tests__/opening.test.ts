@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildBalanceSheet, toStmtLines, type StatementViewRow } from "../../statements";
 import { COA } from "@/lib/rules/coa";
 import {
+  detectCutoff,
   fingerprintOf,
+  lotCost,
   parseOpeningWorkbook,
   planOpeningImport,
   type ExistingOpeningEntry,
@@ -25,6 +27,12 @@ const parseBad = (wb: Workbook, ctx = ctxOf()): ImportIssue[] => {
 };
 
 const TK = "BS-ธนากร";
+const LOTS = "พอร์ตลงทุน (รายล็อต)";
+/** เทมเพลตรุ่นที่มีคอลัมน์ "อัตรา ณ วันซื้อ" (ต่อท้ายคอลัมน์ J) */
+const withRateColumn = (wb: Workbook): Workbook => {
+  setCell(wb, LOTS, 4, "J", "อัตรา ณ วันซื้อ (บาทต่อ 1 หน่วย) *");
+  return wb;
+};
 const journalOf = (p: ParsedOpening, ownerId: string) => p.journals.find((j) => j.ownerId === ownerId)!;
 const sumLines = (ls: JournalLine[]) => ({
   dr: Math.round(ls.reduce((t, l) => t + l.debit, 0) * 100) / 100,
@@ -350,10 +358,75 @@ describe("ปฏิเสธทั้งไฟล์: โครงไฟล์/�
     expect(parseBad(wb).some((i) => i.sheet === TK && /1700/.test(i.message))).toBe(true);
   });
 
-  it("ล็อตสกุลเงินต่างประเทศ → ปฏิเสธ (ไม่มีอัตราแลกเปลี่ยน ไม่เดา)", () => {
+  it("ล็อตสกุลต่างประเทศที่ **ไม่มีคอลัมน์อัตรา** ในชีท → ปฏิเสธ (ไม่เดาอัตรา)", () => {
     const wb = loadFixture();
-    setCell(wb, "พอร์ตลงทุน (รายล็อต)", 6, "I", "USD");
-    expect(has(parseBad(wb), "พอร์ตลงทุน (รายล็อต)", 6, /นำเข้าได้เฉพาะ THB/)).toBe(true);
+    setCell(wb, LOTS, 6, "I", "USD");
+    expect(has(parseBad(wb), LOTS, 6, /ไม่พบคอลัมน์ "อัตรา ณ วันซื้อ"/)).toBe(true);
+  });
+
+  it("ล็อตสกุลต่างประเทศ ช่องอัตราว่าง → ปฏิเสธทั้งไฟล์ ไม่มีล็อตใดผ่านไปเป็นบางส่วน", () => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "I", "USD");
+    const issues = parseBad(wb);
+    expect(has(issues, LOTS, 6, /ต้องมีอัตรา ณ วันซื้อ/)).toBe(true);
+    expect(parseOpeningWorkbook(wb, ctxOf()).ok).toBe(false);
+  });
+
+  it.each([
+    ["อัตราเป็น 0", 0, /ต้องมากกว่า 0/],
+    ["อัตราติดลบ", -35, /ต้องมากกว่า 0/],
+    ["อัตราทศนิยมเกิน 8 ตำแหน่ง", 35.123456789, /ทศนิยมเกิน 8/],
+  ])("ล็อตสกุลต่างประเทศ: %s → ปฏิเสธ", (_n, rate, re) => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "I", "USD");
+    setCell(wb, LOTS, 6, "J", rate);
+    expect(has(parseBad(wb), LOTS, 6, re)).toBe(true);
+  });
+
+  it("ล็อตสกุลบาทแต่ใส่อัตราที่ไม่ใช่ 1 → ปฏิเสธ (กันสกุลผิดช่อง) · อัตรา 1 ผ่าน", () => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "J", 35);
+    expect(has(parseBad(wb), LOTS, 6, /ล็อตบาทไม่ต้องใส่อัตรา/)).toBe(true);
+    const ok = withRateColumn(loadFixture());
+    setCell(ok, LOTS, 6, "J", 1);
+    expect(parseOk(ok).lots[0].currency).toBe("THB");
+  });
+
+  it("ล็อตสกุลที่ไม่รู้จัก → ปฏิเสธ", () => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "I", "GBP");
+    setCell(wb, LOTS, 6, "J", 45);
+    expect(has(parseBad(wb), LOTS, 6, /ไม่อยู่ในรายการที่รับ/)).toBe(true);
+  });
+
+  it("ล็อต USD มีอัตรา → ผ่าน · ต้นทุนบาท = ยอดสกุลเดิม × อัตรา · รวมเท่า 1700 ได้", () => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "I", "USD");
+    setCell(wb, LOTS, 6, "E", 2000);
+    setCell(wb, LOTS, 6, "F", 1); // 2,000 USD
+    setCell(wb, LOTS, 6, "J", 35); // × 35 = 70,000 บาท (เท่ากับล็อต PTT เดิมที่เป็นบาท)
+    const lot = parseOk(wb).lots.find((l) => l.name === "PTT")!;
+    expect(lot).toMatchObject({ currency: "USD", amountOriginal: 2000, fxRate: 35, cost: 70_000, coaCode: "1700" });
+  });
+
+  it("คอลัมน์อัตราอยู่ตำแหน่งอื่นก็อ่านได้ — อ่านจากหัวตาราง ไม่ใช่ตำแหน่ง", () => {
+    const wb = loadFixture();
+    setCell(wb, LOTS, 4, "K", "อัตรา ณ วันซื้อ (บาทต่อ 1 หน่วย) *");
+    setCell(wb, LOTS, 6, "I", "USD");
+    setCell(wb, LOTS, 6, "E", 2000);
+    setCell(wb, LOTS, 6, "F", 1);
+    setCell(wb, LOTS, 6, "K", 35);
+    expect(parseOk(wb).lots.find((l) => l.name === "PTT")).toMatchObject({ fxRate: 35, cost: 70_000 });
+  });
+
+  it("ต้นทุนบาทของล็อตต่างประเทศเป็นเลขจำนวนเต็ม — ครึ่งสตางค์ปัดขึ้น ไม่คลาดแบบทศนิยมลอยตัว", () => {
+    // 100.005 USD × 1 = 100.005 → 100.01 (ทศนิยมลอยตัว Math.round(100.005*100)/100 ได้ 100.00 ซึ่งผิด)
+    expect(lotCost(1, 100.005, 0, 1)).toEqual({ amountOriginal: 100.005, costThb: 100.01 });
+    // oracle คำนวณด้วย Python Decimal: 0.123456 × 1.234567 + 0.01 = 0.162415... → 0.162415 (6 ตำแหน่ง) × 35.12345678 = 5.7044... → 5.70
+    expect(lotCost(0.123456, 1.234567, 0.01, 35.12345678)).toEqual({ amountOriginal: 0.162415, costThb: 5.7 });
+    // ล็อตบาท: 1,299 หน่วย × 100 + ค่าธรรมเนียม 100 = 130,000.00
+    expect(lotCost(1299, 100, 100, null)).toEqual({ amountOriginal: 130_000, costThb: 130_000 });
+    expect(lotCost(3, 0.005, 0, null).costThb).toBe(0.02); // 0.015 → 0.02 (ครึ่งขึ้น)
   });
 
   it("ล็อตวันที่ซื้อหลังวันตัดยอด หรืออ่านวันที่ไม่ออก → ปฏิเสธ", () => {
@@ -539,5 +612,61 @@ describe("อัปโหลดไฟล์ที่แก้แล้ว: ก�
 describe("ข้อมูลอ้างอิงใช้ได้จริง", () => {
   it("ธนาคารในเทสต์ตรงกับที่ไฟล์ตัวอย่างใช้ (กันเทสต์ผ่านเพราะข้อมูลไม่ครบ)", () => {
     expect(BANKS.map((b) => b.name)).toContain("ธนากร - BBL 888");
+  });
+});
+
+/* =========================================================== วันตัดยอดจากในไฟล์ */
+describe("detectCutoff: เติมวันตัดยอดจากหัวชีท", () => {
+  it("ทุกชีทเขียนวันเดียวกัน → คืนวันนั้น ตรงกับที่ parse ยอมรับ", () => {
+    const r = detectCutoff(loadFixture());
+    expect(r).toEqual({ ok: true, cutoff: CUTOFF });
+    if (r.ok) expect(parseOpeningWorkbook(loadFixture(), ctxOf({ cutoff: r.cutoff })).ok).toBe(true);
+  });
+
+  it("ชีทหนึ่งเขียนคนละวัน → ปฏิเสธ บอกว่าชีทไหนวันไหน ไม่เลือกข้างให้", () => {
+    const wb = loadFixture();
+    setCell(wb, TK, 2, "A", "ณ วันที่ 31/10/2026 · ราคาทุน/ตามบัญชี");
+    const r = detectCutoff(wb);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.issues).toHaveLength(1);
+      expect(r.issues[0].message).toMatch(/2026-09-30: .*BS-/);
+      expect(r.issues[0].message).toMatch(/2026-10-31: BS-ธนากร/);
+    }
+  });
+
+  it("ชีทหนึ่งไม่เขียนวันที่ → ปฏิเสธ ระบุชีท", () => {
+    const wb = loadFixture();
+    setCell(wb, TK, 2, "A", "ราคาทุน/ตามบัญชี");
+    const r = detectCutoff(wb);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.issues.some((i) => i.sheet === TK && /ไม่พบ "ณ วันที่/.test(i.message))).toBe(true);
+  });
+
+  it("ผู้ใช้ระบุวันเองแล้วไม่ตรงกับในชีท → parse ยังปฏิเสธ (ไม่ถูกแทนที่ด้วยวันในไฟล์)", () => {
+    expect(detectCutoff(loadFixture()).ok).toBe(true);
+    const issues = parseBad(loadFixture(), ctxOf({ cutoff: "2026-10-31" }));
+    expect(issues.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("ลายนิ้วมือ: ล็อตต่างประเทศ", () => {
+  const foreign = (units: number, rate: number) => {
+    const wb = withRateColumn(loadFixture());
+    setCell(wb, LOTS, 6, "I", "USD");
+    setCell(wb, LOTS, 6, "E", units);
+    setCell(wb, LOTS, 6, "F", 1);
+    setCell(wb, LOTS, 6, "J", rate);
+    return wb;
+  };
+  it("ต้นทุนบาทเท่ากัน (70,000) แต่สกุล/ยอดเดิม/อัตราต่างกัน → เป็นเนื้อหาคนละชุด ลายนิ้วมือต้องต่างกัน", () => {
+    const thb = fingerprintOf(parseOk()); // PTT เป็นบาท 70,000
+    const usd35 = fingerprintOf(parseOk(foreign(2000, 35))); // 2,000 USD × 35
+    const usd70 = fingerprintOf(parseOk(foreign(1000, 70))); // 1,000 USD × 70
+    expect(new Set([thb, usd35, usd70]).size).toBe(3);
+    expect(fingerprintOf(parseOk(foreign(2000, 35)))).toBe(usd35);
+  });
+  it("เปลี่ยนอัตราแล้วต้นทุนบาทไม่เท่ายอด 1700 เดิม → ปฏิเสธ (ล็อตกับยอดบัญชีแยกกันเงียบๆ ไม่ได้)", () => {
+    expect(parseBad(foreign(2000, 36)).some((i) => /1700.*ต่างกัน/.test(i.message))).toBe(true);
   });
 });

@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { findEntity } from "@/lib/mock/entities";
+import type { AssetView, DraftView, Taxonomy } from "@/lib/db/assets-model";
+import type { RefOwner } from "@/lib/db/reference-types";
 import { usePermissions } from "@/components/auth/permissions-provider";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
 import { Button } from "./tall-button";
@@ -10,8 +11,8 @@ import { Select } from "./fields";
 import { Field } from "@/components/ui/field";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/utils";
-import { useAssetStore } from "./asset-store";
-import { fmtDateTime, norm, reviewActions, visibleDrafts, canSeeDraftQueue, registerMode, type Perms } from "./asset-drafts";
+import { fmtDateTime, norm, reviewActions, canSeeDraftQueue, registerMode, type Perms } from "./asset-drafts";
+import { Notice } from "./asset-parts";
 import { DraftReviewPanel } from "./draft-review-panel";
 import { KindPill, LINK_BUTTON_CLASS, NotCountedNotice, StatusPill } from "./draft-parts";
 
@@ -19,29 +20,42 @@ import { KindPill, LINK_BUTTON_CLASS, NotCountedNotice, StatusPill } from "./dra
  * คิวร่างทะเบียนทรัพย์ที่รออนุมัติ — ใครสร้าง เมื่อไหร่ · กด "ตรวจร่าง" แล้วแผงเลื่อนเข้ามาทางขวา
  * (รูปแบบเดียวกับคิวอนุมัติรายการเงิน)
  *
- * Staff เห็นเฉพาะร่างของตัวเอง · ผู้มี asset.manage เห็นทั้งหมดในขอบเขต
- * (ตัวกรองนี้ใน TS เป็นแค่การจำลอง — ของจริงให้ RLS `asset_drafts_read` กรอง)
+ * Staff เห็นเฉพาะร่างของตัวเอง · ผู้มี asset.manage เห็นทั้งหมดในขอบเขต — **ให้ RLS `asset_drafts_read` กรองที่ DB**
+ * ร่างที่ได้มาถูกกรองแล้ว หน้าจอไม่มีตัวกรองสิทธิ์สำเนาที่สอง
  */
-export function DraftQueue({ currentUser }: { currentUser: { id: string; name: string } }) {
+export function DraftQueue(props: {
+  drafts: DraftView[];
+  assets: AssetView[];
+  taxonomy: Taxonomy;
+  owners: RefOwner[];
+  currentUser: { id: string; name: string };
+}) {
   const perms: Perms = usePermissions();
-  return <DraftQueueView perms={perms} currentUser={currentUser} />;
+  return <DraftQueueView perms={perms} {...props} />;
 }
 
-export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUser: { id: string; name: string } }) {
-  const allDrafts = useAssetStore((s) => s.drafts);
-  const assets = useAssetStore((s) => s.assets);
+export function DraftQueueView({
+  perms, currentUser, drafts, assets, taxonomy, owners,
+}: {
+  perms: Perms;
+  currentUser: { id: string; name: string };
+  drafts: DraftView[];
+  assets: AssetView[];
+  taxonomy: Taxonomy;
+  owners: RefOwner[];
+}) {
   const [filter, setFilter] = React.useState<"pending" | "all">("pending");
   const [openId, setOpenId] = React.useState<string | null>(null);
+  const [flash, setFlash] = React.useState<string | null>(null);
 
-  const mineVisible = React.useMemo(() => visibleDrafts(allDrafts, perms, currentUser.id), [allDrafts, perms, currentUser.id]);
-  const pendingCount = mineVisible.filter((d) => d.status === "pending").length;
+  const pendingCount = drafts.filter((d) => d.status === "pending").length;
   const rows = React.useMemo(
     () =>
-      mineVisible
+      drafts
         .filter((d) => filter === "all" || d.status === "pending")
         // รออนุมัติ: เก่าสุดขึ้นก่อน (รอนานสุด) · ทั้งหมด: ใหม่สุดขึ้นก่อน
         .sort((a, b) => (filter === "pending" ? 1 : -1) * (Date.parse(a.createdAt) - Date.parse(b.createdAt))),
-    [mineVisible, filter]
+    [drafts, filter]
   );
 
   if (!canSeeDraftQueue(perms)) {
@@ -55,7 +69,8 @@ export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUs
   const idx = rows.findIndex((d) => d.id === openId);
   const open = idx >= 0 ? rows[idx] : null;
 
-  function afterDecision() {
+  function afterDecision(message: string) {
+    setFlash(message);
     // ตัดสินแล้ว: ไปรายการรออนุมัติถัดไป ไม่มีแล้วก็ปิดแผง
     const next = rows.slice(idx + 1).find((d) => d.status === "pending") ?? rows.slice(0, idx).find((d) => d.status === "pending");
     setOpenId(next?.id ?? null);
@@ -83,6 +98,8 @@ export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUs
         ) : null}
       </div>
 
+      {flash ? <Notice tone="ok">{flash}</Notice> : null}
+
       {rows.length === 0 ? (
         <div className="rounded-card border border-line bg-surface p-[24px] text-base text-ink-600 shadow-card" data-testid="queue-empty">
           {filter === "pending" ? "ไม่มีร่างที่รออนุมัติ" : "ยังไม่มีร่าง"}
@@ -104,7 +121,7 @@ export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUs
             <tbody>
               {rows.map((d) => {
                 const target = d.targetAssetId ? assets.find((a) => a.id === d.targetAssetId) : undefined;
-                const holder = findEntity(d.ownerId);
+                const holder = owners.find((o) => o.id === d.ownerId);
                 const mine = d.createdBy.id === currentUser.id;
                 const a = reviewActions(perms, d, currentUser.id);
                 return (
@@ -115,7 +132,7 @@ export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUs
                     </Td>
                     <Td className="whitespace-nowrap">
                       <span className="inline-flex items-center gap-1.5">
-                        {holder ? <span className="h-2.5 w-2.5 flex-none rounded-pill" style={{ background: holder.color }} /> : null}
+                        {holder ? <span className="h-2.5 w-2.5 flex-none rounded-pill" style={holder.color ? { background: holder.color } : undefined} /> : null}
                         {holder?.name ?? "—"}
                       </span>
                     </Td>
@@ -147,6 +164,9 @@ export function DraftQueueView({ perms, currentUser }: { perms: Perms; currentUs
 
       <DraftReviewPanel
         draft={open}
+        assets={assets}
+        taxonomy={taxonomy}
+        owners={owners}
         perms={perms}
         currentUser={currentUser}
         position={{ index: Math.max(idx, 0), total: rows.length }}

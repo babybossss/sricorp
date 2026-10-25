@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { AssetKind } from "@/lib/mock/assets";
+import type { AssetIconKind } from "@/lib/db/assets-model";
 import { cn } from "@/lib/utils";
 
 /**
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
  * ทรัพย์ส่วนใหญ่จะไม่มีรูปตั้งแต่วันแรก ช่องว่างเปล่าทั้งคอลัมน์อ่านยากกว่าไอคอน
  */
 
-const PATHS: Record<AssetKind | "other", string[]> = {
+const PATHS: Record<AssetIconKind, string[]> = {
   // ตึกสูง ช่องหน้าต่างเป็นตาราง
   condo: ["M7 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16", "M3 21h18", "M10 8h1M14 8h1M10 12h1M14 12h1M10 16h1M14 16h1"],
   // หลังคาจั่ว + ประตู
@@ -35,7 +35,7 @@ export function AssetKindIcon({
   muted,
   className,
 }: {
-  kind: AssetKind | "other";
+  kind: AssetIconKind;
   size?: number;
   /** ทรัพย์ที่หยุดไว้ — จางลงให้ตรงกับที่รูปถ่ายทำ */
   muted?: boolean;
@@ -69,6 +69,6 @@ export function AssetKindIcon({
 }
 
 /** ใช้ในหน้าตัวอย่าง/ตัวเลือก — ไม่ใช่ลำดับที่ใช้แสดงผลจริง */
-export const ICON_KINDS: (AssetKind | "other")[] = [
+export const ICON_KINDS: AssetIconKind[] = [
   "condo", "house", "townhome", "land", "commercial", "warehouse", "other",
 ];

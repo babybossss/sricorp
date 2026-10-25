@@ -1,250 +1,297 @@
 "use client";
 
 import * as React from "react";
-import { cn } from "@/lib/utils";
+import Link from "next/link";
 import { Card, CardBody, CardLabel, CardTitle } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
-import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { TableShell, Table, Th, Td } from "@/components/ui/table";
-import { MONTHS } from "@/lib/mock/entities";
-import { ContactPicker } from "@/components/form/contact-picker";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { coaLabel } from "@/lib/rules/coa";
+import { findSub } from "@/lib/rules/tx-rules";
+import { HOLDING_NATURE_LABEL, VALUE_NOT_ACCOUNTING, iconKindFor, methodLabel, type AssetLedgerLine } from "@/lib/db/assets-model";
+import type { DetailData } from "@/lib/db/assets-server";
+import { isoToDmy, money } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { Button } from "./tall-button";
+import { AssetKindIcon } from "./asset-kind-icon";
+import { Money, NO_LEDGER_NOTE, Notice, OwnerDot, StatusChip, TagChips } from "./asset-parts";
+import { sheetActions, type Perms } from "./asset-drafts";
+import { EditAssetDialog } from "./propose-edit-dialog";
+import { ValuationDialog } from "./valuation-dialog";
+import { LINK_BUTTON_CLASS } from "./draft-parts";
 
-const TABS = [
-  { key: "overview", label: "ภาพรวม" },
-  { key: "contract", label: "ข้อมูลสัญญา" },
-  { key: "money", label: "รายการเงิน" },
-  { key: "docs", label: "เอกสาร" },
-] as const;
+const CONTRACT_TYPE: Record<string, string> = {
+  lease: "สัญญาเช่า",
+  sale_leaseback: "สัญญาขายฝาก",
+  mortgage: "สัญญาจำนอง",
+  loan_payable: "สัญญากู้ยืม (เราเป็นผู้กู้)",
+  loan_receivable: "สัญญากู้ยืม (เราเป็นผู้ให้กู้)",
+  service: "สัญญาบริการ",
+};
+const CONTRACT_STATUS: Record<string, string> = { draft: "ร่าง", active: "มีผลอยู่", closed: "ปิดแล้ว", defaulted: "ผิดนัด" };
 
-const BARS = [12, 12, 12, 12, 0, 12, 12, 12, 12, 12, 12, 12];
+/** แสดงรายการเงินล่าสุดไม่เกินเท่านี้ — ที่เหลือบอกจำนวนไว้ ไม่ตัดเงียบๆ */
+const LEDGER_SHOWN = 300;
 
-const ASSET_LEDGER = [
-  { date: "01/09/2026", detail: "ค่าเช่า ก.ย.", in: "+12,000.00", out: "–", status: "รับแล้ว" },
-  { date: "05/09/2026", detail: "ค่าส่วนกลาง Q3", in: "–", out: "(9,800.00)", status: "จ่ายแล้ว" },
-  { date: "01/08/2026", detail: "ค่าเช่า ส.ค.", in: "+12,000.00", out: "–", status: "รับแล้ว" },
-  { date: "12/07/2026", detail: "ค่าซ่อมเครื่องทำน้ำอุ่น", in: "–", out: "(3,200.00)", status: "จ่ายแล้ว" },
-  { date: "01/07/2026", detail: "ค่าเช่า ก.ค.", in: "+12,000.00", out: "–", status: "รับแล้ว" },
-];
-
-const DOCS = [
-  { kind: "PDF", name: "lease-condoC.pdf", meta: "สัญญาเช่า · 1.2 MB" },
-  { kind: "PDF", name: "title-deed.pdf", meta: "โฉนด · 820 KB" },
-  { kind: "รูป", name: "room-photo-01.jpg", meta: "สภาพห้อง 08/2026" },
-  { kind: "PDF", name: "insurance-2026.pdf", meta: "ประกันอัคคีภัย" },
-];
-
-export function AssetDetail({ name }: { name: string }) {
-  const [tab, setTab] = React.useState<(typeof TABS)[number]["key"]>("overview");
-  const [editMode, setEditMode] = React.useState(false);
-  const [tenantId, setTenantId] = React.useState("c1");
+/**
+ * รายงานรายทรัพย์ (D-112): ต้นทุนซื้อ · ค่าปรับปรุงสะสม · ค่าซ่อมสะสม · รายได้สะสม · มูลค่าล่าสุด
+ *
+ * ทุกตัวเลขของ "ต้นทุน" คำนวณใหม่จากสมุดตอนเปิดหน้า (ไม่มีช่องเก็บยอด) · **ต้นทุนเป็นของชิ้นนี้ชิ้นเดียว**
+ * ไม่ถูกเฉลี่ยกับทรัพย์ชิ้นอื่น แม้อยู่ตึกเดียวกัน · มูลค่าล่าสุดแยกกรอบและบอกชัดว่าไม่ใช่ตัวเลขทางบัญชี
+ */
+export function AssetDetail({ data, contactNames }: { data: DetailData; contactNames: Record<string, string> }) {
+  const perms: Perms = usePermissions();
+  const { asset, report, latest } = data;
+  const owner = data.owners.find((o) => o.id === asset.ownerId);
+  const [dialog, setDialog] = React.useState<null | "value" | "edit" | "propose">(null);
+  const actions = sheetActions(perms);
 
   return (
-    <div className="flex flex-col gap-4">
-      {editMode ? (
-        <div className="rounded border border-warn bg-warn-bg p-[14px_18px] text-base text-warn-fg">
-          กำลังอยู่ในโหมดแก้ไข — การเปลี่ยนแปลงจะบันทึกเมื่อกดปุ่มบันทึก
+    <div className="flex flex-col gap-4 pb-24">
+      <div>
+        <Link href="/assets" className={cn(LINK_BUTTON_CLASS, "border-line bg-surface text-ink-900 hover:border-ink-400")}>
+          กลับไปทะเบียนทรัพย์
+        </Link>
+      </div>
+
+      <div className="flex flex-wrap items-start gap-4 rounded-card border border-line bg-surface p-[18px_20px] shadow-card">
+        <AssetKindIcon kind={iconKindFor(asset)} size={64} muted={asset.status !== "active"} />
+        <div className="min-w-0 flex-1">
+          <div className="text-h1 font-semibold">{asset.name}</div>
+          <div className="text-base text-ink-600">
+            {asset.code} · {asset.className} › {asset.categoryName}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <OwnerDot owner={owner} />
+            <StatusChip status={asset.status} />
+            {asset.holdingNature ? <span className="text-sm text-ink-600">{HOLDING_NATURE_LABEL[asset.holdingNature] ?? asset.holdingNature}</span> : null}
+          </div>
+          {asset.tags.length ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-ink-600">ป้ายกำกับ:</span>
+              <TagChips tags={asset.tags} />
+            </div>
+          ) : null}
         </div>
+        {/* ปุ่มตามสิทธิ์ — ไม่โชว์ปุ่มที่กดแล้วถูกปฏิเสธ (ความสะดวก ไม่ใช่ความปลอดภัย · RLS คือของจริง) */}
+        <div className="flex flex-wrap gap-2">
+          {actions.map((a) => (
+            <Button key={a.id} variant={a.id === "value" ? "secondary" : "primary"} onClick={() => setDialog(a.id)}>
+              {a.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {data.pendingEditDrafts > 0 ? (
+        <Notice tone="warn">มีร่างแก้ไขทรัพย์นี้รออนุมัติ {data.pendingEditDrafts} รายการ — ข้อมูลข้างล่างยังเป็นค่าเดิม</Notice>
+      ) : null}
+      {!data.ledgerAccess ? <Notice tone="info">{NO_LEDGER_NOTE}</Notice> : null}
+      {data.unclassifiedLines > 0 ? (
+        <Notice tone="warn">มี {data.unclassifiedLines} บรรทัดในสมุดที่ใช้รหัสบัญชีนอกผังบัญชี จึงไม่ถูกรวมในตัวเลขด้านล่าง — แจ้งผู้ดูแลระบบ</Notice>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-4 rounded-card border border-line bg-surface p-[18px_20px] shadow-card">
-        <div>
-          <div className="text-h1 font-semibold">{name}</div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-            <Pill size="md" className="border-brand-100 bg-brand-50 text-brand-600">Real Estate · ปล่อยเช่า</Pill>
-            <span className="inline-flex items-center gap-1.5 text-sm text-ink-600">
-              <span className="h-2.5 w-2.5 rounded-pill bg-holder-person" />ธนากร
-            </span>
-            <Pill size="md" className="border-pos bg-pos-bg text-pos-fg">Active</Pill>
-          </div>
+      <section aria-label="ตัวเลขตามสมุดบัญชี" className="flex flex-col gap-3">
+        <h2 className="m-0 text-h2 font-semibold">ตัวเลขตามสมุดบัญชี</h2>
+        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+          <Stat label="ต้นทุนซื้อ" value={report?.purchase} />
+          <Stat label="ค่าปรับปรุงสะสม" sub="ค่ารีโนเวทที่บันทึกเป็นทุน" value={report?.renovation} />
+          <Stat label="ค่าซ่อมสะสม" sub="เป็นค่าใช้จ่าย ไม่เพิ่มต้นทุน" value={report?.repair} />
+          <Stat label="รายได้สะสม" sub="ไม่รวมกำไรจากการขาย" value={report?.income} />
         </div>
-        <div className="ml-auto flex overflow-hidden rounded border border-line">
-          <button
-            onClick={() => setEditMode(false)}
-            className={cn("min-h-control px-[18px] text-base font-semibold", editMode ? "bg-surface text-ink-600" : "bg-brand-600 text-white")}
-          >
-            โหมดดู
-          </button>
-          <button
-            onClick={() => setEditMode(true)}
-            className={cn("min-h-control px-[18px] text-base font-semibold", editMode ? "bg-warn text-[#3d2600]" : "bg-surface text-ink-600")}
-          >
-            แก้ไข
-          </button>
+        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+          <Stat label="ต้นทุนรวมของชิ้นนี้" sub="ต้นทุนซื้อ + ค่าปรับปรุง · เป็นของชิ้นนี้ชิ้นเดียว ไม่ปนกับชิ้นอื่น" value={report?.costTotal} strong />
+          <Stat label="ค่าใช้จ่ายอื่นสะสม" sub="ค่าส่วนกลาง ค่าน้ำไฟ ภาษี ฯลฯ" value={report?.otherExpense} />
+          {report && report.saleResult !== 0 ? <Stat label="กำไร (ขาดทุน) จากการขาย" value={report.saleResult} /> : null}
         </div>
-      </div>
+        <div className="text-sm text-ink-600">คำนวณใหม่จากสมุดบัญชีทุกครั้งที่เปิดหน้านี้ ไม่มีตัวเลขที่เก็บไว้</div>
+      </section>
 
-      <div className="flex flex-wrap gap-1 border-b border-line">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "min-h-control border-b-[3px] px-[18px] text-base font-semibold",
-              tab === t.key ? "border-brand-600 text-brand-600" : "border-transparent text-ink-600"
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "overview" ? (
-        <div className="flex flex-col gap-4">
-          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
-            <Card>
-              <CardBody>
-                <CardLabel>ต้นทุน</CardLabel>
-                <div className="text-h1 font-semibold">฿ 2,450,000</div>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody>
-                <CardLabel>มูลค่าปัจจุบัน</CardLabel>
-                <div className="text-h1 font-semibold">฿ 2,780,000</div>
-                <div className="text-sm font-semibold text-pos-fg">▲ กำไรยังไม่รับรู้ 330,000</div>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody>
-                <CardLabel>Yield จริง</CardLabel>
-                <div className="flex items-baseline gap-2">
-                  <div className="text-h1 font-semibold text-warn">5.2%</div>
-                  <div className="text-sm text-ink-600">เป้า 6.5%</div>
-                </div>
-                <div className="mt-2 h-2.5 overflow-hidden rounded-pill bg-line">
-                  <div className="h-full bg-warn" style={{ width: "80%" }} />
-                </div>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody>
-                <CardLabel>รายรับ 12 เดือน</CardLabel>
-                <div className="text-h1 font-semibold">฿ 144,000</div>
-              </CardBody>
-            </Card>
+      {/* มูลค่าประเมิน — กรอบแยก ไม่ปนกับตัวเลขบัญชี (D-112) */}
+      <section aria-label="มูลค่าประเมินล่าสุด" className="flex flex-col gap-3 rounded-card border-2 border-dashed border-warn bg-canvas p-[16px_20px]" data-testid="valuation-box">
+        <h2 className="m-0 text-h2 font-semibold">มูลค่าล่าสุด (ราคาประเมิน)</h2>
+        <Notice tone="info">{VALUE_NOT_ACCOUNTING}</Notice>
+        {latest && latest.value !== null ? (
+          <div>
+            <div className="text-h1 font-semibold tabular-nums">{money(latest.value, { dash: false })}</div>
+            <div className="text-base text-ink-600">
+              ณ วันที่ {isoToDmy(latest.asOf)} · ที่มา: {methodLabel(latest.method)}
+              {latest.isStale ? " · ราคานี้เก่าเกิน 7 วันแล้ว" : ""}
+            </div>
+            {report ? (
+              <div className="text-sm text-ink-600">
+                ส่วนต่างจากต้นทุนรวม <span className="tabular-nums">{money(Math.round((latest.value - report.costTotal) * 100) / 100, { dash: false })}</span> บาท
+                — เป็นผลต่างของราคาประเมินกับต้นทุน ไม่ใช่กำไรทางบัญชี
+              </div>
+            ) : null}
           </div>
-
-          <Card>
-            <CardBody>
-              <CardTitle className="mb-3">รายรับรายเดือน</CardTitle>
-              <div className="flex h-40 items-end gap-2.5">
-                {BARS.map((v, i) => (
-                  <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-                    <div
-                      className={cn("w-full rounded-t-md", v ? "bg-brand-600" : "bg-line")}
-                      style={{ height: v ? `${Math.round((v / 12) * 130)}px` : "4px" }}
-                    />
-                    <div className="text-sm text-ink-600">{MONTHS[i].replace(".", "")}</div>
-                  </div>
+        ) : (
+          <div className="text-base text-ink-600">ยังไม่เคยตีราคาทรัพย์นี้ (หรือคุณไม่มีสิทธิ์เห็นราคาประเมิน)</div>
+        )}
+        {data.valuations.length > 0 ? (
+          <TableShell>
+            <Table minWidth={560}>
+              <thead>
+                <tr>
+                  <Th>วันที่ประเมิน</Th>
+                  <Th>ที่มา</Th>
+                  <Th align="right">มูลค่า (บาท)</Th>
+                  <Th>หมายเหตุ</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.valuations.map((v) => (
+                  <tr key={v.id} className="bg-surface">
+                    <Td className="whitespace-nowrap tabular-nums">{isoToDmy(v.asOf)}</Td>
+                    <Td>{methodLabel(v.method)}</Td>
+                    <Td align="right"><Money value={v.value} /></Td>
+                    <Td>{v.note ?? ""}</Td>
+                  </tr>
                 ))}
-              </div>
-              <div className="mt-2 text-sm text-ink-600">เดือน พ.ค. ไม่มีรายรับ — ห้องว่างระหว่างเปลี่ยนผู้เช่า</div>
-            </CardBody>
-          </Card>
+              </tbody>
+            </Table>
+          </TableShell>
+        ) : null}
+      </section>
 
-          <Card>
-            <CardBody className="flex flex-wrap items-center gap-4">
-              <div>
-                <CardLabel>ผู้เช่าปัจจุบัน</CardLabel>
-                <div className="text-h2 font-semibold">คุณสมชาย ใจดี</div>
-                <CardLabel>฿ 12,000 / เดือน · ชำระทุกวันที่ 1 · สัญญาหมด 29/09/2026</CardLabel>
-              </div>
-              <Button variant="quiet" className="ml-auto">ดูข้อมูลผู้เช่า</Button>
-            </CardBody>
-          </Card>
-        </div>
-      ) : null}
+      <Card>
+        <CardBody>
+          <CardTitle className="mb-3">ข้อมูลทะเบียน</CardTitle>
+          <Rows
+            items={[
+              ["ที่ตั้ง", asset.location],
+              ["ชนิดทรัพย์", asset.propertyType],
+              ["ขนาด", asset.sizeNote],
+              ["สัดส่วนถือครอง", asset.ownershipPct === null ? null : `${(asset.ownershipPct * 100).toFixed(2)}%`],
+              ["แหล่งเงินทุน", asset.fundingSource],
+              ["วันได้มา", asset.acquiredDate ? isoToDmy(asset.acquiredDate) : null],
+              ["วันจำหน่าย", asset.disposedDate ? isoToDmy(asset.disposedDate) : null],
+              ["รหัสหลักทรัพย์", asset.ticker],
+              ["สกุลเงิน", asset.currency !== "THB" ? asset.currency : null],
+            ]}
+          />
+          <CardLabel>ช่องที่ว่างอาจเป็นเพราะยังไม่ได้กรอก หรือตำแหน่งของคุณไม่มีสิทธิ์เห็นช่องนั้น</CardLabel>
+        </CardBody>
+      </Card>
 
-      {tab === "contract" ? (
-        <div className="grid items-start gap-4 xl:[grid-template-columns:minmax(0,1fr)_300px]">
-          <div className="grid gap-4 rounded-card border border-line bg-surface p-5 shadow-card [grid-template-columns:repeat(auto-fit,minmax(240px,1fr))]">
-            {/* ผู้เช่าผูกกับ contact — สร้างใหม่ได้จากตรงนี้เหมือนในฟอร์มบันทึกรายการ */}
-            <ContactPicker value={tenantId} onSelect={setTenantId} label="คู่สัญญา (ผู้เช่า)" layer={1} suggestKind="tenant" />
-            <Field label="ค่าเช่า / เดือน">
-              <Input defaultValue="12,000.00" readOnly={!editMode} />
-            </Field>
-            <Field label="วันเริ่มสัญญา">
-              <Input defaultValue="30/09/2025" readOnly={!editMode} />
-            </Field>
-            <Field label="วันสิ้นสุดสัญญา">
-              <Input defaultValue="29/09/2026" readOnly={!editMode} />
-            </Field>
-            <Field label="วันชำระทุกเดือน">
-              <Input defaultValue="วันที่ 1" readOnly={!editMode} />
-            </Field>
-            <Field label="เงินมัดจำ">
-              <Input defaultValue="24,000.00" readOnly={!editMode} />
-            </Field>
-            <Field label="ช่วงส่ง Notice ต่อสัญญา" error="ยังไม่ได้กรอก">
-              <Input placeholder="ยังไม่ได้กรอก" className="border-neg" readOnly={!editMode} />
-            </Field>
-            <Field label="ผู้ค้ำประกัน" error="ยังไม่ได้กรอก">
-              <Input placeholder="ยังไม่ได้กรอก" className="border-neg" readOnly={!editMode} />
-            </Field>
-          </div>
-          <div className="flex flex-col gap-4">
-            <Card>
-              <CardBody>
-                <Pill size="md" className="border-warn bg-warn-bg text-warn-fg">ขาด 2 ช่อง</Pill>
-                <div className="mt-2 text-sm text-ink-600">ระบบนี้เก็บข้อมูลสัญญา ไม่ใช่เครื่องมือร่างสัญญา</div>
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody>
-                <div className="mb-2 text-base font-semibold">ไฟล์สัญญา (บังคับ)</div>
-                <div className="flex items-center gap-3 rounded border border-line p-3">
-                  <div className="flex h-16 w-[52px] items-center justify-center rounded-md border border-line bg-canvas text-sm text-ink-600">PDF</div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-base font-semibold">lease-condoC.pdf</div>
-                    <div className="text-sm text-ink-600">4 หน้า · 1.2 MB</div>
+      {data.contracts.length > 0 ? (
+        <Card>
+          <CardBody>
+            <CardTitle className="mb-3">สัญญาที่ผูกกับทรัพย์นี้</CardTitle>
+            <div className="flex flex-col gap-3">
+              {data.contracts.map((c) => (
+                <div key={c.id} className="rounded-card border border-line bg-canvas p-[12px_14px]">
+                  <div className="mb-1 text-base font-semibold">
+                    {CONTRACT_TYPE[c.type] ?? c.type}
+                    {c.code ? ` · ${c.code}` : ""} <span className="font-normal text-ink-600">({CONTRACT_STATUS[c.status] ?? c.status})</span>
                   </div>
+                  <Rows
+                    items={[
+                      ["คู่สัญญา", c.counterpartyContactId ? (contactNames[c.counterpartyContactId] ?? "ไม่ทราบชื่อ") : null],
+                      ["เงินต้น", c.principal === null ? null : money(c.principal, { dash: false })],
+                      ["อัตรา", c.rate === null ? null : `${c.rate}${c.ratePeriod ? ` ต่อ${{ year: "ปี", month: "เดือน", day: "วัน" }[c.ratePeriod] ?? c.ratePeriod}` : ""}`],
+                      ["เริ่ม – สิ้นสุด", c.startDate ? `${isoToDmy(c.startDate)} – ${c.endDate ? isoToDmy(c.endDate) : "—"}` : null],
+                      ["ช่วงส่ง Notice", c.noticeWindowStart ? `${isoToDmy(c.noticeWindowStart)} – ${c.noticeWindowEnd ? isoToDmy(c.noticeWindowEnd) : "—"}` : null],
+                      ["กำหนดไถ่ถอน", c.redemptionDeadline ? isoToDmy(c.redemptionDeadline) : null],
+                    ]}
+                  />
                 </div>
-              </CardBody>
-            </Card>
-          </div>
-        </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
       ) : null}
 
-      {tab === "money" ? (
+      <LedgerTable lines={data.lines} ledgerAccess={data.ledgerAccess} />
+
+      {dialog === "value" ? <ValuationDialog asset={asset} onClose={() => setDialog(null)} /> : null}
+      {dialog === "edit" ? <EditAssetDialog asset={asset} mode="direct" onClose={() => setDialog(null)} /> : null}
+      {dialog === "propose" ? <EditAssetDialog asset={asset} mode="propose" onClose={() => setDialog(null)} /> : null}
+    </div>
+  );
+}
+
+function Stat({ label, value, sub, strong }: { label: string; value: number | null | undefined; sub?: string; strong?: boolean }) {
+  return (
+    <Card>
+      <CardBody>
+        <CardLabel>{label}</CardLabel>
+        <div className={cn("font-semibold", strong ? "text-h1" : "text-h2")}>
+          <Money value={value} className={value === null || value === undefined ? undefined : "tabular-nums"} />
+        </div>
+        {sub ? <div className="text-sm text-ink-600">{sub}</div> : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+/** แสดงเฉพาะช่องที่มีค่า — ช่องว่างเปล่าเต็มหน้าทำให้หาของที่มีจริงยากขึ้น */
+function Rows({ items }: { items: [string, React.ReactNode | null | undefined][] }) {
+  const shown = items.filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (shown.length === 0) return <div className="text-base text-ink-600">ยังไม่ได้กรอก</div>;
+  return (
+    <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-base">
+      {shown.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <dt className="whitespace-nowrap text-ink-600">{k}</dt>
+          <dd className="m-0 min-w-0 break-words">{v}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function LedgerTable({ lines, ledgerAccess }: { lines: AssetLedgerLine[]; ledgerAccess: boolean }) {
+  if (!ledgerAccess) return null;
+  const sorted = [...lines].sort((a, b) => (a.docDate < b.docDate ? 1 : a.docDate > b.docDate ? -1 : a.lineId < b.lineId ? 1 : -1));
+  const shown = sorted.slice(0, LEDGER_SHOWN);
+  return (
+    <section aria-label="รายการเงินของทรัพย์" className="flex flex-col gap-2">
+      <h2 className="m-0 text-h2 font-semibold">รายการในสมุดบัญชีที่ผูกกับทรัพย์นี้</h2>
+      {lines.length === 0 ? (
+        <div className="rounded-card border border-line bg-surface p-5 text-base text-ink-600 shadow-card">
+          ยังไม่มีรายการในสมุดที่ผูกกับทรัพย์นี้ — ต้นทุน รายได้ และค่าใช้จ่ายจะเกิดเมื่อลงรายการในหน้าบันทึกรายการแล้วเลือกทรัพย์ชิ้นนี้
+        </div>
+      ) : (
         <TableShell>
-          <Table minWidth={720}>
+          <Table minWidth={760}>
             <thead>
               <tr>
-                <Th className="p-[12px_14px]">วันที่</Th>
-                <Th className="p-[12px_14px]">รายละเอียด</Th>
-                <Th align="right" className="p-[12px_14px]">เงินเข้า</Th>
-                <Th align="right" className="p-[12px_14px]">เงินออก</Th>
-                <Th className="p-[12px_14px]">สถานะ</Th>
+                <Th>วันที่</Th>
+                <Th>รายการ</Th>
+                <Th>บัญชี</Th>
+                <Th align="right">เดบิต</Th>
+                <Th align="right">เครดิต</Th>
               </tr>
             </thead>
             <tbody>
-              {ASSET_LEDGER.map((r) => (
-                <tr key={r.date + r.detail}>
-                  <Td className="whitespace-nowrap p-[12px_14px]">{r.date}</Td>
-                  <Td className="p-[12px_14px]">{r.detail}</Td>
-                  <Td align="right" className="p-[12px_14px] font-semibold text-pos-fg">{r.in}</Td>
-                  <Td align="right" className="p-[12px_14px] font-semibold text-neg-fg">{r.out}</Td>
-                  <Td className="p-[12px_14px]">{r.status}</Td>
+              {shown.map((l) => (
+                <tr key={l.lineId} className="bg-surface">
+                  <Td className="whitespace-nowrap tabular-nums">{isoToDmy(l.docDate)}</Td>
+                  <Td>
+                    {findSub(l.subCode)?.sub.label ?? l.subCode}
+                    {l.source === "reverse" ? <span className="text-sm text-ink-600"> · กลับรายการ</span> : null}
+                  </Td>
+                  <Td>{l.coaCode} {safeLabel(l.coaCode)}</Td>
+                  <Td align="right" className="tabular-nums">{l.debit ? money(l.debit, { dash: false }) : ""}</Td>
+                  <Td align="right" className="tabular-nums">{l.credit ? money(l.credit, { dash: false }) : ""}</Td>
                 </tr>
               ))}
             </tbody>
           </Table>
         </TableShell>
+      )}
+      {lines.length > shown.length ? (
+        <div className="text-sm text-ink-600">แสดงล่าสุด {shown.length} จาก {lines.length} บรรทัด — ตัวเลขด้านบนรวมครบทุกบรรทัด</div>
       ) : null}
-
-      {tab === "docs" ? (
-        <div className="grid gap-4 rounded-card border border-line bg-surface p-5 shadow-card [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
-          {DOCS.map((d) => (
-            <div key={d.name} className="flex flex-col gap-2 rounded border border-line p-3.5">
-              <div className="flex h-[120px] items-center justify-center rounded-lg border border-line bg-canvas text-base text-ink-600">{d.kind}</div>
-              <div className="text-base font-semibold">{d.name}</div>
-              <div className="text-sm text-ink-600">{d.meta}</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
+    </section>
   );
 }
+
+function safeLabel(code: string): string {
+  try {
+    return coaLabel(code).replace(/^\d+\s*[·-]?\s*/, "");
+  } catch {
+    return "(ไม่อยู่ในผังบัญชี)";
+  }
+}
+

@@ -1,14 +1,14 @@
 "use client";
 
 import * as React from "react";
-import type { AssetDraft, AssetRef } from "@/lib/mock/assets";
-import { findEntity } from "@/lib/mock/entities";
+import { useRouter } from "next/navigation";
+import type { AssetView, DraftView, Taxonomy } from "@/lib/db/assets-model";
+import type { RefOwner } from "@/lib/db/reference-types";
+import { approveAssetDraft, cancelAssetDraft, rejectAssetDraft, type AssetOutcome } from "@/app/assets/actions";
 import { Dialog, SheetContent, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { Button } from "./tall-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "./fields";
-import { useApp } from "@/lib/store";
-import { AssetDenied, AssetInvalid, useAssetStore } from "./asset-store";
 import {
   PATCH_FIELDS, categoryNameOf, classNameOf, computeDiff, fmtDateTime, norm, reviewActions, validateDraft, type Perms,
 } from "./asset-drafts";
@@ -24,6 +24,9 @@ import { KindPill, NotCountedNotice, SheetHeader, StatusPill } from "./draft-par
  */
 export function DraftReviewPanel({
   draft,
+  assets,
+  taxonomy,
+  owners,
   perms,
   currentUser,
   position,
@@ -31,24 +34,23 @@ export function DraftReviewPanel({
   onStep,
   onDone,
 }: {
-  draft: AssetDraft | null;
+  draft: DraftView | null;
+  assets: AssetView[];
+  taxonomy: Taxonomy;
+  owners: RefOwner[];
   perms: Perms;
   currentUser: { id: string; name: string };
   position: { index: number; total: number };
   onClose: () => void;
   onStep: (delta: number) => void;
   /** ตัดสินแล้ว (อนุมัติ/ปฏิเสธ/ยกเลิก) — ให้หน้าคิวเลื่อนไปรายการถัดไป */
-  onDone: () => void;
+  onDone: (message: string) => void;
 }) {
-  const assets = useAssetStore((s) => s.assets);
-  const approveDraft = useAssetStore((s) => s.approveDraft);
-  const rejectDraft = useAssetStore((s) => s.rejectDraft);
-  const cancelDraft = useAssetStore((s) => s.cancelDraft);
-  const showToast = useApp((s) => s.showToast);
-
+  const router = useRouter();
+  const [pending, startTransition] = React.useTransition();
   const [rejecting, setRejecting] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<{ message: string; errors?: string[] } | null>(null);
 
   // เปลี่ยนไปดูร่างอื่น → เคลียร์สถานะที่ค้างจากร่างก่อนหน้า
   const draftId = draft?.id;
@@ -61,24 +63,24 @@ export function DraftReviewPanel({
   if (!draft) return null;
 
   const target = draft.targetAssetId ? assets.find((a) => a.id === draft.targetAssetId) : undefined;
-  const holder = findEntity(draft.ownerId);
+  const holder = owners.find((o) => o.id === draft.ownerId);
   const actions = reviewActions(perms, draft, currentUser.id);
   // ตรวจจากข้อมูลจริงของร่าง — ร่างเก่าที่เพี้ยนต้องเห็นว่าเพี้ยน ไม่ใช่ปล่อยให้กดอนุมัติแล้วค่อยพัง
-  const problems = draft.status === "pending" ? validateDraft(draft, assets) : [];
+  const problems =
+    draft.status === "pending"
+      ? validateDraft(draft, { assets, ownerIds: owners.map((o) => o.id), taxonomy })
+      : [];
   const mine = draft.createdBy.id === currentUser.id;
 
-  const actor = { ...currentUser, permissions: perms };
-  function run(fn: () => void, okMessage: string) {
-    try {
-      fn();
-      setError(null);
-      showToast(okMessage);
-      onDone();
-    } catch (e) {
-      if (e instanceof AssetInvalid) setError(e.errors.join(" · "));
-      else if (e instanceof AssetDenied) setError(e.message);
-      else throw e;
-    }
+  function run(fn: () => Promise<AssetOutcome>) {
+    startTransition(async () => {
+      const out = await fn();
+      if (out.ok) {
+        setError(null);
+        router.refresh();
+        onDone(out.message);
+      } else setError({ message: out.message, errors: out.errors });
+    });
   }
 
   return (
@@ -105,7 +107,7 @@ export function DraftReviewPanel({
             <Row label="สร้างเมื่อ"><span className="tabular-nums">{fmtDateTime(draft.createdAt)}</span></Row>
             <Row label="ถือในชื่อ">
               <span className="inline-flex items-center gap-1.5">
-                {holder ? <span className="h-2.5 w-2.5 rounded-pill" style={{ background: holder.color }} /> : null}
+                {holder ? <span className="h-2.5 w-2.5 rounded-pill" style={holder.color ? { background: holder.color } : undefined} /> : null}
                 {holder?.name ?? `ไม่พบผู้ถือ (${draft.ownerId || "ว่าง"})`}
               </span>
             </Row>
@@ -122,7 +124,7 @@ export function DraftReviewPanel({
           {draft.kind === "update" ? (
             <DiffPanel draft={draft} asset={target} />
           ) : (
-            <CreateFields draft={draft} />
+            <CreateFields draft={draft} taxonomy={taxonomy} />
           )}
 
           {problems.length ? (
@@ -151,10 +153,10 @@ export function DraftReviewPanel({
                 <Input value={reason} onChange={(e) => setReason(e.target.value)} autoComplete="off" />
               </Field>
               <div className="flex flex-wrap gap-3">
-                <Button variant="danger" onClick={() => run(() => rejectDraft(draft.id, reason, actor), "ไม่อนุมัติร่างแล้ว")}>
+                <Button variant="danger" disabled={pending} onClick={() => run(() => rejectAssetDraft(draft.id, reason))}>
                   ยืนยันไม่อนุมัติ
                 </Button>
-                <Button variant="secondary" onClick={() => setRejecting(false)}>
+                <Button variant="secondary" disabled={pending} onClick={() => setRejecting(false)}>
                   กลับไปตรวจต่อ
                 </Button>
               </div>
@@ -163,9 +165,17 @@ export function DraftReviewPanel({
 
           {error ? (
             <div role="alert" className="rounded border border-neg bg-neg-bg p-[12px_14px] text-base leading-7 text-neg-fg">
-              {error}
+              {error.message}
+              {error.errors?.length ? (
+                <ul className="m-0 mt-1 list-disc pl-5">
+                  {error.errors.map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
+
         </div>
 
         <DialogFooter className="justify-between">
@@ -179,7 +189,7 @@ export function DraftReviewPanel({
           </div>
           <div className="flex flex-wrap gap-2">
             {actions.cancel ? (
-              <Button variant="secondary" onClick={() => run(() => cancelDraft(draft.id, actor), "ยกเลิกร่างแล้ว")}>
+              <Button variant="secondary" disabled={pending} onClick={() => run(() => cancelAssetDraft(draft.id))}>
                 ยกเลิกร่างนี้
               </Button>
             ) : null}
@@ -189,11 +199,8 @@ export function DraftReviewPanel({
               </Button>
             ) : null}
             {actions.approve ? (
-              <Button
-                disabled={problems.length > 0}
-                onClick={() => run(() => approveDraft(draft.id, actor), "อนุมัติแล้ว — ทรัพย์เข้าทะเบียนและนับในพอร์ตแล้ว")}
-              >
-                อนุมัติ
+              <Button disabled={problems.length > 0 || pending} onClick={() => run(() => approveAssetDraft(draft.id))}>
+                {pending ? "กำลังอนุมัติ…" : "อนุมัติ"}
               </Button>
             ) : null}
           </div>
@@ -203,7 +210,7 @@ export function DraftReviewPanel({
   );
 }
 
-function CreateFields({ draft }: { draft: AssetDraft }) {
+function CreateFields({ draft, taxonomy }: { draft: DraftView; taxonomy: Taxonomy }) {
   const diff = computeDiff(draft, undefined);
   const extras = PATCH_FIELDS.filter((f) => f.key in draft.patch && norm(draft.patch[f.key]) !== null);
   return (
@@ -211,10 +218,10 @@ function CreateFields({ draft }: { draft: AssetDraft }) {
       <div className="text-base font-semibold">ข้อมูลที่เสนอ</div>
       <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-base">
         <Row label="ชื่อทรัพย์">{norm(draft.name) ?? <Missing />}</Row>
-        <Row label="หมวดใหญ่">{classNameOf(draft.classCode) ?? <Missing />}</Row>
-        <Row label="หมวดย่อย">{categoryNameOf(draft.categoryCode) ?? <Missing />}</Row>
+        <Row label="หมวดใหญ่">{classNameOf(taxonomy, draft.classId) ?? <Missing />}</Row>
+        <Row label="หมวดย่อย">{categoryNameOf(taxonomy, draft.categoryId) ?? <Missing />}</Row>
         {extras.map((f) => (
-          <Row key={f.key} label={f.label}>{f.format(norm(draft.patch[f.key]) as string | number)}</Row>
+          <Row key={f.key} label={f.label}>{f.format(norm(draft.patch[f.key]) as string | number | string[])}</Row>
         ))}
       </dl>
       {extras.length === 0 ? <div className="text-base text-ink-600">ไม่มีข้อมูลเพิ่มเติม (ลงทะเบียนด้วย 4 ช่องบังคับ)</div> : null}
@@ -227,7 +234,7 @@ function CreateFields({ draft }: { draft: AssetDraft }) {
   );
 }
 
-function ReviewRecord({ draft, assets }: { draft: AssetDraft; assets: AssetRef[] }) {
+function ReviewRecord({ draft, assets }: { draft: DraftView; assets: AssetView[] }) {
   const applied = draft.appliedAssetId ? assets.find((a) => a.id === draft.appliedAssetId) : undefined;
   const verb = draft.status === "approved" ? "อนุมัติโดย" : draft.status === "rejected" ? "ไม่อนุมัติโดย" : "ยกเลิกโดย";
   return (

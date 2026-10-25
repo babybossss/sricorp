@@ -3,8 +3,8 @@ import { Pill } from "@/components/ui/pill";
 import { DialogPrimitive } from "@/components/ui/dialog";
 import { Button } from "./tall-button";
 import { cn } from "@/lib/utils";
-import type { AssetDraft } from "@/lib/mock/assets";
-import { DRAFT_NOT_COUNTED, STATUS_LABEL } from "./asset-drafts";
+import type { DraftKind, DraftStatus } from "@/lib/db/assets-model";
+import { DRAFT_NOT_COUNTED, DRAFT_STATUS_LABEL } from "./asset-drafts";
 
 /**
  * กล่องเตือนว่าร่างยังไม่นับในพอร์ต — ใช้สีเตือน (ไม่ใช่สีเขียว) โดยตั้งใจ
@@ -23,7 +23,7 @@ export function NotCountedNotice({ className, children }: { className?: string; 
   );
 }
 
-export function KindPill({ kind }: { kind: AssetDraft["kind"] }) {
+export function KindPill({ kind }: { kind: DraftKind }) {
   return kind === "create" ? (
     <Pill className="whitespace-nowrap border-info bg-info-bg text-info-fg">สร้างทรัพย์ใหม่</Pill>
   ) : (
@@ -31,15 +31,15 @@ export function KindPill({ kind }: { kind: AssetDraft["kind"] }) {
   );
 }
 
-const STATUS_TONE: Record<AssetDraft["status"], string> = {
+const STATUS_TONE: Record<DraftStatus, string> = {
   pending: "border-warn bg-warn-bg text-warn-fg",
   approved: "border-pos bg-pos-bg text-pos-fg",
   rejected: "border-neg bg-neg-bg text-neg-fg",
   cancelled: "border-line bg-canvas text-ink-600",
 };
 
-export function StatusPill({ status }: { status: AssetDraft["status"] }) {
-  return <Pill className={cn("whitespace-nowrap", STATUS_TONE[status])}>{STATUS_LABEL[status]}</Pill>;
+export function StatusPill({ status }: { status: DraftStatus }) {
+  return <Pill className={cn("whitespace-nowrap", STATUS_TONE[status])}>{DRAFT_STATUS_LABEL[status]}</Pill>;
 }
 
 /** ลิงก์ที่หน้าตาเป็นปุ่ม — สูง ≥ 52px มีข้อความ · วงแหวนโฟกัส 3px */
