@@ -23,6 +23,10 @@ import { TEST_RESOLVER } from "./fixture-resolver";
 
 const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
 
+/** ยอดสุทธิของบัญชีหนึ่งในชุดบรรทัด (เดบิตเป็นบวก) */
+const net = (lines: PostingLine[], code: string) =>
+  lines.filter((l) => l.coaCode === code).reduce((a, l) => a + l.debit - l.credit, 0);
+
 const FCD = "b4usd"; // ธนากร · บัญชี USD
 const THB = "b4b"; //   ธนากร · บัญชีบาท
 const UNKNOWN = "b4x"; // resolver ไม่บอกสกุล — ห้ามตีเป็นบาท
@@ -378,5 +382,200 @@ describe("พรีวิวกับบันทึกจริงต้อง�
   it("หนึ่งใบ = หนึ่งผู้ถือ ทั้งสองเส้นทาง", () => {
     expect(buildPosting(translateUp()).transactions).toHaveLength(1);
     expect(buildPosting(convertAtLoss()).transactions).toHaveLength(1);
+  });
+});
+
+/* ================================================================== *
+ * **ซื้อเงินตราเข้าบัญชี FCD** (บาท → FCD · 25/10)
+ *
+ * ก่อนหมวดนี้ไม่มีทางฝากเงินตราเข้าบัญชี FCD ผ่านแอปเลย → ฟีเจอร์ FCD
+ * ทั้งชุดใช้ได้เฉพาะยอดที่มาจากยอดตั้งต้น
+ *
+ * **ซื้อเข้าไม่ใช่กำไรขาดทุน** — ยอดบาทที่จ่ายไปคือ *ต้นทุน* ของเงินตรา
+ * ก้อนนั้น ซึ่งเป็นฐานที่แปลงค่าและแลกกลับคิดต่อ · ฉากครบวงจรของลูกพี่:
+ *   ซื้อ 10,000 USD @36.50 = 365,000 บาท  → P&L 0 · 3410 0
+ *   ตีราคา @37.00                          → 3410 = 5,000
+ *   แลกออก @37.50                          → กำไรจริง 10,000
+ * ================================================================== */
+
+const acquire = (over: Partial<PostingInput> = {}): PostingInput => ({
+  typeKey: "transfer",
+  subCode: "trf.fx_acquire",
+  amount: 365_000,
+  ownerId: "thanakorn",
+  bankAccountId: THB, // จ่ายบาทออกจากบัญชีบาท
+  transferToBankAccountId: FCD, // เงินตราเข้าบัญชี USD
+  fxAcquisition: {
+    currency: "USD",
+    amountOriginal: 10_000,
+    dealRateToThb: 36.5,
+    dealRateDate: "2026-10-01",
+  },
+  ...over,
+});
+
+describe("ซื้อเงินตราเข้า FCD — เคสข้อมูลขาดก่อนทุกครั้ง (บทเรียนข้อ 3)", () => {
+  const rejected = (input: PostingInput, pattern: RegExp) => {
+    let thrown: unknown;
+    try {
+      buildPosting(input);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, "ต้องถูกปฏิเสธ แต่ผ่านไปได้").toBeInstanceOf(PostingError);
+    expect((thrown as Error).message).toMatch(pattern);
+  };
+
+  it("ไม่ส่งชุดข้อมูลการซื้อเลย → ปฏิเสธ ไม่ใช่สร้างสองบรรทัดเงินสดเปล่าๆ", () => {
+    rejected({ ...acquire(), fxAcquisition: undefined }, /ต้องระบุสกุลเงิน จำนวนเงินตรา/);
+  });
+
+  it("ไม่ส่งบัญชีต้นทาง/ปลายทาง → ปฏิเสธ ด้วยข้อความเรื่องบัญชี", () => {
+    rejected({ ...acquire(), bankAccountId: undefined }, /บัญชี/);
+    rejected({ ...acquire(), transferToBankAccountId: undefined }, /ต้องระบุบัญชีสกุลต่างประเทศ/);
+    rejected({ ...acquire(), transferToBankAccountId: "   " }, /ต้องระบุบัญชีสกุลต่างประเทศ/);
+  });
+
+  it("ปลายทางเป็นบัญชีบาท / ไม่บอกสกุล → ปฏิเสธ (ไม่ตีเป็นเงินตรา)", () => {
+    rejected({ ...acquire(), transferToBankAccountId: THB }, /บาท|สกุล/);
+    rejected({ ...acquire(), transferToBankAccountId: UNKNOWN }, /สกุล/);
+  });
+
+  it("ต้นทางเป็นบัญชีเงินตรา → ปฏิเสธ (การแลกสองทอดต้องผ่านบาทก่อน)", () => {
+    rejected({ ...acquire(), bankAccountId: "b4jpy" }, /ไม่ใช่บัญชีบาท|แลกสองทอด/);
+  });
+
+  it("ต้นทางกับปลายทางเป็นบัญชีเดียวกัน → ปฏิเสธ", () => {
+    rejected({ ...acquire(), bankAccountId: FCD, transferToBankAccountId: FCD }, /บัญชีเดียวกับ/);
+  });
+
+  it("ปลายทางเป็นบัญชีของผู้ถืออื่น → ปฏิเสธ (ต้นทุนเงินตราผูกกับผู้ถือ)", () => {
+    rejected({ ...acquire(), transferToBankAccountId: OTHER_USD }, /ผู้ถือเดียวกัน/);
+  });
+
+  it("สกุลที่ส่งมาไม่ตรงกับสกุลของบัญชีปลายทาง → ปฏิเสธ (อ่านจากบัญชี ไม่เชื่อป้าย)", () => {
+    rejected(
+      { ...acquire(), fxAcquisition: { currency: "JPY", amountOriginal: 10_000, dealRateToThb: 36.5, dealRateDate: "2026-10-01" } },
+      /สกุล/
+    );
+  });
+
+  it("จำนวนเงินตรา 0 หรือติดลบ · อัตราไม่ถูกต้อง · วันของอัตราไม่ครบ → ปฏิเสธ", () => {
+    rejected({ ...acquire(), fxAcquisition: { ...acquire().fxAcquisition!, amountOriginal: 0 } }, /มากกว่า 0/);
+    rejected({ ...acquire(), fxAcquisition: { ...acquire().fxAcquisition!, amountOriginal: -1 } }, /ติดลบ|มากกว่า 0/);
+    rejected({ ...acquire(), fxAcquisition: { ...acquire().fxAcquisition!, dealRateToThb: 0 } }, /อัตรา/);
+    rejected({ ...acquire(), fxAcquisition: { ...acquire().fxAcquisition!, dealRateDate: "" } }, /วันของอัตรา/);
+    // บาทไม่มีอัตรากับตัวเอง — เส้นทางนี้ใช้กับสกุลต่างประเทศเท่านั้น
+    rejected(
+      { ...acquire(), fxAcquisition: { ...acquire().fxAcquisition!, currency: "THB" } },
+      /สกุล|บาท/
+    );
+  });
+
+  it("**ยอดบาทต้องมาจากอัตราพอดี** — เศษสตางค์เดียวก็ปฏิเสธ", () => {
+    rejected({ ...acquire(), amount: 365_000.01 }, /ต้องเท่ากับ/);
+    rejected({ ...acquire(), amount: 360_000 }, /ต้องเท่ากับ/);
+  });
+});
+
+describe("ซื้อเงินตราเข้า FCD — บรรทัดที่สร้างได้", () => {
+  const lines = (over: Partial<PostingInput> = {}) => allLines(buildPosting(acquire(over)));
+
+  it("สองบรรทัด: เงินตราเข้า FCD (พกสกุล/อัตรา) · บาทออกจากบัญชีบาท (ไม่พก)", () => {
+    const ls = lines();
+    expect(ls).toHaveLength(2);
+    expect(totalDebit(ls)).toBe(totalCredit(ls));
+    expect(totalDebit(ls)).toBe(365_000);
+
+    const inLeg = ls.find((l) => l.bankAccountId === FCD)!;
+    expect(inLeg.debit).toBe(365_000);
+    expect(inLeg.currency).toBe("USD");
+    expect(inLeg.amountOriginal).toBe(10_000);
+    expect(inLeg.fxRate).toBe(36.5);
+    expect(inLeg.fxRateDate).toBe("2026-10-01");
+
+    const outLeg = ls.find((l) => l.bankAccountId === THB)!;
+    expect(outLeg.credit).toBe(365_000);
+    // บรรทัดบาท **ห้ามพกข้อมูลอัตรา** ไม่งั้นรายงานสกุลเงินนับยอดนี้เป็นเงินตรา
+    expect(outLeg.currency).toBeUndefined();
+    expect(outLeg.amountOriginal).toBeUndefined();
+  });
+
+  it("**ไม่แตะ P&L และไม่แตะ 3410** — ซื้อเข้าไม่ใช่กำไรขาดทุน", () => {
+    const ls = lines();
+    for (const l of ls) {
+      expect(["4330", "5930", "3410", "3400"], `${l.coaCode} ต้องไม่อยู่ในใบซื้อเงินตรา`).not.toContain(
+        l.coaCode
+      );
+    }
+    // ทุกบรรทัดเป็นบัญชีเงินสด — ไม่มีบรรทัดอื่นแอบมา
+    expect(new Set(ls.map((l) => l.coaCode))).toEqual(new Set(["1100"]));
+  });
+
+  it("ไม่เข้างบกระแสเงินสด (เงินไม่ได้เข้าออกกิจการ แค่เปลี่ยนสกุล)", () => {
+    for (const l of lines()) expect(l.cfCategory).toBe("none");
+  });
+
+  it("ทั้งใบอยู่ในผู้ถือเดียว — ไม่ใช่รายการข้ามผู้ถือ", () => {
+    const r = buildPosting(acquire());
+    expect(r.transactions).toHaveLength(1);
+    expect(r.transactions[0].ownerId).toBe("thanakorn");
+    expect(r.transactions[0].counterOwnerId).toBeUndefined();
+  });
+
+  it("พรีวิวบอกว่ายอดบาทที่จ่ายคือ **ต้นทุน** และไม่มีผลต่างค้าง", () => {
+    const p = previewPosting(acquire(), TEST_RESOLVER);
+    expect(p.ok, p.ok ? "" : p.reason).toBe(true);
+    if (!p.ok) return;
+    const text = p.summary.join(" · ");
+    expect(text).toMatch(/ต้นทุน/);
+    expect(text).toMatch(/ไม่มีกำไร\/ขาดทุน/);
+  });
+});
+
+describe("ครบวงจรของลูกพี่ — ซื้อ 36.50 → ตีราคา 37.00 → แลกออก 37.50", () => {
+  it("ซื้อเข้า: P&L = 0 · 3410 = 0 · ต้นทุน 365,000", () => {
+    const ls = allLines(buildPosting(acquire()));
+    expect(net(ls, "3410")).toBe(0);
+    expect(net(ls, "4330")).toBe(0);
+    expect(net(ls, "5930")).toBe(0);
+    // ต้นทุนของเงินตราก้อนนี้ = ยอดบาทที่เข้าบัญชี FCD
+    expect(net(ls, "1100")).toBe(0); // บาทออกเท่ากับเงินตราเข้า (คนละบัญชี)
+    expect(ls.find((l) => l.bankAccountId === FCD)!.debit).toBe(365_000);
+  });
+
+  it("ตีราคาขึ้นที่ 37.00 → 3410 ได้ **5,000** พอดี (ไม่ใช่ตัวเลขอื่น)", () => {
+    const ls = allLines(buildPosting(translateUp()));
+    // 10,000 USD × (37.00 − 36.50) = 5,000
+    expect(net(ls, "3410")).toBe(-5_000); // เครดิต 3410 = ผลต่างเพิ่ม
+    expect(net(ls, "1100")).toBe(5_000);
+  });
+
+  it("แลกออกทั้งก้อนที่ 37.50 → กำไรจริง **10,000** และล้าง 3410 หมด", () => {
+    const ls = allLines(
+      buildPosting({
+        typeKey: "transfer",
+        subCode: "trf.fx_convert",
+        amount: 375_000,
+        ownerId: "thanakorn",
+        bankAccountId: FCD,
+        transferToBankAccountId: THB,
+        fxConversion: {
+          currency: "USD",
+          amountOriginal: 10_000,
+          balanceOriginalBefore: 10_000,
+          // ยอดตามบัญชีหลังตีราคา = 37.00
+          bookRateToThb: 37.0,
+          bookRateDate: "2026-10-31",
+          dealRateToThb: 37.5,
+          dealRateDate: "2026-12-31",
+          unrealizedBefore: 5_000,
+        },
+      })
+    );
+    // บาทที่ได้ 375,000 − ยอดตามบัญชี 370,000 + ผลต่างที่เคยตั้ง 5,000 = 10,000
+    expect(net(ls, "4330")).toBe(-10_000); // เครดิตบัญชีกำไร
+    // ล้าง 3410 ทั้งก้อน (เดบิต 5,000 หักกับที่เคยเครดิตไว้)
+    expect(net(ls, "3410")).toBe(5_000);
   });
 });

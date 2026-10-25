@@ -742,6 +742,148 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       "เงินไม่ได้เข้าออกกิจการ แค่เปลี่ยนสกุล จึงไม่ใช่กระแสเงินสดของงวด — " +
         "ส่วนที่ทำให้ยอดบาทรวมขยับไปอยู่บรรทัดผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด (IAS 7.28)"
     );
+  } else if (sub.requires?.includes("fxAcquisition")) {
+    /* ---------- ซื้อเงินตราต่างประเทศเข้าบัญชี FCD (บาทออก → เงินตราเข้า) ----------
+     *
+     * **ไม่ใช่กำไรขาดทุน และไม่แตะ 3410** — ซื้อเข้าคือการเปลี่ยนรูปสินทรัพย์
+     * ยอดบาทที่จ่ายไป **คือต้นทุนของเงินตราก้อนนั้น** ซึ่งเป็นฐานที่
+     * `trf.fx_translate_*` (เข้า 3410) และ `trf.fx_convert` (เข้า 4330/5930)
+     * คิดต่อ · ตรงกับ `fn_fx_position()` ฝั่ง DB ที่เก็บ `cost += debit`
+     * ของขาเงินตราที่มี `amount_original > 0` → `thb − cost = 0` ทันทีที่ซื้อเข้า
+     * จึงไม่มีผลต่างที่ต้องตั้ง
+     *
+     * ต้องมีสาขาของตัวเองเพราะเส้นทางโอนธรรมดาสร้างสองบรรทัดเงินสดเท่ากัน
+     * **โดยไม่พกสกุล/อัตรา** → ด่าน FCD ฝั่ง DB ปฏิเสธ (บรรทัดของบัญชีที่
+     * `bank_accounts.currency` ไม่ใช่บาท ต้องพกสกุล อัตรา และยอดสกุลเดิมให้ครบ)
+     *
+     * **สกุลและผู้ถืออ่านจากบัญชีเอง** ไม่ใช่จากฟิลด์ที่ผู้ใช้เว้นได้ (D-115 ·
+     * บทเรียน mace-windu ข้อ 2) — ฟิลด์ `currency` ที่ส่งมาใช้เป็นแค่
+     * "สิ่งที่ผู้ใช้คิดว่าเป็น" แล้วเทียบกับความจริงของบัญชี ถ้าไม่ตรง = ปฏิเสธ
+     */
+    /**
+     * **ถามเรื่องบัญชีก่อนเรื่องอื่นเสมอ** — ผู้ใช้ที่ยังไม่เลือกบัญชีต้องเห็น
+     * ประโยคเดียวกับทุกเส้นทาง (`MISSING_BANK_MESSAGE`) ไม่ใช่ประโยคของสาขานี้
+     * (เทสต์ `accrual-no-bank.test.ts` ไล่ทุกหมวดที่มีเงินเคลื่อนด้วยกฎข้อนี้)
+     */
+    if (!bankAccountId) throw new PostingError(MISSING_BANK_MESSAGE);
+
+    const aq = input.fxAcquisition;
+    if (!aq) {
+      throw new PostingError(
+        `หมวด "${sub.label}" ต้องระบุสกุลเงิน จำนวนเงินตราที่ซื้อเข้า อัตราที่ซื้อได้จริง ` +
+          "และวันของอัตรา — ข้อมูลไม่ครบจะไม่รู้ว่ายอดบาทที่จ่ายไปเป็นต้นทุนของเงินตรากี่หน่วย " +
+          "แล้วผลต่างอัตราแลกเปลี่ยนทุกเดือนหลังจากนั้นจะคิดจากฐานที่ผิด"
+      );
+    }
+
+    const to = blankToUndefined(input.transferToBankAccountId);
+    if (!to) {
+      throw new PostingError("การซื้อเงินตราต้องระบุบัญชีสกุลต่างประเทศที่เงินตราเข้า");
+    }
+    if (to === bankAccountId) {
+      throw new PostingError("ซื้อเงินตราเข้าบัญชีเดียวกับบัญชีที่จ่ายบาทไม่ได้");
+    }
+
+    // ปลายทางต้องเป็นบัญชี FCD จริง และสกุลที่ผู้ใช้บอกต้องตรงกับสกุลของบัญชีนั้น
+    const fcd = assertFcdAccount(resolve, to, aq.currency, "การซื้อเงินตราต่างประเทศ");
+    const currency = fcd.currency as string;
+
+    // ต้นทางต้องเป็นบัญชี **บาท** ของผู้ถือเดียวกัน — อ่านจากบัญชีเอง
+    const src = bankOf(resolve, bankAccountId);
+    if (!src.currency) {
+      throw new PostingError(
+        `ไม่ทราบสกุลเงินของบัญชีที่จ่ายบาท "${src.name}" จึงบันทึกการซื้อเงินตราไม่ได้ — ` +
+          "ต้นทางที่ไม่บอกสกุลอาจเป็นบัญชีเงินตราอีกใบ ซึ่งไม่ใช่การซื้อด้วยบาท"
+      );
+    }
+    if (src.currency !== BASE_CURRENCY) {
+      throw new PostingError(
+        `บัญชีที่จ่าย "${src.name}" เป็นบัญชีสกุล ${src.currency} ไม่ใช่บัญชีบาท — ` +
+          "หมวดนี้คือการซื้อเงินตราด้วยบาท · การย้ายเงินตราข้ามสกุลเป็นการแลกสองทอด " +
+          "ต้องแลกเป็นบาทก่อนแล้วซื้อสกุลใหม่ เพื่อให้ต้นทุนของแต่ละสกุลตรวจย้อนได้"
+      );
+    }
+    if (fcd.ownerId !== src.ownerId) {
+      throw new PostingError(
+        `บัญชีปลายทาง "${fcd.name}" เป็นของ ${ownerOf(resolve, fcd.ownerId).name} — ` +
+          "การซื้อเงินตราต้องเข้าบัญชีของผู้ถือเดียวกัน เพราะต้นทุนของเงินตราผูกกับผู้ถือนั้น " +
+          "(ถ้าจะส่งเงินให้ผู้ถืออื่น ให้โอนเป็นอีกรายการเพื่อให้ลักษณะรายการข้ามผู้ถือถูกบันทึก)"
+      );
+    }
+
+    const amountOriginal = money(aq.amountOriginal, "จำนวนเงินตราที่ซื้อเข้า");
+    if (amountOriginal <= 0) {
+      throw new PostingError("จำนวนเงินตราที่ซื้อเข้าต้องมากกว่า 0");
+    }
+    const dealRate = checkedRate(currency, aq.dealRateToThb, "อัตราที่ซื้อได้จริง");
+    const dealRateDate = checkedRateDate(aq.dealRateDate, "วันของอัตราที่ซื้อได้จริง");
+
+    const thbOut = toThb(amountOriginal, dealRate);
+    if (thbOut !== amount) {
+      throw new PostingError(
+        `บาทที่จ่ายต้องเท่ากับ ${amountOriginal.toLocaleString("en-US")} ${currency} × ` +
+          `${dealRate} = ${thbOut.toLocaleString("en-US")} บาท แต่กรอกยอดมา ` +
+          `${amount.toLocaleString("en-US")} — ยอดบาทต้องมาจากอัตราที่ซื้อได้จริง ` +
+          "ไม่ใช่ตัวเลขที่พิมพ์แยกกัน (ด่านฝั่ง DB ไม่ยอมเศษแม้สตางค์เดียว)"
+      );
+    }
+
+    const dealLabel = `${amountOriginal.toLocaleString("en-US")} ${currency} @ ${dealRate}`;
+    const lines: PostingLine[] = [
+      line({
+        coaCode: CASH_COA,
+        bankAccountId: fcd.id,
+        debit: thbOut,
+        cfCategory: sub.cashflow,
+        currency,
+        amountOriginal,
+        fxRate: dealRate,
+        fxRateDate: dealRateDate,
+        memo: `เงินตราเข้าบัญชี ${dealLabel}`,
+      }),
+      line({
+        coaCode: CASH_COA,
+        bankAccountId: src.id,
+        credit: thbOut,
+        cfCategory: sub.cashflow,
+        memo: `จ่ายบาทเพื่อซื้อเงินตรา ${dealLabel}`,
+      }),
+    ];
+
+    /**
+     * **ด่านที่ลูกพี่สั่งให้มี (25/10)** — ซื้อเข้าห้ามแตะ P&L
+     * ซ้อนกับการที่ตารางกฎไม่ได้ให้บัญชีกำไร/ขาดทุนไว้เลยโดยตั้งใจ:
+     * ตารางกฎกันการ "ตั้งใจ" · ด่านนี้กันการ "เผลอแก้คู่บัญชีวันหลัง"
+     */
+    assertNoProfitAndLoss(lines, `การซื้อเงินตรา "${sub.label}"`);
+
+    /**
+     * และห้ามแตะ **3410** ด้วย — ผลต่างที่ยังไม่เกิดจริงต้องเป็น 0 ทันทีที่ซื้อเข้า
+     * (ยอดบาท = ต้นทุน) ถ้ามีบรรทัด 3410 ในใบนี้ ผลต่างจะถูกตั้งขึ้นจากอากาศ
+     * แล้วด่าน invariant ฝั่ง DB (`fn_assert_fx_unrealized_cleared_for`) จะปฏิเสธ
+     * — ดักที่นี่ก่อนเพื่อให้ผู้ใช้เห็นเหตุผล ไม่ใช่ข้อความของ invariant
+     */
+    const touchesUnrealised = lines.some((l) => l.coaCode === FX_TRANSLATION_DIFF_COA);
+    if (touchesUnrealised) {
+      throw new PostingError(
+        `การซื้อเงินตราต้องไม่แตะ ${coaLabel(FX_TRANSLATION_DIFF_COA)} — ` +
+          "ยอดบาทที่จ่ายไปคือต้นทุนของเงินตราก้อนนั้นพอดี จึงไม่มีผลต่างให้ตั้งตั้งแต่วันที่ซื้อ · " +
+          "ผลต่างเกิดเมื่ออัตราขยับหลังถือไว้ (ใช้หมวดแปลงค่าสิ้นเดือน)"
+      );
+    }
+
+    transactions.push({ ownerId: input.ownerId, lines });
+    summary.push(
+      `จ่ายบาท ${thbOut.toLocaleString("en-US")} ซื้อ ${dealLabel} เข้าบัญชี "${fcd.name}" — ` +
+        "ยอดบาทที่จ่ายไปเป็น **ต้นทุน** ของเงินตราก้อนนี้"
+    );
+    summary.push(
+      "ไม่มีกำไร/ขาดทุนและไม่มีผลต่างค้างในส่วนของเจ้าของ — ผลต่างเกิดตอนอัตราขยับหลังถือไว้ " +
+        "(หมวดแปลงค่าสิ้นเดือน เข้า " + coaLabel(FX_TRANSLATION_DIFF_COA) + ") และรับรู้จริงตอนแลกกลับเป็นบาท"
+    );
+    summary.push(
+      "ไม่ใช่กระแสเงินสดของงวด — เงินไม่ได้เข้าออกกิจการ แค่เปลี่ยนสกุล (IAS 7.28)"
+    );
   } else if (sub.requires?.includes("transferTarget")) {
     // ---------- โอนระหว่างบัญชี ----------
     // ดูจากธงในตารางกฎ ไม่ใช่รหัสหมวด — หมวดโอนตัวที่สองในอนาคตจะได้ไม่ตกไปเส้นทางปกติ

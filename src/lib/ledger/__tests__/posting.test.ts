@@ -77,6 +77,23 @@ const fxTranslationFor = (s: SubCategory) =>
         }
     : undefined;
 
+/**
+ * **ซื้อเงินตราเข้าบัญชี FCD** (25/10) — ต้นทางเป็นบัญชี **บาท** ปลายทางเป็น FCD
+ * 320 USD × 37.50 = 12,000 บาท ลงตัวกับ `amount` ของชุดนี้พอดี
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `fx-posting.test.ts`
+ */
+const isFxAcquiring = (s: SubCategory) => s.requires?.includes("fxAcquisition") ?? false;
+
+const fxAcquisitionFor = (s: SubCategory) =>
+  isFxAcquiring(s)
+    ? {
+        currency: "USD",
+        amountOriginal: 320,
+        dealRateToThb: 37.5,
+        dealRateDate: "2026-12-31",
+      }
+    : undefined;
+
 const fxConversionFor = (s: SubCategory) =>
   isFxRealisingSub(s)
     ? {
@@ -121,10 +138,16 @@ describe("Money Invariant 1 — ทุกรายการต้องสมด
           repayment: s.requires?.includes("principalInterestSplit")
             ? { principal: 9000, interest: 3000 }
             : undefined,
-          transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
+          // ซื้อเงินตราต้องเข้าบัญชี **FCD** · โอนอื่นเข้าบัญชีบาทอีกใบ
+          transferToBankAccountId: isFxAcquiring(s)
+            ? "b4usd"
+            : t.key === "transfer"
+              ? "b4b"
+              : undefined,
           revaluation: revaluationFor(s),
           fxTranslation: fxTranslationFor(s),
           fxConversion: fxConversionFor(s),
+          fxAcquisition: fxAcquisitionFor(s),
         };
         const r = buildPosting(input);
         expect(totalDebit(allLines(r)), `${s.code} debit=credit`).toBe(totalCredit(allLines(r)));
@@ -147,10 +170,16 @@ describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
           contactId: "c1",
           disposal: s.requires?.includes("capitalGain") ? { costBasis: 10000, salePrice: 12000 } : undefined,
           repayment: s.requires?.includes("principalInterestSplit") ? { principal: 9000, interest: 3000 } : undefined,
-          transferToBankAccountId: t.key === "transfer" ? "b4b" : undefined,
+          // ซื้อเงินตราต้องเข้าบัญชี **FCD** · โอนอื่นเข้าบัญชีบาทอีกใบ
+          transferToBankAccountId: isFxAcquiring(s)
+            ? "b4usd"
+            : t.key === "transfer"
+              ? "b4b"
+              : undefined,
           revaluation: revaluationFor(s),
           fxTranslation: fxTranslationFor(s),
           fxConversion: fxConversionFor(s),
+          fxAcquisition: fxAcquisitionFor(s),
         });
         for (const l of allLines(r)) {
           if (isCashAccount(l.coaCode)) {
