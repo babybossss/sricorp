@@ -40,6 +40,16 @@
 -- และไม่ทิ้งตารางกฎที่ถูกกลายพันธุ์ใน R2 ไว้
 -- ============================================================
 
+--
+-- **หมายเหตุเรื่องวันที่ของ fixture (25/10)** — timeline ของไฟล์นี้ถูกย้ายไป
+-- **อดีต** (สิ้นเดือน เม.ย. → พ.ค. → มิ.ย. 2569) จากเดิมที่ใช้ ต.ค. → พ.ย. → ธ.ค.
+-- เพราะ `20261025000016` เพิ่มด่าน **ห้ามบันทึกอัตราของวันที่ยังไม่มาถึง**
+-- (อัตราของวันที่ยังไม่มาถึงคือการเดา) · ถ้าปล่อยวันเดิมไว้ ไฟล์นี้จะแดงวันนี้
+-- แล้ว **กลับมาเขียวเองเมื่อเวลาผ่านไป** โดยไม่มีใครแก้อะไร = เทสต์ที่หยุด
+-- ทดสอบไปเฉยๆ โดยไม่มีสัญญาณ ซึ่งแย่กว่าไม่มีด่าน
+-- ลำดับและช่องว่างหนึ่งเดือนระหว่างอัตราถูกรักษาไว้ครบ ตัวเลขทุกตัวไม่เปลี่ยน
+-- (`2026-09-30` ที่ใช้เป็น "วันที่ไม่มีอัตราในตาราง" ยังคงเดิม และยังไม่มีอัตราจริง)
+
 \set ON_ERROR_STOP 1
 
 begin;
@@ -137,7 +147,7 @@ create or replace function pg_temp.entry(p_type text, p_memo text, p_lines jsonb
                                         p_rate numeric default null,
                                         p_amount numeric default null,
                                         p_cert text default null,
-                                        p_cash_date date default '2026-10-31',
+                                        p_cash_date date default '2026-04-30',
                                         p_asset uuid default '00000000-0000-0000-0000-00000002a001',
                                         p_ref text default null)
 returns jsonb language sql stable as $fn$
@@ -146,7 +156,7 @@ returns jsonb language sql stable as $fn$
   select jsonb_strip_nulls(jsonb_build_object(
     'txn_type_code', p_type,
     'source_ref', p_ref,
-    'doc_date', '2026-10-31',
+    'doc_date', '2026-04-30',
     'cash_date', case when p_cash_date is null then null else p_cash_date::text end,
     'memo', p_memo,
     'asset_id', p_asset,
@@ -182,10 +192,10 @@ select pg_temp.login('mgmt');
 
 -- อัตราแลกเปลี่ยนของเดือน (ใช้ทั้งไฟล์) · ครบทั้งสี่สกุลและทั้งสองแหล่งที่มา
 insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source, note)
-values ('USD', '2026-10-31', 36.5, 'manual', 'ป้อนมือ เดือน ต.ค. 2569'),
-       ('THB', '2026-10-31', 1, 'manual', 'สกุลตั้งต้น'),
-       ('JPY', '2026-10-31', 0.235, 'manual', null),
-       ('CNY', '2026-10-31', 5.05, 'bot_api', 'ทดสอบว่าแยกแหล่งที่มาได้');
+values ('USD', '2026-04-30', 36.5, 'manual', 'ป้อนมือ เดือน เม.ย. 2569'),
+       ('THB', '2026-04-30', 1, 'manual', 'สกุลตั้งต้น'),
+       ('JPY', '2026-04-30', 0.235, 'manual', null),
+       ('CNY', '2026-04-30', 5.05, 'bot_api', 'ทดสอบว่าแยกแหล่งที่มาได้');
 
 -- ============================================================
 -- W0 · โครงสร้าง — ไล่จาก catalog จริง ไม่ใช่ไล่ไฟล์
@@ -548,7 +558,7 @@ begin
             pg_temp.cash(90000, 0),
             pg_temp.ln('1800', 5000, 0, null, 'operating'),
             pg_temp.ln('1200', 0, 95000, '00000000-0000-0000-0000-00000002a001', 'operating')),
-          5, 5000, 'WHT-2569-008b', '2026-10-31',
+          5, 5000, 'WHT-2569-008b', '2026-04-30',
           '00000000-0000-0000-0000-00000002a001', %L)) $q$, v_src::text || '-clr-1'),
     'ยอดเต็ม');
 
@@ -558,7 +568,7 @@ begin
       pg_temp.cash(95000, 0),
       pg_temp.ln('1800', 5000, 0, null, 'operating'),
       pg_temp.ln('1200', 0, 100000, '00000000-0000-0000-0000-00000002a001', 'operating')),
-    5, 5000, 'WHT-2569-008', '2026-10-31',
+    5, 5000, 'WHT-2569-008', '2026-04-30',
     '00000000-0000-0000-0000-00000002a001', v_src::text || '-clr-2'));
 
   select coalesce(sum(l.debit - l.credit), 0) into v_recv
@@ -632,22 +642,22 @@ begin
   perform pg_temp.must_fail_like(
     'F1e สกุลที่ห้าในตารางอัตรา',
     $q$ insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source)
-        values ('EUR', '2026-10-31', 39.5, 'manual') $q$,
+        values ('EUR', '2026-04-30', 39.5, 'manual') $q$,
     'fx_rates_currency_check');
   perform pg_temp.must_fail_like(
     'F1f บาทต้องมีอัตรา 1',
     $q$ insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source)
-        values ('THB', '2026-11-30', 36.5, 'manual') $q$,
+        values ('THB', '2026-05-31', 36.5, 'manual') $q$,
     'fx_rates_base_currency_is_one');
   perform pg_temp.must_fail_like(
     'F1g แหล่งที่มาที่ไม่รู้จัก',
     $q$ insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source)
-        values ('USD', '2026-11-30', 36.9, 'ลูกพี่บอกมา') $q$,
+        values ('USD', '2026-05-31', 36.9, 'ลูกพี่บอกมา') $q$,
     'fx_rates_source_check');
   perform pg_temp.must_fail_like(
     'F1h อัตราติดลบหรือศูนย์',
     $q$ insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source)
-        values ('USD', '2026-11-30', 0, 'manual') $q$,
+        values ('USD', '2026-05-31', 0, 'manual') $q$,
     'fx_rates_thb_per_unit_check');
 
   raise notice 'ok F1 · สกุลเงินจำกัดสี่สกุล · บาทอัตรา 1 · แหล่งที่มาจำกัดค่า · อัตราต้องเป็นบวก';
@@ -664,8 +674,8 @@ begin
     'F2a ครบชุดและคูณลงตัว',
     $q$ insert into sri_os.asset_valuations(asset_id, as_of, method, value,
                                             currency, value_original, fx_rate, fx_rate_date)
-        values ('00000000-0000-0000-0000-00000002a002', '2026-10-31', 'market_api', 1460000,
-                'USD', 40000, 36.5, '2026-10-31') $q$);
+        values ('00000000-0000-0000-0000-00000002a002', '2026-04-30', 'market_api', 1460000,
+                'USD', 40000, 36.5, '2026-04-30') $q$);
 
   perform pg_temp.must_fail_like(
     'F2b ระบุสกุลแต่ไม่ส่งอัตรา',
@@ -680,7 +690,7 @@ begin
     $q$ insert into sri_os.asset_valuations(asset_id, as_of, method, value,
                                             currency, fx_rate, fx_rate_date)
         values ('00000000-0000-0000-0000-00000002a002', '2026-09-30', 'market_api', 1460000,
-                'USD', 36.5, '2026-10-31') $q$,
+                'USD', 36.5, '2026-04-30') $q$,
     'asset_valuations_fx_shape');
 
   perform pg_temp.must_fail_like(
@@ -688,7 +698,7 @@ begin
     $q$ insert into sri_os.asset_valuations(asset_id, as_of, method, value,
                                             currency, value_original, fx_rate, fx_rate_date)
         values ('00000000-0000-0000-0000-00000002a002', '2026-09-30', 'market_api', 9999999,
-                'USD', 40000, 36.5, '2026-10-31') $q$,
+                'USD', 40000, 36.5, '2026-04-30') $q$,
     'asset_valuations_fx_shape');
 
   perform pg_temp.must_fail_like(
@@ -709,7 +719,7 @@ begin
   perform pg_temp.must_pass(
     'F2g ตีราคาเป็นบาทโดยไม่ต้องมีสกุลและอัตรา',
     $q$ insert into sri_os.asset_valuations(asset_id, as_of, method, value)
-        values ('00000000-0000-0000-0000-00000002a001', '2026-10-31', 'appraisal', 5000000) $q$);
+        values ('00000000-0000-0000-0000-00000002a001', '2026-04-30', 'appraisal', 5000000) $q$);
 
   raise notice 'ok F2 · ตีราคาสกุลต่างประเทศต้องมีมูลค่าสกุลเดิม + อัตรา + ยอดบาทที่คูณลงตัว และอัตราต้องมีอยู่จริงในตาราง';
 end $$;
@@ -831,7 +841,7 @@ begin
     jsonb_build_array(
       pg_temp.ln('1700', 1000000, 0, '00000000-0000-0000-0000-00000002a002', 'investing'),
       pg_temp.ln('1100', 0, 1000000, null, 'investing', '00000000-0000-0000-0000-00000002b001')),
-    null, null, null, '2026-10-31', '00000000-0000-0000-0000-00000002a002'));
+    null, null, null, '2026-04-30', '00000000-0000-0000-0000-00000002a002'));
 
   -- ใบตีราคา 460,000 ของ R1 ยังอยู่ในสมุด → ถ้า fn_asset_cost_basis นับมันด้วย
   -- ต้นทุนจะกลายเป็น 1,460,000
@@ -881,7 +891,7 @@ begin
       pg_temp.ln('4900', 0, 500000, '00000000-0000-0000-0000-00000002a002'),
       pg_temp.ln('3400', 460000, 0, '00000000-0000-0000-0000-00000002a002'),
       pg_temp.ln('1700', 0, 460000, '00000000-0000-0000-0000-00000002a002', 'investing')),
-    null, null, null, '2026-10-31', '00000000-0000-0000-0000-00000002a002'));
+    null, null, null, '2026-04-30', '00000000-0000-0000-0000-00000002a002'));
 
   select cost_basis, surplus into v_cost, v_surplus
     from sri_os.fn_asset_ledger_parts('00000000-0000-0000-0000-00000002a002');

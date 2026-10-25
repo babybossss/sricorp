@@ -370,4 +370,117 @@ begin
   raise notice 'ok RMb · trigger กลับมาและอัตรากลับเป็น 36.50 หลัง rollback';
 end $$;
 
+-- ============================================================
+-- N · **ห้ามบันทึกอัตราของวันที่ยังไม่มาถึง** (20261025000016)
+--
+--     ทุกเคสยึดกับ `current_date` **ไม่ใช่วันคงที่** — เทสต์ที่ใช้วันคงที่
+--     จะกลับมาเขียว/แดงเองตามปฏิทินโดยไม่มีใครแก้อะไร ซึ่งคือเหตุที่ต้องย้าย
+--     timeline ของ fixture สองไฟล์ (zz_wht_and_fx · zz_fcd_currency) พร้อมกับด่านนี้
+-- ============================================================
+do $$
+declare v_tomorrow date := current_date + 1;
+begin
+  perform set_config('test.uid', (select id::text from y_uid where label = 'mgmt'), true);
+  set local role authenticated;
+
+  -- (ก) INSERT วันที่อนาคต → ปฏิเสธที่ DB
+  perform pg_temp.must_fail_like('N1 ลงอัตราของวันพรุ่งนี้', format($q$
+    insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source)
+    values ('USD', %L, 37.00, 'manual') $q$, v_tomorrow),
+    'ยังไม่มาถึง');
+
+  -- (ข) **วันนี้ลงได้** — อัตราของวันนี้ประกาศแล้ว (ด่านต้องไม่แน่นเกิน)
+  perform pg_temp.must_pass('N2 ลงอัตราของวันนี้', format($q$
+    insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source, note)
+    values ('USD', %L, 37.10, 'manual', 'อัตราของวันนี้') $q$, current_date));
+
+  -- (ค) ย้ายวันของแถวที่ยังไม่มีใครใช้ ไปอนาคต → ปฏิเสธ
+  perform pg_temp.must_fail_like('N3 ย้ายวันของอัตราไปอนาคต', format($q$
+    update sri_os.fx_rates set rate_date = %L
+     where currency = 'USD' and rate_date = %L $q$, v_tomorrow, current_date),
+    'ยังไม่มาถึง');
+
+  -- (ง) ย้ายไปอดีตยังได้ (แถวนี้ยังไม่มีใครใช้)
+  perform pg_temp.must_pass('N4 ย้ายวันของอัตราไปอดีต', format($q$
+    update sri_os.fx_rates set rate_date = %L
+     where currency = 'USD' and rate_date = %L $q$, current_date - 3, current_date));
+
+  reset role;
+
+  if not exists (select 1 from sri_os.fx_rates
+                  where currency = 'USD' and rate_date = current_date - 3) then
+    raise exception 'FAIL: N4 — แถวที่ย้ายไปอดีตต้องอยู่ที่วันใหม่';
+  end if;
+  if exists (select 1 from sri_os.fx_rates where rate_date > current_date) then
+    raise exception 'FAIL: N — ยังมีอัตราของวันที่ยังไม่มาถึงค้างอยู่';
+  end if;
+  if (select count(*) from sri_os.fn_fx_rate_future_rows()) <> 0 then
+    raise exception 'FAIL: N — รายงานอัตราล่วงหน้าต้องว่างเปล่า';
+  end if;
+
+  raise notice 'ok N · ลงอัตราของวันพรุ่งนี้ถูกปฏิเสธ · วันนี้ลงได้ · ย้ายไปอนาคตไม่ได้ · ย้ายไปอดีตได้ · รายงานอัตราล่วงหน้าว่างเปล่า';
+exception when others then
+  reset role;
+  raise;
+end $$;
+
+-- ============================================================
+-- NM · **MUTATION** — ถอดด่านวันที่อนาคต แล้ววัดว่าเกิดอะไร
+--      (อัตราที่เดาไว้ + ด่านห้ามแก้ย้อนหลัง = ติดอยู่กับตัวเลขที่เดาตลอดไป)
+-- ============================================================
+do $$
+declare v_future date := current_date + 30;
+begin
+  drop trigger trg_fx_rates_no_future_date on sri_os.fx_rates;
+
+  perform set_config('test.uid', (select id::text from y_uid where label = 'mgmt'), true);
+  set local role authenticated;
+
+  insert into sri_os.fx_rates(currency, rate_date, thb_per_unit, source, note)
+  values ('USD', v_future, 45.00, 'manual', 'NM อัตราที่เดาไว้ล่วงหน้า 30 วัน');
+
+  -- แล้วลงรายการที่อ้างอัตราที่เดาไว้ได้ทันที
+  perform sri_os.fn_post_entry(jsonb_build_object(
+    'txn_type_code', 'trf.fx_acquire',
+    'doc_date', v_future::text, 'cash_date', v_future::text,
+    'memo', 'NM ซื้อ 1,000 USD ด้วยอัตราที่เดาไว้ 45.00',
+    'transactions', jsonb_build_array(jsonb_build_object(
+      'owner_id', pg_temp.own('THANAKORN'),
+      'lines', jsonb_build_array(
+        jsonb_build_object('coa_code', '1100',
+                           'bank_account_id', '00000000-0000-0000-0000-0000000db002',
+                           'debit', 45000, 'credit', 0, 'cf_category', 'none',
+                           'currency', 'USD', 'amount_original', 1000,
+                           'fx_rate', 45.00, 'fx_rate_date', v_future::text),
+        jsonb_build_object('coa_code', '1100',
+                           'bank_account_id', '00000000-0000-0000-0000-0000000db001',
+                           'debit', 0, 'credit', 45000, 'cf_category', 'none'))))));
+
+  -- และตอนนี้ **แก้อัตราที่เดาไว้ไม่ได้อีกแล้ว** เพราะมีรายการอ้างถึง (0015)
+  perform pg_temp.must_fail_like('NM แก้อัตราที่เดาไว้ให้ตรงความจริง', format($q$
+    update sri_os.fx_rates set thb_per_unit = 37.00
+     where currency = 'USD' and rate_date = %L $q$, v_future),
+    'มีรายการในสมุดหรือทะเบียนล็อตอ้างถึงแล้ว');
+
+  reset role;
+
+  raise notice 'ok NM (MUTATION) · ถอดด่านวันที่อนาคต → ลงอัตรา 45.00 ของอีก 30 วันข้างหน้าได้ แล้วลงรายการ 1,000 USD = 45,000 บาทจากอัตราที่ยังไม่มีใครรู้ · และเมื่อถึงวันจริงถ้าอัตราเป็น 37.00 **แก้ไม่ได้อีกแล้ว** (ด่าน 0015 ห้าม) → ติดอยู่กับยอดที่เดาไว้ สูงกว่าจริง 8,000 บาท · สองด่านนี้จึงต้องมาคู่กัน';
+  raise exception 'ROLLBACK_NM';
+exception when others then
+  reset role;
+  if sqlerrm like 'FAIL:%' then raise; end if;
+  if sqlerrm <> 'ROLLBACK_NM' then raise; end if;
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from pg_trigger g
+                  where g.tgrelid = 'sri_os.fx_rates'::regclass
+                    and g.tgname = 'trg_fx_rates_no_future_date'
+                    and not g.tgisinternal) then
+    raise exception 'FAIL: NM — trigger ไม่กลับมาหลัง rollback';
+  end if;
+  raise notice 'ok NMb · trigger วันที่อนาคตกลับมาหลัง rollback';
+end $$;
+
 rollback;
