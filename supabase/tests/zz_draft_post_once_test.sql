@@ -115,9 +115,11 @@ language sql stable as $fn$
    where v.txn_type_code = 'exp.other';
 $fn$;
 
+/** นับเฉพาะใบที่ **ยังมีผล** (ใบที่ยกเลิกแล้วไม่นับในงบ จึงไม่นับที่นี่ด้วย) */
 create or replace function pg_temp.n_txn() returns int
 language sql stable as $fn$
-  select count(*)::int from sri_os.transactions where txn_type_code = 'exp.other';
+  select count(*)::int from sri_os.transactions
+   where txn_type_code = 'exp.other' and status::text = 'posted';
 $fn$;
 
 create or replace function pg_temp.sum_5900() returns numeric
@@ -311,11 +313,45 @@ begin;
 select pg_temp.make_users();
 
 create temporary table d_fix (label text primary key, id uuid);
-insert into d_fix(label, id) values
-  ('d4', gen_random_uuid()),
-  ('t1', gen_random_uuid());
+insert into d_fix(label, id) values ('t1', gen_random_uuid()), ('d4', gen_random_uuid());
 
--- ร่างสองใบ (ยังไม่มีเงินลงสมุด) — ใส่ด้วยสิทธิ์ของผู้ใช้จริง
+-- role `authenticated` ต้องอ่านตารางนี้ได้ ไม่งั้น insert ที่อ่านจากมันพัง
+do $$
+declare s text := (select nspname from pg_namespace where oid = pg_my_temp_schema());
+begin
+  execute format('grant select on %I.d_fix to authenticated', s);
+end $$;
+
+/**
+ * ใบที่ **ลงแล้วยกเลิกแล้ว** ใน **ธุรกรรมนี้** (ซึ่ง commit) — ใช้เป็นใบที่
+ * "มาจากธุรกรรมอื่น" สำหรับเคส D4 ในช่วงถัดไป
+ *
+ * ทำไมต้อง void: `write_txn_id` **ปลอมไม่ได้แม้แต่เจ้าของสคีมา** (trigger ของ
+ * 20261007000000 ตรึง `new.write_txn_id := old.write_txn_id` ทุก UPDATE) →
+ * การพิสูจน์กิ่ง "มาจากธุรกรรมอื่น" **ต้องมีใบที่ commit จากธุรกรรมอื่นจริง**
+ * แต่เทสต์ต้องไม่ทิ้งเงินไว้ → ลงแล้ว **ยกเลิกทันที** ในธุรกรรมเดียวกัน
+ * (`v_ledger_posted` ไม่นับใบที่ยกเลิก → ไม่มีเงินค้างในงบเลย แถวยังอยู่
+ *  เพราะกฎเหล็กข้อ 1 ห้ามลบ ซึ่งถูกต้อง)
+ */
+do $$
+declare v_txn uuid;
+begin
+  perform set_config('test.uid', pg_temp.uid('approver')::text, true);
+  set local role authenticated;
+  v_txn := ((sri_os.fn_post_entry(pg_temp.payload('C1-d4 ใบที่ลงจากธุรกรรมอื่นแล้วยกเลิก'))
+              -> 'transaction_ids') ->> 0)::uuid;
+  update sri_os.transactions
+     set status = 'void', voided_at = now(), voided_by = auth.uid(),
+         void_reason = 'fixture ของเทสต์ C-1 · ยกเลิกทันทีเพื่อไม่ทิ้งเงินไว้ในสมุด'
+   where id = v_txn;
+  reset role;
+  update d_fix set id = v_txn where label = 'd4';
+exception when others then
+  reset role;
+  raise;
+end $$;
+
+-- ร่างหนึ่งใบสำหรับเคสสองเซสชัน (ยังไม่มีเงินลงสมุด) — ใส่ด้วยสิทธิ์ของผู้ใช้จริง
 do $$
 begin
   perform set_config('test.uid', pg_temp.uid('approver')::text, true);
@@ -324,7 +360,7 @@ begin
                                    attachments, created_by)
   select f.id, pg_temp.own('THANAKORN'), 'exp.other', '2026-02-01', 50000,
          'C1-' || f.label || ' ร่างสำหรับสองเซสชัน', array['ใบแจ้งหนี้.pdf'], auth.uid()
-    from d_fix f;
+    from d_fix f where f.label = 't1';
   reset role;
 exception when others then
   reset role;
@@ -341,29 +377,22 @@ begin;
 --      นี่คือรูปเดียวที่ผู้อนุมัติสองคนแข่งกันได้ · ด่าน "ธุรกรรมเดียวกัน"
 --      ตัดทิ้งที่โครงสร้าง — ไม่ใช่แพ้จังหวะบางครั้ง แต่ **ลงไม่ได้เลย**
 --
---      กฎที่ทดสอบคือ `transactions.write_txn_id = pg_current_xact_id()` ตรงๆ
---      → จำลองสภาพ "ใบนี้ถูกเขียนในธุรกรรมอื่น" ด้วยการตั้งค่าคอลัมน์นั้น
---      เป็นค่าอื่น (ทำในฐานะเจ้าของสคีมา) **ไม่ใช้เซสชันที่สอง** เพราะเซสชัน
---      ที่สองต้อง commit ใบนั้น = ทิ้งเงินไว้ในฐานข้อมูลหลังเทสต์จบ
---      (เคสที่ต้องมีสองเซสชันจริงๆ คือ T1/TM ซึ่งอยู่ช่วงที่ 2 และไม่ทิ้งอะไรไว้)
+--      ใบที่ใช้คือใบที่ commit จาก **ธุรกรรมอื่นจริง** (ช่วง fixture ข้างบน)
+--      และถูกยกเลิกแล้วเพื่อไม่ทิ้งเงินไว้ · `write_txn_id` ปลอมไม่ได้
+--      แม้แต่เจ้าของสคีมา จึงไม่มีทางจำลองกิ่งนี้ในธุรกรรมเดียว
 -- ============================================================
 do $$
 declare v_draft uuid; v_txn uuid;
 begin
+  select id into v_txn from d_fix where label = 'd4';
   perform set_config('test.uid', pg_temp.uid('approver')::text, true);
   set local role authenticated;
-  v_draft := pg_temp.new_draft('D4 ร่างที่จะถูกอัปเดตข้ามธุรกรรม');
-  v_txn := ((sri_os.fn_post_entry(pg_temp.payload('D4 ใบที่ลงไว้ก่อน'))
-              -> 'transaction_ids') ->> 0)::uuid;
-  reset role;
 
-  -- ทำให้ใบนั้น "มาจากธุรกรรมอื่น" (ค่าที่ระบบตั้งให้ ผู้เรียกปลอมไม่ได้)
-  update sri_os.transactions
-     set write_txn_id = (pg_current_xact_id()::text::numeric + 1)::text::xid8
-   where id = v_txn;
-
-  perform set_config('test.uid', pg_temp.uid('approver')::text, true);
-  set local role authenticated;
+  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, memo,
+                                   attachments, created_by)
+  values (pg_temp.own('THANAKORN'), 'exp.other', '2026-02-01', 50000,
+          'C1-d4b ร่างที่จะถูกอัปเดตข้ามธุรกรรม', array['ใบแจ้งหนี้.pdf'], auth.uid())
+  returning id into v_draft;
 
   perform pg_temp.must_fail_like('D4 อัปเดตร่างให้ชี้ใบที่มาจากธุรกรรมอื่น', format($q$
     update sri_os.draft_entries
@@ -376,7 +405,7 @@ begin
   end if;
 
   reset role;
-  raise notice 'ok D4 · เส้นทาง "โพสต์ก่อน แล้วอัปเดตร่างทีหลัง" (ใบมาจากธุรกรรมอื่น) ถูกปฏิเสธที่โครงสร้าง — นี่คือรูปเดียวที่ผู้อนุมัติสองคนแข่งกันได้';
+  raise notice 'ok D4 · เส้นทาง "โพสต์ก่อน แล้วอัปเดตร่างทีหลัง" (ใบ commit มาจากธุรกรรมอื่นจริง) ถูกปฏิเสธที่โครงสร้าง — นี่คือรูปเดียวที่ผู้อนุมัติสองคนแข่งกันได้';
 exception when others then
   reset role;
   raise;
@@ -462,9 +491,10 @@ begin
    * (ซึ่งคือสิ่งที่เกิดขึ้นถ้าแอปโพสต์ก่อนแล้วค่อยอัปเดตร่าง)
    * → ไม่มีอะไรบล็อกเลย เพราะไม่ได้แตะแถวร่าง
    */
-  perform dblink_exec(v_conn, format(
-    $q$ select sri_os.fn_post_entry(%L::jsonb) $q$,
-    pg_temp.payload('TM โพสต์โดยไม่ถือล็อกร่าง')::text));
+  -- ใช้ `dblink()` เพราะคำสั่งนี้คืนผลลัพธ์ (`dblink_exec` รับได้แต่คำสั่งที่ไม่คืนผล)
+  perform * from dblink(v_conn, format(
+    $q$ select (sri_os.fn_post_entry(%L::jsonb) ->> 'replayed') $q$,
+    pg_temp.payload('TM โพสต์โดยไม่ถือล็อกร่าง')::text)) as t(x text);
 
   -- วัดจากภายในเซสชัน B ก่อน rollback (A ยังไม่ commit จึงไม่เห็นใบของ A)
   select t.n, t.s into v_n, v_sum from dblink(v_conn, $q$
@@ -512,10 +542,10 @@ do $$
 declare n int;
 begin
   select count(*) into n from sri_os.transactions
-   where txn_type_code = 'exp.other' and memo like 'C1-%';
+   where txn_type_code = 'exp.other' and memo like 'C1-%' and status::text = 'posted';
   if n <> 0 then
-    raise exception 'FAIL · มีใบในสมุด % ใบค้างจากช่วงสองเซสชัน — เทสต์ต้องไม่ทิ้งเงินไว้ในฐานข้อมูล', n;
+    raise exception 'FAIL · มีใบที่ยังมีผล % ใบค้างจากช่วงสองเซสชัน — เทสต์ต้องไม่ทิ้งเงินไว้ในงบ', n;
   end if;
-  raise notice 'ok · ไม่มีใบในสมุดค้างจากช่วงสองเซสชัน';
+  raise notice 'ok · ไม่มีใบที่ยังมีผลค้างจากช่วงสองเซสชัน (ใบ fixture ถูกยกเลิกแล้ว · v_ledger_posted ไม่นับ) → ไม่มีเงินค้างในงบ';
 end $$;
 commit;
