@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRI Corporation</title>
+<meta name="description" content="SRI Corporation — อสังหาริมทรัพย์ · สินเชื่อ · การลงทุน ครบในที่เดียว เพื่อความมั่งคั่งที่ส่งต่อได้หลายรุ่น">
+<!--
+  MOCKUP v0.1 — หน้า Homepage SRI Corporation
+  - รูปทั้งหมดเป็นรูปตัวอย่างจาก Unsplash (เปลี่ยนเป็นรูปงานจริงที่ IMAGES ด้านล่าง / โฟลเดอร์ assets/img)
+  - โลโก้เป็นตัวแทนชั่วคราว รอไฟล์ CI จริง (assets/brand)
+  - ฟอร์มยังไม่ส่งจริง ตั้งปลายทางที่ FORM_ENDPOINT / FORM_TO
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-950:#030F24;
+    --navy-900:#061A3A;
+    --navy-800:#0A2550;
+    --brand-700:#003A8A;
+    --brand-600:#004AAD;   /* CI SRI */
+    --brand-400:#3D7BD6;
+    --brand-100:#D6E4F7;
+    --brand-50:#EEF4FC;
+    --gold:#C8A96A;        /* มิติสีเสริม ใช้น้อยๆ เป็นเส้น/ตัวเลข */
+    --ink-900:#0A2540;
+    --ink-600:#425466;
+    --ink-400:#8792A2;
+    --line:#E3E8EE;
+    --bg:#F6F9FC;
+    --white:#FFFFFF;
+    --font:"IBM Plex Sans Thai", "Sukhumvit Set", "Noto Sans Thai", system-ui, sans-serif;
+    --max:1200px;
+    --r:4px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--font);color:var(--ink-900);background:var(--white);font-size:17px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  img{display:block;max-width:100%}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
+  .eyebrow.blue{color:var(--brand-600)}
+  h1,h2,h3{font-weight:700;line-height:1.25;letter-spacing:-.01em}
+  h2{font-size:clamp(28px,3.4vw,42px)}
+  .lead{font-size:clamp(17px,1.4vw,19px);color:var(--ink-600);max-width:640px}
+  .btn{display:inline-flex;align-items:center;gap:10px;height:52px;padding:0 28px;border-radius:var(--r);font-weight:600;font-size:16px;font-family:inherit;border:1px solid transparent;cursor:pointer;transition:.2s}
+  .btn-primary{background:var(--brand-600);color:#fff}
+  .btn-primary:hover{background:var(--brand-700)}
+  .btn-ghost{border-color:rgba(255,255,255,.4);color:#fff}
+  .btn-ghost:hover{background:rgba(255,255,255,.08);border-color:#fff}
+  .ph{background:linear-gradient(135deg,var(--navy-800),var(--brand-700))} /* สีสำรองถ้ารูปไม่โหลด */
+  .ph img{width:100%;height:100%;object-fit:cover}
+
+  /* NAV */
+  .nav{position:fixed;inset:0 0 auto 0;z-index:50;transition:.25s}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:80px}
+  .nav.scrolled{background:rgba(6,26,58,.96);backdrop-filter:blur(8px);box-shadow:0 1px 0 rgba(255,255,255,.06)}
+  .logo{display:flex;align-items:center;gap:12px;color:#fff}
+  .logo-mark{width:40px;height:40px}
+  .logo-text b{display:block;font-size:20px;letter-spacing:.08em;line-height:1}
+  .logo-text span{font-size:11px;letter-spacing:.24em;opacity:.7}
+  .menu{display:flex;gap:36px;align-items:center;color:rgba(255,255,255,.85);font-size:15px}
+  .menu a:not(.btn):hover{color:#fff}
+  .menu .btn{height:44px;padding:0 20px;font-size:15px}
+  .burger{display:none;background:none;border:0;color:#fff;font-size:26px;cursor:pointer}
+
+  /* HERO */
+  .hero{position:relative;min-height:100vh;display:flex;align-items:flex-end;color:#fff;overflow:hidden;background:var(--navy-900)}
+  .hero .ph{position:absolute;inset:0}
+  .hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(3,15,36,.55) 0%,rgba(3,15,36,.35) 35%,rgba(3,15,36,.92) 100%),linear-gradient(90deg,rgba(0,58,138,.55),transparent 70%)}
+  .hero .wrap{position:relative;z-index:2;padding-top:160px;padding-bottom:64px;width:100%}
+  .hero h1{font-size:clamp(38px,5.6vw,72px);max-width:880px;margin:20px 0 22px}
+  .hero h1 em{font-style:normal;color:var(--brand-100)}
+  .hero p{font-size:clamp(17px,1.5vw,20px);max-width:600px;color:rgba(255,255,255,.82);font-weight:300}
+  .hero .cta{display:flex;gap:14px;flex-wrap:wrap;margin-top:36px}
+  .hero-pillars{display:grid;grid-template-columns:repeat(3,1fr);margin-top:72px;border-top:1px solid rgba(255,255,255,.18)}
+  .hero-pillars a{padding:22px 24px 6px 0;display:flex;gap:14px;align-items:baseline;transition:.2s}
+  .hero-pillars a:hover{color:var(--brand-100)}
+  .hero-pillars .n{font-size:13px;color:var(--gold);font-weight:600}
+  .hero-pillars b{font-size:15px;letter-spacing:.12em}
+  .hero-pillars small{display:block;font-size:13px;color:rgba(255,255,255,.6);letter-spacing:0;font-weight:400}
+
+  /* PRINCIPLES */
+  .principles{background:var(--navy-900);color:#fff;border-top:1px solid rgba(255,255,255,.06)}
+  .principles .wrap{display:grid;grid-template-columns:repeat(4,1fr)}
+  .principles div{padding:34px 24px;border-left:1px solid rgba(255,255,255,.08)}
+  .principles div:first-child{border-left:0;padding-left:0}
+  .principles b{display:block;font-size:17px;margin-bottom:4px}
+  .principles span{font-size:14px;color:rgba(255,255,255,.6)}
+
+  /* SECTION */
+  section{padding:120px 0}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;gap:40px;margin-bottom:56px;flex-wrap:wrap}
+  .head h2{margin-top:12px;max-width:620px}
+
+  /* SERVICES */
+  .services{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .svc{position:relative;background:var(--white);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;transition:.3s}
+  .svc:hover{transform:translateY(-4px);box-shadow:0 24px 48px -24px rgba(10,37,64,.35);border-color:var(--brand-100)}
+  .svc .ph{height:240px;position:relative}
+  .svc .ph::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,rgba(6,26,58,.7))}
+  .svc .tag{position:absolute;left:24px;bottom:18px;z-index:2;color:#fff;font-size:13px;font-weight:600;letter-spacing:.2em}
+  .svc .body{padding:32px 28px 30px;display:flex;flex-direction:column;flex:1}
+  .svc h3{font-size:24px;letter-spacing:.02em;color:var(--brand-600)}
+  .svc h3 small{display:block;font-size:15px;color:var(--ink-600);font-weight:500;letter-spacing:0;margin-top:2px}
+  .svc p{font-size:15px;color:var(--ink-600);margin:14px 0 22px}
+  .svc ul{list-style:none;border-top:1px solid var(--line);margin-top:auto}
+  .svc li{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line);font-size:15px}
+  .svc li b{font-weight:600}
+  .svc li span{color:var(--ink-400);font-size:14px}
+  .svc .num{position:absolute;top:18px;right:22px;z-index:2;color:#fff;font-size:44px;font-weight:300;opacity:.9;line-height:1}
+
+  /* WORK */
+  .work{background:var(--bg)}
+  .gallery{display:grid;grid-template-columns:1.4fr 1fr 1fr;grid-template-rows:260px 260px;gap:16px}
+  .gallery .ph{border-radius:var(--r);overflow:hidden;position:relative}
+  .gallery .ph:first-child{grid-row:span 2}
+  .gallery figcaption{position:absolute;left:0;right:0;bottom:0;padding:40px 20px 16px;color:#fff;font-size:14px;background:linear-gradient(180deg,transparent,rgba(3,15,36,.8))}
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:64px;border-top:2px solid var(--brand-600)}
+  .step{padding:28px 24px 0 0}
+  .step .n{font-size:13px;font-weight:600;color:var(--brand-600);letter-spacing:.15em}
+  .step b{display:block;font-size:19px;margin:6px 0 6px}
+  .step p{font-size:15px;color:var(--ink-600)}
+
+  /* PORTFOLIO */
+  .pf{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .pf div{aspect-ratio:4/3;border:1px dashed #C9D3DF;border-radius:var(--r);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink-400);font-size:15px;background:repeating-linear-gradient(135deg,#fff,#fff 12px,var(--bg) 12px,var(--bg) 24px)}
+  .pf b{color:var(--ink-600);font-size:13px;letter-spacing:.2em}
+
+  /* PARTNER */
+  .partner{position:relative;color:#fff;background:var(--navy-900);overflow:hidden}
+  .partner .ph{position:absolute;inset:0;opacity:.22}
+  .partner::before{content:"";position:absolute;inset:0;background:radial-gradient(900px 500px at 85% 20%,rgba(0,74,173,.55),transparent 60%)}
+  .partner .wrap{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+  .partner h2{margin:14px 0 18px}
+  .partner .lead{color:rgba(255,255,255,.75)}
+  .partner ul{list-style:none;margin-top:32px}
+  .partner li{padding:14px 0;border-top:1px solid rgba(255,255,255,.12);display:flex;gap:14px;font-size:16px}
+  .partner li::before{content:"";width:6px;height:6px;background:var(--gold);margin-top:11px;flex:none}
+  form{background:#fff;color:var(--ink-900);border-radius:var(--r);padding:40px;box-shadow:0 40px 80px -30px rgba(0,0,0,.6)}
+  .seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border-radius:var(--r);padding:4px;margin-bottom:28px}
+  .seg label{text-align:center;padding:12px;border-radius:3px;cursor:pointer;font-weight:600;font-size:15px;color:var(--ink-600)}
+  .seg input{display:none}
+  .seg input:checked + span{color:#fff}
+  .seg label:has(input:checked){background:var(--brand-600);color:#fff}
+  .field{margin-bottom:18px}
+  .field label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
+  .field input{width:100%;height:52px;border:1px solid var(--line);border-radius:var(--r);padding:0 16px;font:inherit;font-size:16px;color:var(--ink-900);background:#fff}
+  .field input:focus{outline:none;border-color:var(--brand-600);box-shadow:0 0 0 3px var(--brand-50)}
+  form .btn{width:100%;justify-content:center;margin-top:8px}
+  .note{font-size:13px;color:var(--ink-400);margin-top:14px;text-align:center}
+  .ok{display:none;text-align:center;padding:40px 10px}
+  .ok b{display:block;font-size:22px;color:var(--brand-600);margin-bottom:6px}
+
+  /* FOOTER */
+  footer{background:var(--navy-950);color:rgba(255,255,255,.7);padding:80px 0 32px;font-size:15px}
+  .foot{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:48px;padding-bottom:56px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .foot h4{color:#fff;font-size:13px;letter-spacing:.2em;margin-bottom:18px;font-weight:600}
+  .foot p{margin-bottom:6px}
+  .foot a:hover{color:#fff}
+  .social{display:flex;gap:12px;margin-top:4px}
+  .social a{width:44px;height:44px;border:1px solid rgba(255,255,255,.18);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:.2s}
+  .social a:hover{background:var(--brand-600);border-color:var(--brand-600)}
+  .social svg{width:18px;height:18px;fill:#fff}
+  .copy{display:flex;justify-content:space-between;padding-top:28px;font-size:13px;color:rgba(255,255,255,.45);flex-wrap:wrap;gap:8px}
+  .copy em{font-style:normal;color:var(--gold);letter-spacing:.12em}
+
+  /* RESPONSIVE */
+  @media (max-width:960px){
+    .menu{display:none}
+    .menu.open{display:flex;position:absolute;top:80px;left:0;right:0;flex-direction:column;gap:0;background:var(--navy-900);padding:8px 24px 24px;align-items:stretch}
+    .menu.open a:not(.btn){padding:14px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+    .menu.open .btn{margin-top:16px;justify-content:center}
+    .burger{display:block}
+    .services,.pf{grid-template-columns:1fr}
+    .principles .wrap{grid-template-columns:1fr 1fr}
+    .principles div:nth-child(3){border-left:0;padding-left:0}
+    .gallery{grid-template-columns:1fr 1fr;grid-template-rows:220px 180px 180px}
+    .gallery .ph:first-child{grid-column:span 2;grid-row:auto}
+    .steps{grid-template-columns:1fr 1fr;row-gap:12px}
+    .partner .wrap{grid-template-columns:1fr;gap:48px}
+    .foot{grid-template-columns:1fr}
+    section{padding:80px 0}
+  }
+  @media (max-width:600px){
+    .wrap{padding:0 16px}
+    .hero-pillars{grid-template-columns:1fr}
+    .hero-pillars a{padding:14px 0 4px}
+    .principles .wrap{grid-template-columns:1fr}
+    .principles div{border-left:0;padding:20px 0;border-top:1px solid rgba(255,255,255,.08)}
+    .steps{grid-template-columns:1fr}
+    form{padding:28px 20px}
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a href="#top" class="logo" aria-label="SRI Corporation">
+      <!-- โลโก้ชั่วคราว: แทนด้วยไฟล์ CI จริง assets/brand/logo-white.svg -->
+      <svg class="logo-mark" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="4" fill="#004AAD"/><path d="M8 25c4-8 12-11 20-7 2 1 4 0 5-2-1 5-4 8-9 8 2 2 2 5 0 7-1-3-3-4-6-4-4 0-7 0-10-2z" fill="#fff"/></svg>
+      <span class="logo-text"><b>SRI</b><span>CORPORATION</span></span>
+    </a>
+    <nav class="menu" id="menu">
+      <a href="#services">บริการ</a>
+      <a href="#work">การทำงาน</a>
+      <a href="#portfolio">ผลงาน</a>
+      <a href="#contact">ติดต่อ</a>
+      <a href="#partner" class="btn btn-primary">ร่วมเป็นพาร์ทเนอร์</a>
+    </nav>
+    <button class="burger" id="burger" aria-label="เมนู">☰</button>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero" id="top" style="padding:0">
+  <div class="ph"><img data-img="hero" alt=""></div>
+  <div class="wrap">
+    <div class="eyebrow">SRI Corporation · Sustainable Generations Wealth</div>
+    <h1>สร้างความมั่งคั่ง<br><em>ที่ส่งต่อได้หลายรุ่น</em></h1>
+    <p>อสังหาริมทรัพย์ · สินเชื่อ · การลงทุน ครบในที่เดียว<br>ทำงานด้วยวินัยแบบสถาบันการเงิน โปร่งใส ตรวจสอบได้ทุกขั้นตอน</p>
+    <div class="cta">
+      <a href="#services" class="btn btn-primary">ดูบริการของเรา →</a>
+      <a href="#partner" class="btn btn-ghost">คุยกับทีม SRI</a>
+    </div>
+    <div class="hero-pillars">
+      <a href="#svc-re"><span class="n">01</span><b>REAL ESTATE<small>ลงทุน · บริหาร · นายหน้า</small></b></a>
+      <a href="#svc-fin"><span class="n">02</span><b>FINANCING<small>จำนอง · Private Credit · Bridge Loan</small></b></a>
+      <a href="#svc-inv"><span class="n">03</span><b>INVESTING<small>SME · Institutional</small></b></a>
+    </div>
+  </div>
+</section>
+
+<!-- PRINCIPLES -->
+<div class="principles">
+  <div class="wrap">
+    <div><b>มั่นคง</b><span>ทุกดีลมีทรัพย์และสัญญารองรับ</span></div>
+    <div><b>โปร่งใส</b><span>เงื่อนไขชัด เอกสารครบ ไม่มีค่าแฝง</span></div>
+    <div><b>รวดเร็ว</b><span>ประเมินและตอบกลับไว ตัดสินใจได้จริง</span></div>
+    <div><b>ระยะยาว</b><span>คิดแบบ Family Office ข้ามรุ่น</span></div>
+  </div>
+</div>
+
+<!-- SERVICES -->
+<section id="services">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="eyebrow blue">What We Do</div>
+        <h2>3 ธุรกิจหลัก ที่เชื่อมกัน<br>เป็นระบบเดียว</h2>
+      </div>
+      <p class="lead">ตั้งแต่หาทรัพย์ ปล่อยสินเชื่อ จนถึงร่วมลงทุน — ทีมเดียวดูแลครบ ทำให้ประเมินเร็วและเข้าใจความเสี่ยงจริง</p>
+    </div>
+
+    <div class="services">
+      <article class="svc" id="svc-re">
+        <div class="ph"><img data-img="re" alt="อสังหาริมทรัพย์"><span class="num">01</span><span class="tag">REAL ESTATE SOLUTION</span></div>
+        <div class="body">
+          <h3>REAL ESTATE<small>โซลูชันอสังหาริมทรัพย์</small></h3>
+          <p>ลงทุน บริหาร และซื้อขายทรัพย์ ด้วยข้อมูลจริงจากพอร์ตที่เราถือเอง</p>
+          <ul>
+            <li><b>Investment</b><span>ลงทุนอสังหาฯ</span></li>
+            <li><b>Management</b><span>บริหารทรัพย์ · ปล่อยเช่า</span></li>
+            <li><b>Broker</b><span>นายหน้าซื้อ-ขาย-เช่า</span></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="svc" id="svc-fin">
+        <div class="ph"><img data-img="fin" alt="สินเชื่อ"><span class="num">02</span><span class="tag">FINANCING</span></div>
+        <div class="body">
+          <h3>FINANCING<small>สินเชื่อมีหลักทรัพย์</small></h3>
+          <p>เงินทุนยืดหยุ่น อนุมัติไว เงื่อนไขชัดเจน สำหรับเจ้าของทรัพย์และธุรกิจ</p>
+          <ul>
+            <li><b>Mortgage</b><span>สินเชื่อจำนอง</span></li>
+            <li><b>Private Credit</b><span>สินเชื่อเอกชน</span></li>
+            <li><b>Bridge Loan</b><span>เงินทุนระยะสั้น</span></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="svc" id="svc-inv">
+        <div class="ph"><img data-img="inv" alt="การลงทุน"><span class="num">03</span><span class="tag">INVESTING</span></div>
+        <div class="body">
+          <h3>INVESTING<small>ร่วมลงทุน</small></h3>
+          <p>ร่วมลงทุนกับธุรกิจที่เติบโตได้จริง และลงทุนในสินทรัพย์ระดับสถาบัน</p>
+          <ul>
+            <li><b>SME Investing</b><span>ร่วมทุนธุรกิจ SME</span></li>
+            <li><b>Institutional Investing</b><span>ลงทุนระดับสถาบัน</span></li>
+          </ul>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- WORK -->
+<section class="work" id="work">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="eyebrow blue">How We Work</div>
+        <h2>ทำงานจริง ลงพื้นที่จริง</h2>
+      </div>
+      <p class="lead">เราดูทรัพย์ด้วยตัวเอง คุยกับเจ้าของตัวจริง และดูแลต่อจนจบดีล</p>
+    </div>
+
+    <!-- รูปตัวอย่าง: เปลี่ยนเป็นรูปการทำงานจริงของทีม SRI -->
+    <div class="gallery">
+      <figure class="ph"><img data-img="w1" alt=""><figcaption>ประชุมโครงสร้างดีลกับลูกค้า</figcaption></figure>
+      <figure class="ph"><img data-img="w2" alt=""><figcaption>ลงพื้นที่ประเมินทรัพย์</figcaption></figure>
+      <figure class="ph"><img data-img="w3" alt=""><figcaption>ตรวจสัญญาและเอกสาร</figcaption></figure>
+      <figure class="ph"><img data-img="w4" alt=""><figcaption>ส่งมอบทรัพย์</figcaption></figure>
+      <figure class="ph"><img data-img="w5" alt=""><figcaption>ปิดดีลกับพาร์ทเนอร์</figcaption></figure>
+    </div>
+
+    <div class="steps">
+      <div class="step"><span class="n">STEP 01</span><b>คุยโจทย์</b><p>เข้าใจเป้าหมายและข้อจำกัดของคุณ</p></div>
+      <div class="step"><span class="n">STEP 02</span><b>ประเมินจริง</b><p>ลงพื้นที่ ตรวจทรัพย์ ตรวจเอกสาร</p></div>
+      <div class="step"><span class="n">STEP 03</span><b>วางโครงสร้าง</b><p>เงื่อนไขชัด สัญญาครบ ก่อนเซ็น</p></div>
+      <div class="step"><span class="n">STEP 04</span><b>ดูแลต่อเนื่อง</b><p>ติดตามทุกงวด รายงานโปร่งใส</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PORTFOLIO (placeholder) -->
+<section id="portfolio">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="eyebrow blue">Portfolio</div>
+        <h2>ผลงานของเรา</h2>
+      </div>
+      <p class="lead">กำลังรวบรวมผลงาน จะอัปเดตเร็วๆ นี้</p>
+    </div>
+    <div class="pf">
+      <div><b>REAL ESTATE</b>เร็วๆ นี้</div>
+      <div><b>FINANCING</b>เร็วๆ นี้</div>
+      <div><b>INVESTING</b>เร็วๆ นี้</div>
+    </div>
+  </div>
+</section>
+
+<!-- PARTNER / TEAM FORM -->
+<section class="partner" id="partner">
+  <div class="ph"><img data-img="partner" alt=""></div>
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">Be Partner · Join Our Team</div>
+      <h2>เติบโตไปด้วยกัน<br>กับ SRI</h2>
+      <p class="lead">ไม่ว่าจะเป็นเจ้าของทรัพย์ นักลงทุน เอเจนต์ หรือคนที่อยากร่วมทีม — ฝากข้อมูลไว้ ทีมงานจะติดต่อกลับ</p>
+      <ul>
+        <li>เจ้าของทรัพย์ที่ต้องการขาย เช่า หรือหาเงินทุน</li>
+        <li>นักลงทุนและพาร์ทเนอร์ร่วมดีล</li>
+        <li>เอเจนต์และนายหน้าอสังหาฯ</li>
+        <li>คนที่อยากร่วมงานกับทีม SRI</li>
+      </ul>
+    </div>
+
+    <form id="leadForm" novalidate>
+      <div id="formBody">
+        <div class="seg">
+          <label><input type="radio" name="type" value="Partner" checked>เป็นพาร์ทเนอร์</label>
+          <label><input type="radio" name="type" value="Team">ร่วมทีม</label>
+        </div>
+        <div class="field"><label for="f-name">ชื่อ-นามสกุล</label><input id="f-name" name="name" required autocomplete="name" placeholder="ชื่อของคุณ"></div>
+        <div class="field"><label for="f-email">อีเมล</label><input id="f-email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>
+        <div class="field"><label for="f-phone">เบอร์โทร</label><input id="f-phone" name="phone" type="tel" required autocomplete="tel" placeholder="08X-XXX-XXXX"></div>
+        <button class="btn btn-primary" type="submit">ส่งข้อมูล →</button>
+        <p class="note">ข้อมูลของคุณใช้เพื่อติดต่อกลับเท่านั้น</p>
+      </div>
+      <div class="ok" id="formOk"><b>ได้รับข้อมูลแล้ว ขอบคุณครับ</b>ทีม SRI จะติดต่อกลับโดยเร็ว</div>
+    </form>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer id="contact">
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <a href="#top" class="logo" style="margin-bottom:20px">
+          <svg class="logo-mark" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="4" fill="#004AAD"/><path d="M8 25c4-8 12-11 20-7 2 1 4 0 5-2-1 5-4 8-9 8 2 2 2 5 0 7-1-3-3-4-6-4-4 0-7 0-10-2z" fill="#fff"/></svg>
+          <span class="logo-text"><b>SRI</b><span>CORPORATION</span></span>
+        </a>
+        <p style="color:#fff;font-weight:600">บริษัท เอสอาร์ไอ คอร์ปอเรชั่น จำกัด</p>
+        <p>SRI Corporation Co., Ltd.</p>
+        <p style="margin-top:12px">[ที่อยู่บริษัท — รอข้อมูลจริง]</p>
+      </div>
+      <div>
+        <h4>ติดต่อเรา</h4>
+        <p><a href="mailto:info@sricorporation.com">info@sricorporation.com</a></p>
+        <p>[เบอร์โทรบริษัท]</p>
+      </div>
+      <div>
+        <h4>ติดตาม SRI</h4>
+        <div class="social">
+          <a href="https://www.facebook.com/sricorpth" target="_blank" rel="noopener" aria-label="Facebook"><svg viewBox="0 0 24 24"><path d="M14 8V6c0-1 .4-1.5 1.6-1.5H18V1h-3.3C11.5 1 10.5 3 10.5 5.6V8H8v3.5h2.5V23H14V11.5h3.1L17.6 8z"/></svg></a>
+          <a href="https://www.instagram.com/sricorpth" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM17.3 5.5a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zM12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.6 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2z"/></svg></a>
+          <a href="https://www.tiktok.com/@sricorpth" target="_blank" rel="noopener" aria-label="TikTok"><svg viewBox="0 0 24 24"><path d="M16.6 2h-3.4v13.4a2.9 2.9 0 1 1-2.9-2.9c.3 0 .6 0 .9.1V9.1a6.4 6.4 0 1 0 5.4 6.3V8.6a7.9 7.9 0 0 0 4.6 1.5V6.7a4.6 4.6 0 0 1-4.6-4.7z"/></svg></a>
+        </div>
+        <p style="margin-top:14px">@sricorpth</p>
+      </div>
+    </div>
+    <div class="copy">
+      <span>© 2026 SRI Corporation Co., Ltd. All rights reserved.</span>
+      <em>SUSTAINABLE GENERATIONS WEALTH</em>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ===== รูปภาพ (รูปตัวอย่างจาก Unsplash — เปลี่ยนเป็นรูปจริงได้ที่นี่ เช่น "assets/img/hero.jpg") =====
+  const U = id => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=80`;
+  const IMAGES = {
+    hero:    U("photo-1486406146926-c627a92ad1ab"), // อาคารสำนักงานกระจก
+    re:      U("photo-1600585154340-be6161a56a0c"), // บ้านหรู
+    fin:     U("photo-1450101499163-c8848c66ca85"), // เซ็นสัญญา
+    inv:     U("photo-1611974789855-9c2a0a7236a3"), // กราฟตลาดทุน
+    w1:      U("photo-1600880292203-757bb62b4baf"), // ประชุมทีม
+    w2:      U("photo-1560518883-ce09059eeffa"),    // กุญแจบ้าน
+    w3:      U("photo-1554224155-6726b3ff858f"),    // เอกสารการเงิน
+    w4:      U("photo-1582407947304-fd86f028f716"), // บ้าน
+    w5:      U("photo-1521791136064-7986c2920216"), // จับมือ
+    partner: U("photo-1497366216548-37526070297c")  // ออฟฟิศ
+  };
+  document.querySelectorAll("img[data-img]").forEach(img => {
+    img.onerror = () => img.remove();           // ถ้าโหลดไม่ได้ ใช้พื้นน้ำเงินแทน
+    img.src = IMAGES[img.dataset.img];
+    img.loading = img.dataset.img === "hero" ? "eager" : "lazy";
+  });
+
+  // ===== ฟอร์ม (mockup: ยังไม่ส่งจริง) =====
+  // ตอนใช้งานจริง: ใส่ endpoint เช่น FormSubmit / Formspree / Supabase Edge Function
+  const FORM_TO = "sricorpth@gmail.com";        // เปลี่ยนเมลปลายทางได้ที่นี่
+  const FORM_ENDPOINT = "";                     // เช่น "https://formsubmit.co/ajax/" + FORM_TO
+  document.getElementById("leadForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const f = e.target;
+    if (!f.checkValidity()) { f.reportValidity(); return; }
+    const data = Object.fromEntries(new FormData(f));
+    if (FORM_ENDPOINT) {
+      await fetch(FORM_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ ...data, _subject: `[SRI Website] ${data.type}: ${data.name}` }) });
+    } else {
+      console.log("MOCKUP — จะส่งไปที่", FORM_TO, data);
+    }
+    document.getElementById("formBody").style.display = "none";
+    document.getElementById("formOk").style.display = "block";
+  });
+
+  // ===== Nav =====
+  const nav = document.getElementById("nav");
+  const onScroll = () => nav.classList.toggle("scrolled", scrollY > 40);
+  addEventListener("scroll", onScroll); onScroll();
+  document.getElementById("burger").onclick = () => document.getElementById("menu").classList.toggle("open");
+  document.querySelectorAll("#menu a").forEach(a => a.onclick = () => document.getElementById("menu").classList.remove("open"));
+</script>
+</body>
+</html>
