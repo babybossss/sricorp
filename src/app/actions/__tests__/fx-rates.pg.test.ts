@@ -232,14 +232,15 @@ describe.skipIf(!pgAvailable)("จัดการอัตราแลกเป�
   });
 
   /**
-   * ช่องว่างฝั่ง DB ที่ **ต้องบอกเจ้าของ migration**: policy `fx_rates_write` เป็น `for all` และ trigger มีแค่ audit
-   * → ผู้ที่มี settings.manage ยิง UPDATE ค่าอัตราของแถวที่ถูกอ้างถึงแล้วผ่าน API ตรงๆ ได้ (FK ป้องกันแค่ DELETE/เปลี่ยนคีย์)
-   * หน้านี้ไม่มีเส้นทางแก้ค่า แต่ด่านจริงต้องอยู่ที่ DB · เทสต์นี้ mark ไว้ (เหมือน P0b ของยอดตั้งต้น) พอ DB ปิดช่องแล้วจะเขียวและต้องถอด `.fails`
+   * DB ปิดช่องแล้ว (20261025000015): แถวที่มีรายการอ้างถึงห้ามแก้ค่า/สกุล/วันที่/ประเภท · แถวที่ไม่มีใครใช้แก้ได้ · note แก้ได้ตลอด
+   * ตัดสินจาก query จริง ไม่ใช่ป้าย (เดิมเทสต์นี้ mark ไว้เป็น it.fails จนกว่า DB จะปิดช่อง)
    */
-  it.fails("F7 · [ช่องว่าง DB] UPDATE ค่าอัตราของแถวที่ถูกอ้างถึงแล้วผ่าน API ตรงๆ ต้องถูกปฏิเสธ (ตอนนี้ DB ยอม → ยอดบาท 365,000 ไม่ตรงอัตรา 40.00 ผลต่าง 35,000)", () => {
+  it("F7 · UPDATE ค่าอัตราของแถวที่ถูกอ้างถึงแล้วผ่าน API ตรงๆ ถูกปฏิเสธ (ถ้ายอม: ยอดบาท 365,000 ไม่ตรงอัตรา 40.00 ผลต่าง 35,000) · note แก้ได้", () => {
     const d1 = daysAgo(30);
     expect(() => db.as(U.mgmt, `update sri_os.fx_rates set thb_per_unit = 40.00 where currency = 'USD' and rate_date = '${d1}';`)).toThrow();
-    // ถ้าไม่ throw (ช่องว่างยังอยู่) บรรทัดฝั่ง fails จะเห็นว่าอัตราเปลี่ยนไปแล้ว
     expect(rateRows().find((r) => r.rate_date === d1)?.thb_per_unit).toBe(36.5);
+    // note แก้ได้ตลอด (ไม่กระทบยอดบาท)
+    db.as(U.mgmt, `update sri_os.fx_rates set note = 'Google Finance (ตรวจแล้ว)' where currency = 'USD' and rate_date = '${d1}';`);
+    expect(rateRows().find((r) => r.rate_date === d1)?.note).toBe("Google Finance (ตรวจแล้ว)");
   });
 });
