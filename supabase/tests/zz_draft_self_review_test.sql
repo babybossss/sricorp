@@ -1,27 +1,28 @@
 -- ============================================================
--- SRI OS · **คนอนุมัติต้องไม่ใช่คนคีย์** (C-2 · 20261025000018_draft_no_self_review.sql)
+-- SRI OS · **ผู้อนุมัติอนุมัติร่างของตัวเองได้ แต่ทุกใบถูกบันทึกไว้**
+--            (C-2 · 20261025000018 + **20261025000019 (คำสั่งลูกพี่ 25/10)**)
 --
--- **รูที่พิสูจน์** — policy `draft_review` ให้ทุกคนที่มี `ledger.approve`
--- UPDATE ร่างได้ทุกแถว **รวมร่างที่ตัวเองคีย์** → คนเดียวคีย์เอง อนุมัติเอง
--- ลงสมุดเอง และ **งบดุลยังดุลทุกใบ** จึงไม่มี invariant ไหนฟ้อง
+-- ลูกพี่ตัดสินแล้ว: "ระดับ management คีย์เองได้ อนุมัติของตัวเองได้ ·
+-- Manager ก็อนุมัติได้ คีย์เองได้" → โหมดปัจจุบันคือ `any_approver`
+--
+-- **"อนุญาต" ไม่เท่ากับ "ไม่บันทึก"** — ไฟล์นี้จึงพิสูจน์สองเรื่องคู่กัน
+--   (1) ทำได้จริง ไม่ต้องเขียนเหตุผล    (2) ทุกใบขึ้นรายงานให้ไล่ดูได้
 --
 -- **ทุกเคสรันเป็น role `authenticated`** ไม่ใช่ superuser
 --
 -- สิ่งที่พิสูจน์
---   S0 · โครงสร้าง: คอลัมน์ + CHECK + trigger (BEFORE UPDATE) + สวิตช์ใน settings + รายงาน
---   S1 · เส้นทางปกติ: พนักงานคีย์ → ผู้อนุมัติคนอื่นอนุมัติ → 1 ใบ · 50,000 (ขาบวก)
---   S2 · ผู้อนุมัติ (ไม่ใช่ super_admin) อนุมัติร่างที่ตัวเองคีย์ → **ปฏิเสธ**
---        สมุดยัง 1 ใบ · 50,000 (ไม่ใช่ 2 ใบ · 100,000)
---   S3 · ปฏิเสธร่างของตัวเองก็ไม่ได้ (ไม่ใช่ห้ามแต่ขาอนุมัติ)
---   S4 · ใส่เหตุผลแล้วก็ยังไม่ได้ ถ้าไม่ใช่ super_admin (เหตุผลไม่ใช่ override ของทุกคน)
---   S5 · super_admin อนุมัติร่างตัวเองได้ **เมื่อมีเหตุผล ≥ 10 ตัวอักษร** · ไม่มีเหตุผล/สั้น = ปฏิเสธ
---   S6 · เหตุผลที่บันทึกแล้ว **แก้/ล้างไม่ได้** (ร่องรอยที่ลบไม่ได้จริง)
---   S7 · รายงาน `fn_self_reviewed_drafts()` เห็นใบนั้นพร้อมเหตุผล · คนที่ไม่มี owner.view_all เรียกไม่ได้
---   S8 · ชื่อผู้ตัดสินปลอมไม่ได้ (ส่งชื่อคนอื่น = ปฏิเสธ · เว้นไว้ = ระบบเติมชื่อคนที่กดจริง)
---   S9 · ย้ายชื่อคนคีย์แล้วอนุมัติเองไม่ได้ (ทางหลบที่ง่ายที่สุด)
---   S10 · สวิตช์ `settings[approval.self_review] = never` ปิดข้อยกเว้นได้จริง
---   **SM · MUTATION** — ถอด trigger แล้ววัดรูเป็นตัวเลข: ผู้อนุมัติคีย์เอง-อนุมัติเอง
---        ลงสมุดได้อีก 50,000 โดย `reviewed_by = created_by` และ **ไม่มีเหตุผลบันทึกไว้เลย**
+--   S0 · โครงสร้าง + โหมดปัจจุบันคือ any_approver
+--   S1 · เส้นทางปกติ (พนักงานคีย์ · ผู้อนุมัติคนอื่นอนุมัติ) → ไม่ขึ้นรายงานอนุมัติตัวเอง
+--   S2 · **management คีย์เอง-อนุมัติเอง → ทำได้** ไม่ต้องมีเหตุผล · แต่ขึ้นรายงาน
+--   S3 · **manager คีย์เอง-อนุมัติเอง → ทำได้** (ลูกพี่ระบุชื่อระดับนี้ด้วย)
+--   S4 · ปฏิเสธร่างของตัวเองก็ทำได้ และก็ขึ้นรายงาน (ไม่ใช่เฉพาะขาอนุมัติ)
+--   S5 · เหตุผลเป็นช่อง **ไม่บังคับ** · ใส่แล้วถูกเก็บไว้ · S6 · แก้/ล้างทีหลังไม่ได้
+--   S7 · รายงาน: staff เรียกไม่ได้ · เห็นครบทุกใบที่คนคีย์ = คนตัดสิน
+--   **M1/M2/M3 · สวิตช์สามทางพลิกได้จริง** (never · super_admin_with_trail · any_approver)
+--   S8 · ลงชื่อคนอื่นเป็นผู้ตัดสินไม่ได้ · เว้นไว้ระบบเติมชื่อคนที่กดจริง
+--   S9 · ย้ายชื่อคนคีย์ไม่ได้
+--   **SM · MUTATION** — ถอดด่านแล้ววัดได้ว่า **ประวัติการอนุมัติโกหกได้** และ
+--        **รายงานตาบอด** (ย้ายชื่อคนคีย์ทิ้ง → ใบที่อนุมัติเองหายจากรายงาน)
 -- ============================================================
 
 \set ON_ERROR_STOP 1
@@ -29,13 +30,14 @@
 begin;
 
 create temporary table s_uid (label text primary key, id uuid not null default gen_random_uuid());
-insert into s_uid(label) values ('boss'), ('appA'), ('clerk');
+insert into s_uid(label) values ('boss'), ('appA'), ('mgrC'), ('clerk');
 
 insert into auth.users(id) select id from s_uid;
 insert into sri_os.app_users(id, email, display_name, role, is_active)
 select u.id, u.label || '@selfreview.local', u.label,
        case u.label when 'boss' then 'super_admin'
                     when 'appA' then 'management'
+                    when 'mgrC' then 'manager'
                     else 'staff' end, true
   from s_uid u;
 insert into sri_os.user_owner_access(user_id, owner_id)
@@ -126,6 +128,21 @@ language sql stable as $fn$
   select pg_temp.n_txn()::text || ' ใบ · ' || pg_temp.sum_5900()::text || ' บาท';
 $fn$;
 
+/** จำนวนใบในรายงาน "คนคีย์ = คนตัดสิน" (ต้องเรียกในฐานะคนที่มี owner.view_all) */
+create or replace function pg_temp.n_report() returns int
+language sql as $fn$ select count(*)::int from sri_os.fn_self_reviewed_drafts() $fn$;
+
+/** โหมดของสวิตช์ — เปลี่ยนด้วยสิทธิ์ settings.manage ของผู้ล็อกอินจริง */
+create or replace function pg_temp.set_mode(p_mode text) returns void
+language plpgsql as $fn$
+begin
+  update sri_os.settings set value = to_jsonb(p_mode) where key = 'approval.self_review';
+  if sri_os.fn_self_review_mode() <> p_mode then
+    raise exception 'FAIL: พลิกสวิตช์เป็น % ไม่สำเร็จ (อ่านได้ %)',
+      p_mode, sri_os.fn_self_review_mode();
+  end if;
+end $fn$;
+
 do $$
 declare s text := (select nspname from pg_namespace where oid = pg_my_temp_schema());
 begin
@@ -134,7 +151,7 @@ begin
 end $$;
 
 -- ============================================================
--- S0 · โครงสร้าง — ไล่จาก catalog จริง
+-- S0 · โครงสร้าง + โหมดปัจจุบัน
 -- ============================================================
 do $$
 declare v text;
@@ -142,11 +159,7 @@ begin
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'sri_os' and table_name = 'draft_entries'
                     and column_name = 'self_review_reason') then
-    raise exception 'FAIL: S0 — ไม่มีคอลัมน์ self_review_reason (migration ไม่ถูก apply?) เทสต์นี้จะไม่ได้ตรวจอะไร';
-  end if;
-  if not exists (select 1 from pg_constraint
-                  where conname = 'draft_entries_self_review_reason') then
-    raise exception 'FAIL: S0 — ไม่มี CHECK draft_entries_self_review_reason';
+    raise exception 'FAIL: S0 — ไม่มีคอลัมน์ self_review_reason (migration ไม่ถูก apply?)';
   end if;
   if not exists (select 1 from pg_trigger g
                   where g.tgrelid = 'sri_os.draft_entries'::regclass
@@ -154,15 +167,10 @@ begin
                     and (g.tgtype & 2) <> 0) then
     raise exception 'FAIL: S0 — ไม่มี trigger trg_draft_review_separation แบบ BEFORE';
   end if;
-  if not exists (select 1 from sri_os.settings where key = 'approval.self_review') then
-    raise exception 'FAIL: S0 — ไม่มีสวิตช์ settings[approval.self_review] (กฎเหล็กข้อ 5)';
-  end if;
-  if sri_os.fn_self_review_mode() <> 'super_admin_with_trail' then
-    raise exception 'FAIL: S0 — ค่าตั้งต้นของสวิตช์ต้องเป็น super_admin_with_trail แต่เป็น %',
+  if sri_os.fn_self_review_mode() <> 'any_approver' then
+    raise exception 'FAIL: S0 — โหมดปัจจุบันต้องเป็น any_approver (คำสั่งลูกพี่ 25/10) แต่เป็น %',
       sri_os.fn_self_review_mode();
   end if;
-
-  -- ผู้ใช้จริงต้องมีสิทธิ์พอที่จะ "ลองละเมิด" ได้ ไม่งั้นเคสอื่นเขียวด้วยเหตุผลผิด
   if not has_table_privilege('authenticated', 'sri_os.draft_entries', 'UPDATE') then
     raise exception 'FAIL: S0 — authenticated ไม่มีสิทธิ์ UPDATE draft_entries';
   end if;
@@ -170,157 +178,161 @@ begin
        'sri_os.fn_self_reviewed_drafts(date, date)'::regprocedure, 'execute') then
     raise exception 'FAIL: S0 — authenticated เรียกรายงานไม่ได้';
   end if;
-
-  -- ด่านต้องอ่านผู้ตัดสินจากผู้ล็อกอินจริง (D-115)
   v := pg_get_functiondef('sri_os.fn_assert_draft_review_separation()'::regprocedure);
   if v !~ 'auth\.uid\(\)' then
     raise exception 'FAIL: S0 — ด่านไม่ได้อ่าน auth.uid()';
   end if;
 
-  raise notice 'ok S0 · คอลัมน์ + CHECK + trigger BEFORE UPDATE + สวิตช์ใน settings + รายงาน · สิทธิ์ของ authenticated พอที่จะพิสูจน์ด่านได้';
+  raise notice 'ok S0 · คอลัมน์ + trigger BEFORE UPDATE + รายงาน · โหมดปัจจุบัน = any_approver · สิทธิ์ของ authenticated พอที่จะพิสูจน์ด่านได้';
 end $$;
 
 -- ============================================================
--- S1 · ขาบวก — พนักงานคีย์ · ผู้อนุมัติ "คนอื่น" อนุมัติ → ลงสมุดได้
---      (ถ้าขานี้ไม่ผ่าน เคสอื่นจะเขียวเพราะอนุมัติไม่ได้เลย ไม่ใช่เพราะด่านทำงาน)
+-- S1 · ขาบวกของเส้นทางปกติ — พนักงานคีย์ · ผู้อนุมัติ "คนอื่น" อนุมัติ
+--      ใบแบบนี้ **ไม่ใช่** การอนุมัติตัวเอง จึงต้องไม่ขึ้นรายงาน
 -- ============================================================
 do $$
-declare v_draft uuid; v_out jsonb;
+declare v_draft uuid; v_n int;
 begin
   set local role authenticated;
   v_draft := pg_temp.new_draft_as('clerk', 'S1 ร่างที่พนักงานคีย์ 50,000');
   perform pg_temp.login('appA');
 
-  v_out := sri_os.fn_approve_draft(v_draft, pg_temp.payload('S1 อนุมัติโดยคนอื่น'));
-  if (v_out ->> 'posted_txn_id') is null then
-    raise exception 'FAIL: S1 — ปากทางไม่คืนเลขใบ';
-  end if;
+  perform sri_os.fn_approve_draft(v_draft, pg_temp.payload('S1 อนุมัติโดยคนอื่น'));
   if pg_temp.n_txn() <> 1 or pg_temp.sum_5900() <> 50000 then
     raise exception 'FAIL: S1 — ต้องได้ 1 ใบ · 50,000 แต่ได้ %', pg_temp.book();
   end if;
   if (select reviewed_by from sri_os.draft_entries where id = v_draft) <> pg_temp.uid('appA') then
     raise exception 'FAIL: S1 — ผู้อนุมัติต้องถูกบันทึกเป็น appA';
   end if;
-  if (select self_review_reason from sri_os.draft_entries where id = v_draft) is not null then
-    raise exception 'FAIL: S1 — ใบที่คนอื่นอนุมัติต้องไม่มีเหตุผล "อนุมัติเอง" ติดอยู่';
+
+  perform pg_temp.login('boss');
+  select count(*)::int into v_n from sri_os.fn_self_reviewed_drafts() r
+   where r.draft_id = v_draft;
+  if v_n <> 0 then
+    raise exception 'FAIL: S1 — ใบที่คนอื่นอนุมัติต้องไม่ขึ้นรายงาน "อนุมัติตัวเอง"';
   end if;
 
   reset role;
-  raise notice 'ok S1 · พนักงานคีย์ → ผู้อนุมัติคนอื่นอนุมัติ → 1 ใบ · 50,000 (เส้นทางปกติยังทำได้)';
+  raise notice 'ok S1 · พนักงานคีย์ → ผู้อนุมัติคนอื่นอนุมัติ → 1 ใบ · 50,000 · ไม่ขึ้นรายงานอนุมัติตัวเอง';
 exception when others then
   reset role; raise;
 end $$;
 
 -- ============================================================
--- S2 + S3 + S4 · ผู้อนุมัติที่ไม่ใช่ super_admin แตะร่างของตัวเองไม่ได้เลย
+-- S2 + S3 + S4 · **คำสั่งลูกพี่ 25/10** — management และ manager
+--      คีย์เอง-อนุมัติเองได้ **ไม่ต้องมีเหตุผล** · และทุกใบขึ้นรายงาน
 -- ============================================================
 do $$
-declare v_draft uuid;
+declare d2 uuid; d3 uuid; d4 uuid; v_n int;
 begin
   set local role authenticated;
+
+  -- S2 · management
+  d2 := pg_temp.new_draft_as('appA', 'S2 ร่างที่ management คีย์เอง');
   perform pg_temp.login('appA');
-  v_draft := pg_temp.new_draft_as('appA', 'S2 ร่างที่ผู้อนุมัติคีย์เอง 50,000');
+  perform sri_os.fn_approve_draft(d2, pg_temp.payload('S2 อนุมัติร่างของตัวเอง'));
+  if pg_temp.n_txn() <> 2 or pg_temp.sum_5900() <> 100000 then
+    raise exception 'FAIL: S2 — management อนุมัติร่างตัวเองต้องลงสมุดได้ (ต้องเป็น 2 ใบ · 100,000) แต่ได้ %',
+      pg_temp.book();
+  end if;
+  if (select self_review_reason from sri_os.draft_entries where id = d2) is not null then
+    raise exception 'FAIL: S2 — ไม่ได้ใส่เหตุผล จึงต้องไม่มีเหตุผลงอกมาเอง';
+  end if;
+  if (select reviewed_by from sri_os.draft_entries where id = d2) <> pg_temp.uid('appA') then
+    raise exception 'FAIL: S2 — ผู้ตัดสินต้องเป็น appA';
+  end if;
 
-  -- S2 · อนุมัติเองผ่านปากทาง → ปฏิเสธ
-  perform pg_temp.must_fail_like('S2 ผู้อนุมัติอนุมัติร่างที่ตัวเองคีย์', format($q$
-    select sri_os.fn_approve_draft(%L, pg_temp.payload('S2 อนุมัติร่างตัวเอง')) $q$, v_draft),
-    'การแยกหน้าที่');
-
-  if pg_temp.n_txn() <> 1 or pg_temp.sum_5900() <> 50000 then
-    raise exception 'FAIL: S2 — สมุดต้องยังเป็น 1 ใบ · 50,000 แต่ได้ % (ถ้าได้ 2 ใบ · 100,000 คือรูที่เรามาปิด)',
+  -- S3 · manager (ลูกพี่ระบุระดับนี้ด้วย)
+  d3 := pg_temp.new_draft_as('mgrC', 'S3 ร่างที่ manager คีย์เอง');
+  perform pg_temp.login('mgrC');
+  perform sri_os.fn_approve_draft(d3, pg_temp.payload('S3 manager อนุมัติร่างของตัวเอง'));
+  -- **วัดผลด้วยสายตาของคนที่เห็นสมุดทั้งเล่ม** — `manager` ถูก RLS จำกัดให้เห็นเฉพาะ
+  -- รายการของทรัพย์ที่ตัวเองบริหาร (fn_can_read_txn) ถ้านับด้วยสายตาเขา ตัวเลขจะหายไป
+  -- เองโดยที่เงินไม่ได้หายไปไหน → เคสจะแดงด้วยเหตุผลผิด
+  perform pg_temp.login('boss');
+  if pg_temp.n_txn() <> 3 or pg_temp.sum_5900() <> 150000 then
+    raise exception 'FAIL: S3 — manager อนุมัติร่างตัวเองต้องลงสมุดได้ (3 ใบ · 150,000) แต่ได้ %',
       pg_temp.book();
   end if;
 
-  -- S3 · ปฏิเสธร่างของตัวเองก็ไม่ได้ (ปิดทั้งสองขา ไม่ใช่แค่ขาอนุมัติ)
-  perform pg_temp.must_fail_like('S3 ปฏิเสธร่างของตัวเอง', format($q$
-    update sri_os.draft_entries set status = 'rejected', reject_reason = 'ยอดไม่ตรง'
-     where id = %L $q$, v_draft),
-    'การแยกหน้าที่');
-
-  -- S4 · ใส่เหตุผลยาวๆ แล้วก็ยังไม่ได้ — เหตุผลไม่ใช่ปุ่ม override ของทุกคน
-  update sri_os.draft_entries
-     set self_review_reason = 'ด่วนมาก ลูกพี่สั่งทางโทรศัพท์ จึงอนุมัติเอง'
-   where id = v_draft;
-  perform pg_temp.must_fail_like('S4 ใส่เหตุผลแล้วอนุมัติเอง (ไม่ใช่ super_admin)', format($q$
-    select sri_os.fn_approve_draft(%L, pg_temp.payload('S4 อนุมัติร่างตัวเองพร้อมเหตุผล')) $q$,
-    v_draft), 'การแยกหน้าที่');
-
-  if (select status::text from sri_os.draft_entries where id = v_draft) <> 'pending' then
-    raise exception 'FAIL: S2-S4 — ร่างต้องยัง pending';
+  -- S4 · ปฏิเสธร่างของตัวเองก็ทำได้ (ไม่ใช่เฉพาะขาอนุมัติ) และไม่แตะสมุด
+  d4 := pg_temp.new_draft_as('appA', 'S4 ร่างที่ผู้คีย์ปฏิเสธเอง');
+  perform pg_temp.login('appA');
+  update sri_os.draft_entries set status = 'rejected', reject_reason = 'คีย์ผิดเอง'
+   where id = d4;
+  if (select status::text from sri_os.draft_entries where id = d4) <> 'rejected' then
+    raise exception 'FAIL: S4 — ปฏิเสธร่างของตัวเองต้องทำได้';
   end if;
-  if pg_temp.n_txn() <> 1 then
-    raise exception 'FAIL: S2-S4 — สมุดต้องยังมีใบเดียว แต่ได้ %', pg_temp.book();
+  if pg_temp.n_txn() <> 3 then
+    raise exception 'FAIL: S4 — การปฏิเสธต้องไม่แตะสมุด แต่ได้ %', pg_temp.book();
+  end if;
+
+  -- ทั้งสามใบต้องขึ้นรายงาน ("อนุญาต" ไม่เท่ากับ "ไม่บันทึก")
+  perform pg_temp.login('boss');
+  select count(*)::int into v_n from sri_os.fn_self_reviewed_drafts() r
+   where r.draft_id in (d2, d3, d4);
+  if v_n <> 3 then
+    raise exception 'FAIL: S2-S4 — รายงานต้องเห็นทั้ง 3 ใบที่คนคีย์ตัดสินเอง แต่เห็น % ใบ (รายงานที่ว่างเปล่าแย่กว่าไม่มีรายงาน เพราะทำให้เชื่อว่าไม่มี)',
+      v_n;
+  end if;
+  if exists (select 1 from sri_os.fn_self_reviewed_drafts() r
+              where r.draft_id = d2 and r.reason is not null) then
+    raise exception 'FAIL: S2-S4 — รายงานต้องเห็นใบที่ไม่มีเหตุผลด้วย (เหตุผลเป็นช่องไม่บังคับ)';
   end if;
 
   reset role;
-  raise notice 'ok S2-S4 · ผู้อนุมัติ (management) อนุมัติ/ปฏิเสธร่างที่ตัวเองคีย์ไม่ได้ · ใส่เหตุผลก็ไม่ช่วย · สมุดยัง 1 ใบ · 50,000';
+  raise notice 'ok S2-S4 · management และ manager คีย์เอง-อนุมัติเองได้ ไม่ต้องมีเหตุผล (3 ใบ · 150,000) · ปฏิเสธร่างตัวเองได้และไม่แตะสมุด · ทั้ง 3 ใบขึ้นรายงาน';
 exception when others then
   reset role; raise;
 end $$;
 
 -- ============================================================
--- S5 + S6 + S7 · ข้อยกเว้นของ super_admin — ทำได้ แต่ **ลบร่องรอยไม่ได้**
+-- S5 + S6 + S7 · เหตุผลเป็นช่อง **ไม่บังคับ** แต่ใส่แล้วลบไม่ได้ · และใครเห็นรายงาน
 -- ============================================================
 do $$
-declare v_draft uuid; v_out jsonb; v_rows int; v_reason text; v_others int; v_total int;
+declare v_draft uuid; v_rows int; v_reason text; v_others int; v_total int;
 begin
   set local role authenticated;
-  v_draft := pg_temp.new_draft_as('boss', 'S5 ร่างที่ลูกพี่คีย์เอง 50,000');
+  v_draft := pg_temp.new_draft_as('boss', 'S5 ร่างที่ลูกพี่คีย์เอง + ใส่เหตุผล');
   perform pg_temp.login('boss');
 
-  -- (ก) ไม่มีเหตุผล → ปฏิเสธ (ข้อยกเว้นไม่ใช่ "ผ่านฟรี")
-  perform pg_temp.must_fail_like('S5a super_admin อนุมัติร่างตัวเองโดยไม่มีเหตุผล', format($q$
-    select sri_os.fn_approve_draft(%L, pg_temp.payload('S5a ไม่มีเหตุผล')) $q$, v_draft),
-    'ต้องเขียนเหตุผลกำกับ');
-
-  -- (ข) เหตุผลสั้นเกินไป → ปฏิเสธ ("x" ไม่ใช่เหตุผล)
-  perform pg_temp.must_fail_like('S5b เหตุผลสั้นเกินไป', format($q$
+  -- เหตุผลสั้นเกินไปยังถูกปฏิเสธ (ถ้าจะใส่ ต้องเป็นเหตุผลจริง)
+  perform pg_temp.must_fail_like('S5a เหตุผลสั้นเกินไป', format($q$
     update sri_os.draft_entries set self_review_reason = 'x' where id = %L $q$, v_draft),
     'draft_entries_self_review_reason');
 
-  if pg_temp.n_txn() <> 1 then
-    raise exception 'FAIL: S5 — ยังไม่ควรมีใบใหม่ แต่ได้ %', pg_temp.book();
-  end if;
-
-  -- (ค) เหตุผลครบ → อนุมัติเองได้
   update sri_os.draft_entries
-     set self_review_reason = 'ผู้ดูแลระบบคนเดียวในระบบ ยังไม่มีผู้อนุมัติคนที่สอง'
+     set self_review_reason = 'ใบด่วน คีย์เองเพราะทีมบัญชียังไม่เข้า'
    where id = v_draft;
-  v_out := sri_os.fn_approve_draft(v_draft, pg_temp.payload('S5c อนุมัติเองพร้อมเหตุผล'));
+  perform sri_os.fn_approve_draft(v_draft, pg_temp.payload('S5 อนุมัติเองพร้อมเหตุผล'));
 
-  if pg_temp.n_txn() <> 2 or pg_temp.sum_5900() <> 100000 then
-    raise exception 'FAIL: S5c — ต้องได้ 2 ใบ · 100,000 แต่ได้ %', pg_temp.book();
+  if pg_temp.n_txn() <> 4 or pg_temp.sum_5900() <> 200000 then
+    raise exception 'FAIL: S5 — ต้องได้ 4 ใบ · 200,000 แต่ได้ %', pg_temp.book();
   end if;
   select self_review_reason into v_reason from sri_os.draft_entries where id = v_draft;
   if v_reason is null then
-    raise exception 'FAIL: S5c — เหตุผลต้องถูกบันทึกไว้บนแถวร่าง';
-  end if;
-  if (select reviewed_by from sri_os.draft_entries where id = v_draft) <> pg_temp.uid('boss') then
-    raise exception 'FAIL: S5c — ผู้ตัดสินต้องเป็น boss';
+    raise exception 'FAIL: S5 — เหตุผลที่ใส่ไว้ต้องถูกเก็บบนแถวร่าง';
   end if;
 
-  -- S6 · ร่องรอยลบไม่ได้: แถวที่ตัดสินแล้วเป็นแถวตาย (20261025000017)
+  -- S6 · ร่องรอยลบไม่ได้ (แถวที่ตัดสินแล้วเป็นแถวตาย · 20261025000017)
   perform pg_temp.must_fail_like('S6a ล้างเหตุผลทีหลัง', format($q$
     update sri_os.draft_entries set self_review_reason = null where id = %L $q$, v_draft),
     'แก้อะไรไม่ได้อีก');
-  perform pg_temp.must_fail_like('S6b แก้เหตุผลเป็นข้อความอื่น', format($q$
-    update sri_os.draft_entries set self_review_reason = 'เปลี่ยนเหตุผลย้อนหลัง'
-     where id = %L $q$, v_draft),
+  perform pg_temp.must_fail_like('S6b เปลี่ยนชื่อผู้ตัดสินย้อนหลัง', format($q$
+    update sri_os.draft_entries set reviewed_by = %L where id = %L $q$,
+    pg_temp.uid('appA'), v_draft),
     'แก้อะไรไม่ได้อีก');
-  -- ลบร่างทิ้งก็ไม่ได้ (ไม่มี policy DELETE ของ draft_entries → เงียบ 0 แถว ไม่ใช่สำเร็จ)
   delete from sri_os.draft_entries where id = v_draft;
   get diagnostics v_rows = row_count;
   if v_rows <> 0 then
     raise exception 'FAIL: S6c — ลบร่างที่ตัดสินแล้วได้ % แถว = ร่องรอยหายไปทั้งแถว', v_rows;
   end if;
 
-  -- S7 · รายงานต้องเห็นใบนี้พร้อมเหตุผล และบอกว่ามีผู้อนุมัติคนอื่นกี่คน
-  select count(*)::int into v_rows from sri_os.fn_self_reviewed_drafts();
-  if v_rows <> 1 then
-    raise exception 'FAIL: S7 — รายงานต้องเห็น 1 ใบ แต่เห็น % ใบ', v_rows;
+  -- S7 · รายงานเห็นครบ 4 ใบที่คนคีย์ตัดสินเอง (S2 · S3 · S4 · S5)
+  if pg_temp.n_report() <> 4 then
+    raise exception 'FAIL: S7 — รายงานต้องเห็น 4 ใบ แต่เห็น % ใบ', pg_temp.n_report();
   end if;
-  -- จำนวน "ผู้อนุมัติคนอื่น" ต้อง **ไม่นับตัวผู้ตัดสินเอง** → ต้องน้อยกว่ายอดรวมพอดี 1
-  -- (เทียบกับยอดรวมแทนการตรึงเลข เพราะไฟล์เทสต์อื่นทิ้งผู้ใช้ที่ commit ไว้ได้)
+  -- จำนวน "ผู้อนุมัติคนอื่น" ต้องไม่นับตัวผู้ตัดสินเอง → น้อยกว่ายอดรวมพอดี 1
   select r.other_approvers_now into v_others
     from sri_os.fn_self_reviewed_drafts() r where r.draft_id = v_draft;
   select count(*)::int into v_total
@@ -328,30 +340,90 @@ begin
     join sri_os.role_permissions rp on rp.role_key = u.role
    where rp.permission_key = 'ledger.approve' and u.is_active;
   if v_others <> v_total - 1 then
-    raise exception 'FAIL: S7 — รายงานบอกว่ามีผู้อนุมัติคนอื่น % คน แต่ในระบบมีผู้อนุมัติ % คน (ต้องเป็น %-1 คือไม่นับตัวผู้ตัดสินเอง)',
-      v_others, v_total, v_total;
-  end if;
-  if v_others < 1 then
-    raise exception 'FAIL: S7 — ต้องมีผู้อนุมัติคนอื่นอยู่จริงอย่างน้อย 1 คน (appA) ไม่งั้นเคสนี้วัดอะไรไม่ได้';
-  end if;
-  if (select r.reason from sri_os.fn_self_reviewed_drafts() r where r.draft_id = v_draft)
-     is distinct from v_reason then
-    raise exception 'FAIL: S7 — รายงานต้องแสดงเหตุผลเดียวกับที่บันทึกไว้';
+    raise exception 'FAIL: S7 — รายงานบอกผู้อนุมัติคนอื่น % คน แต่ในระบบมี % คน (ต้องไม่นับตัวผู้ตัดสินเอง)',
+      v_others, v_total;
   end if;
 
-  -- คนที่ไม่มี owner.view_all เรียกรายงานไม่ได้ (ผู้ถูกตรวจ ≠ ผู้คุมรายงาน)
+  -- staff เรียกรายงานไม่ได้ (ผู้ถูกตรวจ ≠ ผู้คุมรายงาน)
   perform pg_temp.login('clerk');
-  perform pg_temp.must_fail_like('S7b staff เรียกรายงานการอนุมัติตัวเอง',
+  perform pg_temp.must_fail_like('S7b staff เรียกรายงาน',
     'select * from sri_os.fn_self_reviewed_drafts()', 'owner.view_all');
 
   reset role;
-  raise notice 'ok S5-S7 · super_admin อนุมัติร่างตัวเองได้เมื่อมีเหตุผล (2 ใบ · 100,000) · ไม่มีเหตุผล/เหตุผลสั้น = ปฏิเสธ · เหตุผลแก้ไม่ได้ ลบร่างไม่ได้ · รายงานเห็นใบนั้นพร้อมจำนวนผู้อนุมัติคนอื่น (1 คน) · staff เรียกรายงานไม่ได้';
+  raise notice 'ok S5-S7 · เหตุผลไม่บังคับ แต่ถ้าใส่ต้องเป็นเหตุผลจริงและลบ/แก้ย้อนหลังไม่ได้ · รายงานเห็นครบ 4 ใบ · ไม่นับตัวผู้ตัดสินเองในจำนวนผู้อนุมัติคนอื่น · staff เรียกรายงานไม่ได้';
 exception when others then
   reset role; raise;
 end $$;
 
 -- ============================================================
--- S8 + S9 · ทางหลบที่ต้องปิดไปพร้อมกัน
+-- M1 + M2 + M3 · **สวิตช์สามทางต้องพลิกได้จริง** ไม่ใช่มีไว้เฉยๆ
+--      วันที่ลูกพี่มีทีมบัญชีหลายคนแล้วอยากเปิดด่านกลับ ต้องทำได้โดยไม่แก้โค้ด
+-- ============================================================
+do $$
+declare dA uuid; dB uuid; v_n0 int;
+begin
+  set local role authenticated;
+  -- วัดด้วยสายตาของคนที่เห็นสมุดทั้งเล่มเสมอ (ตัวเลขที่วัดด้วยสายตาคนที่เห็นไม่ครบ
+  -- จะ "หาย" เองโดยที่เงินไม่ได้หายไปไหน)
+  perform pg_temp.login('boss');
+  v_n0 := pg_temp.n_txn();
+  dA := pg_temp.new_draft_as('appA', 'M ร่างของ management');
+  dB := pg_temp.new_draft_as('boss', 'M ร่างของลูกพี่');
+
+  -- ---------- M1 · never = ห้ามทุกคน รวม super_admin ----------
+  perform pg_temp.login('boss');
+  perform pg_temp.set_mode('never');
+  perform pg_temp.must_fail_like('M1a super_admin อนุมัติเองตอนโหมด never', format($q$
+    select sri_os.fn_approve_draft(%L, pg_temp.payload('M1a ไม่ควรลงได้')) $q$, dB),
+    'ห้ามอนุมัติร่างของตัวเองทุกกรณี');
+  perform pg_temp.login('appA');
+  perform pg_temp.must_fail_like('M1b management อนุมัติเองตอนโหมด never', format($q$
+    select sri_os.fn_approve_draft(%L, pg_temp.payload('M1b ไม่ควรลงได้')) $q$, dA),
+    'ห้ามอนุมัติร่างของตัวเองทุกกรณี');
+
+  -- ---------- M2 · super_admin_with_trail = เฉพาะ super_admin + ต้องมีเหตุผล ----------
+  perform pg_temp.login('boss');
+  perform pg_temp.set_mode('super_admin_with_trail');
+  perform pg_temp.login('appA');
+  perform pg_temp.must_fail_like('M2a management อนุมัติเองตอนโหมด super_admin_with_trail', format($q$
+    select sri_os.fn_approve_draft(%L, pg_temp.payload('M2a ไม่ควรลงได้')) $q$, dA),
+    'มีเพียงผู้ดูแลระบบสูงสุด');
+  perform pg_temp.login('boss');
+  perform pg_temp.must_fail_like('M2b super_admin อนุมัติเองโดยไม่มีเหตุผล', format($q$
+    select sri_os.fn_approve_draft(%L, pg_temp.payload('M2b ไม่ควรลงได้')) $q$, dB),
+    'ต้องเขียนเหตุผลกำกับ');
+
+  if pg_temp.n_txn() <> v_n0 then
+    raise exception 'FAIL: M1-M2 — ทุกเคสถูกปฏิเสธ สมุดต้องไม่ขยับ แต่ได้ %', pg_temp.book();
+  end if;
+
+  update sri_os.draft_entries
+     set self_review_reason = 'โหมดนี้ต้องมีเหตุผล จึงเขียนกำกับไว้'
+   where id = dB;
+  perform sri_os.fn_approve_draft(dB, pg_temp.payload('M2c อนุมัติเองพร้อมเหตุผล'));
+  if pg_temp.n_txn() <> v_n0 + 1 then
+    raise exception 'FAIL: M2c — super_admin ที่มีเหตุผลต้องอนุมัติเองได้ในโหมดนี้';
+  end if;
+
+  -- ---------- M3 · กลับมาเป็น any_approver = ค่าปัจจุบันตามคำสั่งลูกพี่ ----------
+  perform pg_temp.login('boss');
+  perform pg_temp.set_mode('any_approver');
+  perform pg_temp.login('appA');
+  perform sri_os.fn_approve_draft(dA, pg_temp.payload('M3 อนุมัติเองในโหมดปัจจุบัน'));
+  if pg_temp.n_txn() <> v_n0 + 2 then
+    raise exception 'FAIL: M3 — โหมด any_approver ต้องให้ management อนุมัติร่างตัวเองได้ · ได้ %',
+      pg_temp.book();
+  end if;
+
+  reset role;
+  raise notice 'ok M1-M3 · สวิตช์พลิกได้จริงทั้งสามทาง: never ห้ามทุกคน (รวม super_admin) · super_admin_with_trail เฉพาะ super_admin + ต้องมีเหตุผล · any_approver ผู้อนุมัติทุกคนทำได้ — เปลี่ยนได้จากตาราง settings ไม่ต้องแก้โค้ด';
+exception when others then
+  reset role; raise;
+end $$;
+
+-- ============================================================
+-- S8 + S9 · **ของที่ห้ามอ่อนลงแม้จะอนุญาตให้อนุมัติร่างตัวเองแล้ว**
+--      ไม่เกี่ยวกับการแยกหน้าที่ — เป็นความซื่อของประวัติการอนุมัติ
 -- ============================================================
 do $$
 declare v_draft uuid; v_draft2 uuid;
@@ -360,7 +432,7 @@ begin
   v_draft := pg_temp.new_draft_as('clerk', 'S8 ร่างสำหรับทดสอบชื่อผู้ตัดสิน');
   perform pg_temp.login('appA');
 
-  -- S8a · ใส่ชื่อคนอื่นเป็นผู้ตัดสิน (อนุมัติเองแต่ลงชื่อเพื่อน) → ปฏิเสธ
+  -- S8a · ลงชื่อคนอื่นเป็นผู้ตัดสิน → ปฏิเสธ (ไม่งั้นประวัติการอนุมัติโกหกได้)
   perform pg_temp.must_fail_like('S8a ลงชื่อคนอื่นเป็นผู้ตัดสิน', format($q$
     update sri_os.draft_entries
        set status = 'rejected', reject_reason = 'ลองสวมชื่อคนอื่น', reviewed_by = %L
@@ -379,9 +451,9 @@ begin
     raise exception 'FAIL: S8b — reviewed_at ต้องถูกตั้งให้ตอนตัดสิน';
   end if;
 
-  -- S9 · ย้ายชื่อคนคีย์ไปให้คนอื่น แล้วอนุมัติเอง (ทางหลบที่ง่ายที่สุด) → ปฏิเสธ
+  -- S9 · ย้ายชื่อคนคีย์ → ปฏิเสธ (ถ้าย้ายได้ รายงานอนุมัติตัวเองก็หลบได้)
   v_draft2 := pg_temp.new_draft_as('appA', 'S9 ร่างที่ผู้อนุมัติคีย์เอง');
-  perform pg_temp.must_fail_like('S9 ย้ายชื่อคนคีย์แล้วอนุมัติเอง', format($q$
+  perform pg_temp.must_fail_like('S9 ย้ายชื่อคนคีย์แล้วตัดสิน', format($q$
     update sri_os.draft_entries
        set status = 'rejected', reject_reason = 'ย้ายชื่อคนคีย์', created_by = %L
      where id = %L $q$, pg_temp.uid('clerk'), v_draft2),
@@ -392,91 +464,68 @@ begin
   end if;
 
   reset role;
-  raise notice 'ok S8-S9 · ลงชื่อคนอื่นเป็นผู้ตัดสินไม่ได้ · เว้นไว้ระบบเติมชื่อคนที่กดจริง · ย้ายชื่อคนคีย์แล้วอนุมัติเองไม่ได้';
-exception when others then
-  reset role; raise;
-end $$;
-
--- ============================================================
--- S10 · สวิตช์ในตาราง config ต้องปิดข้อยกเว้นได้จริง
---       (วันที่มีผู้อนุมัติคนที่สอง ลูกพี่พลิกค่านี้แล้วจบ ไม่ต้องรอ migration)
--- ============================================================
-do $$
-declare v_draft uuid;
-begin
-  set local role authenticated;
-  v_draft := pg_temp.new_draft_as('boss', 'S10 ร่างของลูกพี่ตอนสวิตช์ปิด');
-  perform pg_temp.login('boss');
-
-  update sri_os.draft_entries
-     set self_review_reason = 'เหตุผลที่ยาวพอแต่สวิตช์ถูกปิดไว้แล้ว'
-   where id = v_draft;
-
-  -- `boss` มี settings.manage อยู่แล้ว → พลิกสวิตช์ได้ด้วยสิทธิ์ของตัวเอง
-  update sri_os.settings set value = '"never"'::jsonb where key = 'approval.self_review';
-  if sri_os.fn_self_review_mode() <> 'never' then
-    raise exception 'FAIL: S10 — พลิกสวิตช์แล้วแต่ fn_self_review_mode() ยังเป็น %',
-      sri_os.fn_self_review_mode();
-  end if;
-
-  perform pg_temp.must_fail_like('S10 super_admin อนุมัติเองตอนสวิตช์ปิด', format($q$
-    select sri_os.fn_approve_draft(%L, pg_temp.payload('S10 ไม่ควรลงได้')) $q$, v_draft),
-    'ห้ามอนุมัติร่างของตัวเองทุกกรณี');
-
-  if pg_temp.n_txn() <> 2 then
-    raise exception 'FAIL: S10 — สมุดต้องยังเป็น 2 ใบ แต่ได้ %', pg_temp.book();
-  end if;
-
-  update sri_os.settings set value = '"super_admin_with_trail"'::jsonb
-   where key = 'approval.self_review';
-
-  reset role;
-  raise notice 'ok S10 · พลิก settings[approval.self_review] = never แล้วแม้ super_admin ก็อนุมัติร่างตัวเองไม่ได้ (สมุดยัง 2 ใบ)';
+  raise notice 'ok S8-S9 · ลงชื่อคนอื่นเป็นผู้ตัดสินไม่ได้ · เว้นไว้ระบบเติมชื่อคนที่กดจริง · ย้ายชื่อคนคีย์ไม่ได้ (ข้อนี้ไม่อ่อนลงแม้โหมดจะอนุญาตให้อนุมัติร่างตัวเอง)';
 exception when others then
   reset role; raise;
 end $$;
 
 -- ============================================================
 -- SM · **MUTATION** — ถอดด่านแล้ววัดรูเป็นตัวเลข
---      ถ้าไม่มี trigger: ผู้อนุมัติคีย์เอง-อนุมัติเอง-ลงสมุดเองได้ทันที
---      โดย `reviewed_by = created_by` และ **ไม่มีเหตุผลบันทึกไว้เลย** (ไม่มีอะไรฟ้อง)
+--      สิ่งที่หายไปไม่ใช่ "การแยกหน้าที่" (ลูกพี่ยกเลิกเองแล้ว) แต่คือ
+--      **ความซื่อของประวัติ**: ชื่อผู้อนุมัติปลอมได้ · ชื่อคนคีย์ย้ายได้
+--      → และรายงาน "ใครอนุมัติร่างตัวเอง" **ตาบอดทันที**
 -- ============================================================
 do $$
-declare v_draft uuid; v_before numeric; v_reason text; v_n int;
+declare d_fake uuid; d_hide uuid; v_before int; v_after int;
 begin
-  v_before := pg_temp.sum_5900();
+  set local role authenticated;
+  perform pg_temp.login('boss');
+  v_before := pg_temp.n_report();
+  reset role;
+
   drop trigger trg_draft_review_separation on sri_os.draft_entries;
 
   set local role authenticated;
-  v_draft := pg_temp.new_draft_as('appA', 'SM ร่างที่ผู้อนุมัติคีย์เองตอนด่านถูกถอด');
+  d_fake := pg_temp.new_draft_as('clerk', 'SM ร่างที่จะถูกลงชื่อผู้อนุมัติปลอม');
+  d_hide := pg_temp.new_draft_as('appA', 'SM ร่างที่ผู้อนุมัติคีย์เองแล้วย้ายชื่อคนคีย์ทิ้ง');
   perform pg_temp.login('appA');
-  perform sri_os.fn_approve_draft(v_draft, pg_temp.payload('SM อนุมัติเองตอนด่านถูกถอด'));
+
+  -- (ก) ประวัติโกหก: appA กดเอง แต่บันทึกว่า boss เป็นผู้อนุมัติ
+  update sri_os.draft_entries
+     set status = 'rejected', reject_reason = 'ปลอมชื่อผู้อนุมัติ',
+         reviewed_by = pg_temp.uid('boss'), reviewed_at = now()
+   where id = d_fake;
+  if (select reviewed_by from sri_os.draft_entries where id = d_fake) <> pg_temp.uid('boss') then
+    raise exception 'FAIL: SM(ก) — ถอดด่านแล้วต้องปลอมชื่อผู้อนุมัติได้ (ถ้าไม่ได้ เคส S8 เขียวเพราะด่านอื่น)';
+  end if;
+
+  -- (ข) รายงานตาบอด: appA คีย์เอง-ตัดสินเอง แต่ย้ายชื่อคนคีย์ไปให้ clerk ในคำสั่งเดียว
+  update sri_os.draft_entries
+     set status = 'rejected', reject_reason = 'ย้ายชื่อคนคีย์ทิ้ง',
+         created_by = pg_temp.uid('clerk'),
+         reviewed_by = pg_temp.uid('appA'), reviewed_at = now()
+   where id = d_hide;
+
+  perform pg_temp.login('boss');
+  v_after := pg_temp.n_report();
   reset role;
 
-  if pg_temp.sum_5900() <> v_before + 50000 then
-    raise exception 'FAIL: SM — ถอดด่านแล้วต้องลงสมุดได้อีก 50,000 (ถ้าไม่ได้ แปลว่าเคสอื่นเขียวเพราะด่านอื่น ไม่ใช่ด่านนี้) · ได้ %',
-      pg_temp.book();
-  end if;
-  select self_review_reason into v_reason from sri_os.draft_entries where id = v_draft;
-  if v_reason is not null then
-    raise exception 'FAIL: SM — ไม่ควรมีเหตุผลติดมาเอง';
-  end if;
-  select count(*)::int into v_n from sri_os.draft_entries
-   where id = v_draft and reviewed_by = created_by;
-  if v_n <> 1 then
-    raise exception 'FAIL: SM — ใบนี้ควรมี reviewed_by = created_by';
+  if v_after <> v_before then
+    raise exception 'FAIL: SM(ข) — ใบที่ผู้อนุมัติคีย์เอง-ตัดสินเอง ควร **หายไปจากรายงาน** หลังย้ายชื่อคนคีย์ (ก่อน % ใบ หลัง % ใบ)',
+      v_before, v_after;
   end if;
 
-  raise notice 'ok SM (MUTATION) · ไม่มี trigger: ผู้อนุมัติคีย์เอง-อนุมัติเอง ลงสมุดได้อีก **50,000 บาท** โดย reviewed_by = created_by และไม่มีเหตุผลบันทึกไว้เลย → รายงานก็ไม่เห็น (ร่องรอยเดียวที่เหลือคือ audit_log ซึ่งไม่มีใครตั้งให้ไล่ดู) · ด่านจริงคือ trigger ไม่ใช่ธงบนหน้าจอ';
+  raise notice 'ok SM (MUTATION) · ไม่มี trigger: (ก) ผู้ที่กดจริงคือ appA แต่สมุดบันทึกว่า **boss อนุมัติ** = ประวัติการอนุมัติโกหกได้ · (ข) ย้ายชื่อคนคีย์ไปให้คนอื่นในคำสั่งเดียวกับการตัดสิน → ใบที่อนุมัติเอง **หายจากรายงาน** (รายงานยัง % ใบเท่าเดิม) = อนุญาตแล้วแต่ยังตรวจย้อนได้ ต้องมีด่านนี้',
+    v_after;
 exception when others then
   reset role; raise;
 end $$;
 
+rollback;
+
 -- ============================================================
 -- SMb · สภาพหลัง mutation ต้องกลับมาครบ (ถ้าไม่กลับ เทสต์ไฟล์อื่นจะเขียวผิด)
 -- ============================================================
-rollback;
-
 do $$
 begin
   if not exists (select 1 from pg_trigger g
@@ -484,8 +533,9 @@ begin
                     and g.tgname = 'trg_draft_review_separation' and not g.tgisinternal) then
     raise exception 'FAIL: SMb — trigger ไม่กลับมาหลัง rollback';
   end if;
-  if sri_os.fn_self_review_mode() <> 'super_admin_with_trail' then
-    raise exception 'FAIL: SMb — สวิตช์ไม่กลับมาเป็นค่าตั้งต้นหลัง rollback';
+  if sri_os.fn_self_review_mode() <> 'any_approver' then
+    raise exception 'FAIL: SMb — สวิตช์ไม่กลับมาเป็น any_approver หลัง rollback (ได้ %)',
+      sri_os.fn_self_review_mode();
   end if;
   raise notice 'ok SMb · trigger และสวิตช์กลับมาครบหลัง rollback';
 end $$;

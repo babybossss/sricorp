@@ -6,9 +6,10 @@
 --
 -- **D2 เคยบันทึกว่าเป็นช่องโหว่ ตอนนี้ปิดแล้ว** (20261025000017) ข้อนี้จึงกลับด้าน:
 -- จากเดิมยืนยันว่า "ทำได้" เป็นยืนยันว่า "ถูกปฏิเสธ"
--- **D1 ยังเป็นช่องโหว่จริง** — ผู้อนุมัติปิดร่างที่ตัวเองสร้างได้ · C-2 กำลังปิดอยู่
--- ข้อนี้ตั้งใจยืนยันสภาพปัจจุบัน ดังนั้น **เมื่อ C-2 เสร็จ ข้อนี้จะแดง** ซึ่งคือสัญญาณให้มากลับด้าน
--- ไม่ใช่ความผิดพลาด (แพทเทิร์นเดียวกับ `it.fails` ที่เราใช้ฝั่ง TS)
+-- **D1 ตัดสินแล้ว (ลูกพี่ 25/10)**: ผู้อนุมัติปิดร่างที่ตัวเองคีย์ **ได้**
+-- ("ระดับ management คีย์เองได้ อนุมัติของตัวเองได้ · Manager ก็อนุมัติได้ คีย์เองได้")
+-- จึงไม่ใช่ช่องโหว่อีกต่อไป แต่ยัง **ต้องถูกบันทึก** → ข้อนี้ตรวจทั้งสองอย่างคู่กัน
+-- (กลไกสวิตช์สามโหมดอยู่ที่ 20261025000018 + 20261025000019)
 -- ============================================================
 begin;
 create temporary table t_uid (label text primary key, id uuid not null default gen_random_uuid());
@@ -89,30 +90,28 @@ select '00000000-0000-0000-0000-0000000d0003', id, 'inc.rent', date '2026-09-11'
   from sri_os.owners where code = 'THANAKORN';
 set local role authenticated;
 select pg_temp.login('mgmt');
--- **D1 กลับด้านแล้ว** (20261025000018 · C-2): ผู้อนุมัติปิดร่างที่ตัวเองคีย์ไม่ได้
--- `mgmt` เป็นระดับ management ไม่ใช่ super_admin → **ห้ามเด็ดขาด** ไม่มีทางใส่เหตุผลแล้วผ่าน
--- (ข้อยกเว้นของ super_admin ที่ต้องมีเหตุผลกำกับ ทดสอบที่ zz_draft_self_review_test.sql)
+-- **D1 (ปรับตามคำสั่งลูกพี่ 25/10)** — ผู้อนุมัติปิดร่างที่ตัวเองคีย์ **ได้**
+-- โหมดปัจจุบันคือ `any_approver` (settings[approval.self_review] · 20261025000019)
+-- แต่ "อนุญาต" ไม่เท่ากับ "ไม่บันทึก" → ใบนั้นต้องขึ้นรายงาน fn_self_reviewed_drafts()
+-- (สามโหมดของสวิตช์ และของที่ยังห้ามทุกโหมด ทดสอบที่ zz_draft_self_review_test.sql)
 do $d1$
-declare v_refused boolean := false; v_msg text;
+declare n bigint;
 begin
-  begin
-    update sri_os.draft_entries
-       set status = 'rejected', reject_reason = 'x',
-           reviewed_by = pg_temp.uid('mgmt'), reviewed_at = now()
-     where id = '00000000-0000-0000-0000-0000000d0003';
-  exception when others then
-    v_refused := true;
-    get stacked diagnostics v_msg = message_text;
-  end;
-  if not v_refused then
-    raise exception 'FAIL D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ได้ — การแยกหน้าที่หลุดทั้งชั้น (คนเดียวคีย์เอง อนุมัติเอง ลงสมุดเอง)';
+  update sri_os.draft_entries
+     set status = 'rejected', reject_reason = 'x',
+         reviewed_by = pg_temp.uid('mgmt'), reviewed_at = now()
+   where id = '00000000-0000-0000-0000-0000000d0003';
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'FAIL D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ไม่ได้ (% แถว) — ลูกพี่สั่งเองว่าต้องทำได้', n;
   end if;
-  if (select status::text from sri_os.draft_entries
-       where id = '00000000-0000-0000-0000-0000000d0003') <> 'pending' then
-    raise exception 'FAIL D1b · ร่างต้องยัง pending หลังถูกปฏิเสธ';
+  if not exists (select 1 from sri_os.fn_self_reviewed_drafts() r
+                  where r.draft_id = '00000000-0000-0000-0000-0000000d0003') then
+    raise exception 'FAIL D1b · ใบที่คนคีย์ตัดสินเองต้องขึ้นรายงานให้ไล่ดูได้ — อนุญาตแล้วไม่ได้แปลว่าเลิกบันทึก';
   end if;
-  raise notice 'ok D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ไม่ได้ (%)', left(v_msg, 80);
+  raise notice 'ok D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ได้ (โหมด any_approver) และใบนั้นขึ้นรายงานการอนุมัติตัวเอง';
 end $d1$;
+
 -- D2 ต้องใช้ร่างใหม่ที่ยัง pending ไม่ใช่ร่างที่ D1 เพิ่งปฏิเสธไป
 -- (ร่างนี้ `mgmt` คีย์เองเหมือนกัน แต่ `trg_draft_post_once` ยิงก่อน `trg_draft_review_separation`
 --  ตามลำดับชื่อ → ข้อความที่ได้ยังเป็นด่าน "ต้องมีใบในสมุด" ซึ่งเป็นสิ่งที่ข้อนี้วัด)
