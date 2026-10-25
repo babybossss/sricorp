@@ -11,7 +11,7 @@ import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogFooter, DialogPrimitive } from "@/components/ui/dialog";
 import { isoToDmy, money, todayDmy } from "@/lib/format";
-import type { PendingCashRow } from "@/lib/mock/ledger";
+import type { PendingCashRow } from "@/lib/db/pending-cash";
 import { useApp } from "@/lib/store";
 import { useReference, useResolver } from "@/components/reference/reference-provider";
 import { bankChoices, bankDirectionLabel } from "@/components/form/bank-field";

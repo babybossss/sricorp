@@ -1,5 +1,4 @@
 import type { TxTypeKey } from "@/lib/rules/tx-rules";
-import type { PostedClearing } from "@/lib/ledger/types";
 
 /**
  * ไฟล์หลักฐานในข้อมูลจำลอง — ต้องเป็น **path ของไฟล์ใน Storage** เหมือนของจริง
@@ -188,47 +187,9 @@ export const APPROVALS: Approval[] = [
   { id: "a7", typeKey: "income", subCode: "inc.interest_srr", detail: "ดอกเบี้ยขายฝาก งวด 9", source: "ตารางงวด · ทาวน์โฮมตัวอย่าง B", ownerId: "corp", amount: 36000, by: "ระบบ", date: "16/09/2026", assetId: "th_b", contactId: "c2", notYetPaid: true, bankAccountId: "b1", attachments: [mockEvidenceRef(7)] },
 ];
 
-/**
- * รายการค้างรับ-ค้างจ่ายที่รอยืนยันว่าเงินเคลื่อนจริง
- *
- * ขั้นยืนยันเป็นขั้นที่ทำให้งบกระแสเงินสดวิ่ง จึงต้องรู้บัญชีเสมอ — รายการที่คีย์ตอนยังไม่มีขาเงินสด
- * ไม่มีบัญชีมาด้วย (`bankAccountId` ว่าง) ต้องให้เลือกตอนยืนยัน
- * `ownerId` ใช้กรองตัวเลือก: เงินของคนหนึ่งจะไปโผล่ในบัญชีของอีกคนไม่ได้
- *
- * **ข้อมูลที่กติกาใช้ตัดสินต้องเดินทางมากับตัวรายการ** (เหตุผลเดียวกับ `Approval.notYetPaid` /
- * `bankAccountId` / `attachments`) — ไม่ใช่ให้ตัวยืนยันเดาจากชื่อรายการหรือจากข้อความที่แสดง:
- * - `typeKey` / `subCode`  ตารางกฎใช้หาบัญชีพักและทางล้าง · เดาผิดคือล้างผิดบัญชี
- * - `accruedAmount`        ยอดที่ตั้งค้างไว้ตอนต้นทาง (บวกเสมอ) ทิศทางรับ/จ่ายอ่านจากตารางกฎ ไม่เก็บเครื่องหมายซ้ำ
- * - `postedClearings`      ประวัติการยืนยันที่ post แล้ว · engine ใช้กันยืนยันซ้ำและล้างเกิน
- *                          ห้ามให้หน้าจอสรุปเป็น "ยอดที่เคยล้าง" ส่งไปเอง ถ้าละไว้ engine ต้องปฏิเสธ ไม่ใช่เดาว่า []
- * - `attachments`          ฝั่ง `corporate_strict` กติกาของ `buildClearing()` ใช้ตัดสินว่ายืนยันได้ไหม
- *                          ไม่มีฟิลด์นี้ทุกรายการของนิติบุคคลจะถูกยืนยันโดยไม่มีหลักฐาน = override กติกาที่ห้าม override
- *                          ฝั่งบุคคลเว้นว่างได้ — ใครบังคับหรือไม่ engine เป็นคนตัดสิน
- * - `assetId` / `contactId` บัญชีย่อยรายทรัพย์และกติกาคู่ค้าของนิติบุคคล
- */
-export type PendingCashRow = {
-  id: string;
-  name: string;
-  sub: string;
-  ownerId: string;
-  due: string;
-  typeKey: TxTypeKey;
-  subCode: string;
-  accruedAmount: number;
-  postedClearings: PostedClearing[];
-  assetId?: string;
-  contactId?: string;
-  /**
-   * รหัสบัญชีที่เงินเข้า-ออก — ไม่ใช่ชื่อ · ว่างได้เฉพาะรายการที่ยังไม่เคยระบุบัญชี (ต้องเลือกตอนยืนยัน)
-   * ถ้าไม่ว่าง ใช้ค่านี้เสมอ ไม่ให้ช่องเลือกบัญชีทับ
-   */
-  bankAccountId?: string;
-  attachments?: string[];
-  /** ค่าเริ่มต้นของช่องกรอก — ผู้ใช้แก้ได้ */
-  actual: string;
-  date: string;
-  checked?: boolean;
-};
+import type { PendingCashRow } from "@/lib/db/pending-cash";
+/** type อยู่ที่ `lib/db/pending-cash.ts` แล้ว (ไม่ใช่ของจำลอง) — re-export ไว้ให้เทสต์เดิมที่ import จากที่นี่ */
+export type { PendingCashRow };
 
 export const UNASSIGNED_CASH_ROWS: PendingCashRow[] = [
   { id: "cu1", name: "ค่าน้ำ-ไฟส่วนกลาง", sub: "คอนโดตัวอย่าง A · ตั้งค้างจ่ายไว้", ownerId: "corp", typeKey: "expense", subCode: "exp.common", accruedAmount: 8600, postedClearings: [], assetId: "rent2", contactId: "c2", attachments: [mockEvidenceRef(8)], due: "30/09/2026", actual: "8,600.00", date: "30/09/2026" },

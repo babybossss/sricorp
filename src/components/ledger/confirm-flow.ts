@@ -29,7 +29,7 @@ import {
 import { coa, isCashAccount } from "@/lib/rules/coa";
 import { accrualCheck, clearingSubsFor, findSub, type CashDirection } from "@/lib/rules/tx-rules";
 import { money, parseAmountOrNull, signedMoney } from "@/lib/format";
-import type { PendingCashRow } from "@/lib/mock/ledger";
+import type { PendingCashRow } from "@/lib/db/pending-cash";
 
 /** สิ่งที่ผู้ใช้กรอกต่อแถว — ทุกช่องเป็นข้อความดิบ ให้ engine เป็นคนตัดสินว่าใช้ได้ไหม */
 export type RowDraft = {

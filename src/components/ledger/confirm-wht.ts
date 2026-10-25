@@ -11,7 +11,7 @@ import { parseAmountOrNull } from "@/lib/format";
 import { buildPosting } from "@/lib/ledger/posting";
 import { previewPosting } from "@/lib/ledger/preview";
 import { PostingError, type LedgerResolver } from "@/lib/ledger/types";
-import type { PendingCashRow } from "@/lib/mock/ledger";
+import type { PendingCashRow } from "@/lib/db/pending-cash";
 import type { WhtDraft } from "@/components/form/wht-value";
 import { checkRow, clearingInputOf, type RowCheck, type RowDraft } from "./confirm-flow";
 
