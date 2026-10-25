@@ -22,6 +22,8 @@ import { clearingRefFor } from "@/lib/db/pending-accruals";
 import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
 import { fxInputFor, fxKindOf, type FxChoice } from "@/lib/db/fx-input";
 import { readFxContext } from "@/lib/db/fx-context-server";
+import { disposalFor } from "@/lib/db/disposal-context";
+import { readDisposalContext } from "@/lib/db/disposal-context-server";
 
 /**
  * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
@@ -165,6 +167,26 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
     if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
     // `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับด้วยค่าที่คำนวณ) — ถ้าสมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
     input = { ...input, ...built.patch };
+  }
+
+  // ---- ขายทรัพย์: ต้นทุน · ค่ารีโนเวทสะสม · ส่วนเกินทุนที่ค้าง อ่านจากสมุดสด (ผู้ใช้กรอกได้แค่ราคาขายกับค่าใช้จ่ายในการขาย) ----
+  {
+    const sold = findSub(input.subCode)?.sub;
+    if (sold?.requires?.includes("capitalGain")) {
+      if (!input.assetId) return fail(`หมวด "${sold.label}" ต้องเลือกทรัพย์ที่ขาย — ระบบอ่านต้นทุนจากสมุดของทรัพย์ชิ้นนั้น ไม่รับต้นทุนที่พิมพ์เอง · ยังไม่ได้บันทึกอะไร`);
+      let saleDb;
+      try {
+        saleDb = await createClient();
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : String(e));
+      }
+      const read = await readDisposalContext(saleDb, refState.ref, { ownerId: input.ownerId, assetId: input.assetId });
+      if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+      // เอาเฉพาะราคาขายกับค่าใช้จ่ายในการขายจากผู้ใช้ — ต้นทุน/รีโนเวท/ส่วนเกินทุนที่ผู้เรียกส่งมาถูกทิ้งทั้งหมด
+      const built = disposalFor(read.ctx, { salePrice: input.disposal?.salePrice, sellingCosts: input.disposal?.sellingCosts });
+      if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
+      input = { ...input, disposal: built.disposal };
+    }
   }
 
   // ---- engine ตัวจริง ----

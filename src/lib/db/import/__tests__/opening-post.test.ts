@@ -25,25 +25,39 @@ const bad = (p: ParsedOpening, e: PrepareEnv = env()) => {
 const owner = (r: ReturnType<typeof ok>, id: string) => r.owners.find((o) => o.ownerId === id)!;
 
 describe("ตารางเทียบรหัสบัญชี → หมวดยอดยกมา (อ่านจากตารางกฎ)", () => {
-  it("ตรงกับตารางที่เจ้าของตารางกฎส่งมา 16 รหัส — ไม่มีรหัสเพิ่มหรือขาด", () => {
+  it("ตรงกับตารางกฎ 23 รหัส (ทุกบัญชีงบดุลยกเว้นส่วนของเจ้าของ 3200/3300/3400/3410) — ไม่มีรหัสเพิ่มหรือขาด", () => {
     const expected: Record<string, string> = {
-      "1100": "opn.cash", "1200": "opn.receivable_rent", "1210": "opn.receivable_interest", "1300": "opn.loan_principal",
+      "1100": "opn.cash", "1200": "opn.receivable_rent", "1210": "opn.receivable_interest", "1220": "opn.receivable_other",
+      "1290": "opn.allowance", "1300": "opn.loan_principal", "1310": "opn.intercompany_receivable",
       "1400": "opn.srr_principal", "1410": "opn.mortgage_principal", "1500": "opn.property", "1510": "opn.renovation",
-      "1600": "opn.deposit_paid", "1700": "opn.securities", "1720": "opn.gold_alt", "2100": "opn.payable",
-      "2300": "opn.loan_director", "2400": "opn.loan_other", "2410": "opn.loan_bank", "3100": "opn.capital",
+      "1600": "opn.deposit_paid", "1700": "opn.securities", "1710": "opn.related_investment", "1720": "opn.gold_alt",
+      "1800": "opn.wht_credit", "2100": "opn.payable", "2200": "opn.tenant_deposit", "2300": "opn.loan_director",
+      "2310": "opn.intercompany_payable", "2400": "opn.loan_other", "2410": "opn.loan_bank", "3100": "opn.capital",
     };
     expect(Object.fromEntries([...openingSubByAccount()].map(([k, v]) => [k, v.code]))).toEqual(expected);
   });
 });
 
 describe("prepareOpeningPosting · ประกอบรายการผ่าน buildPosting", () => {
-  it("รหัสบัญชีที่ตารางกฎไม่มีหมวดยอดยกมา (1310/2310 ในไฟล์ตัวอย่าง) → ปฏิเสธ ไม่ข้ามเงียบๆ ไม่ปัดเข้าบัญชีอื่น", () => {
-    const parsed = parse(loadFixture()); // ไฟล์เดิมมี 1310 ของธนากร และ 2310 ของสุธี
+  it("รหัสบัญชีที่ตารางกฎไม่มีหมวดยอดยกมา → ปฏิเสธ ไม่ข้ามเงียบๆ ไม่ปัดเข้าบัญชีอื่น", () => {
+    // 1310/2310 มีหมวดแล้ว (opn.intercompany_*) · เหลือแต่บัญชีส่วนของเจ้าของ 3400/3410 ที่ไม่มี → ใส่เข้าไปตรงๆ (ตัวอ่านไฟล์กันไว้ก่อนแล้ว จึงต้องแก้หลังอ่าน)
+    const parsed = parse();
+    const swap = (ownerName: string, from: string, to: string) => {
+      const j = parsed.journals.find((x) => x.ownerName === ownerName)!;
+      const line = j.lines.find((l) => l.coaCode === from)!;
+      line.coaCode = to;
+    };
+    swap("ธนากร", "1200", "3400");
+    swap("สุธี", "1100", "3410");
     const problems = bad(parsed);
-    const tk = problems.filter((p) => p.ownerName === "ธนากร");
-    const st = problems.filter((p) => p.ownerName === "สุธี");
-    expect(tk.some((p) => /1310.*ยังไม่มีหมวด "ยอดยกมา"/.test(p.message) && /100,000/.test(p.message))).toBe(true);
-    expect(st.some((p) => /2310.*ยังไม่มีหมวด "ยอดยกมา"/.test(p.message))).toBe(true);
+    expect(problems.some((p) => p.ownerName === "ธนากร" && /3400.*ยังไม่มีหมวด "ยอดยกมา"/.test(p.message) && /20,000/.test(p.message))).toBe(true);
+    expect(problems.some((p) => p.ownerName === "สุธี" && /3410.*ยังไม่มีหมวด "ยอดยกมา"/.test(p.message))).toBe(true);
+  });
+
+  it("ไฟล์ตัวอย่างเดิม (มี 1310 ของธนากร · 2310 ของสุธี) ลงได้ · ได้หมวดระหว่างกัน ไม่ถูกข้าม", () => {
+    const r = ok(parse(loadFixture()));
+    expect(owner(r, "o-thanakorn").payload.entries.map((e) => e.txn_type_code)).toContain("opn.intercompany_receivable");
+    expect(owner(r, "o-suthee").payload.entries.map((e) => e.txn_type_code)).toContain("opn.intercompany_payable");
   });
 
   it("ไฟล์ที่ลงได้: ธนากร 9 ใบ · ทุกใบมาจาก engine · ผูกทรัพย์ต่อใบ · ทุกใบสมดุล · source = import", () => {

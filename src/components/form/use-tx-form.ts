@@ -24,6 +24,8 @@ import { listOpenSources, type OpenSource } from "@/app/actions/open-sources";
 import { accrualReductionsOf } from "@/lib/db/clearing-link";
 import { notWiredReason } from "@/lib/db/post-entry";
 import { loadFxContext } from "@/app/actions/fx-context";
+import { loadDisposalContext } from "@/app/actions/disposal-context";
+import { disposalFor, type DisposalContext } from "@/lib/db/disposal-context";
 import type { FxAccountContext } from "@/lib/db/fx-context";
 import { fxInputFor, fxKindOf } from "@/lib/db/fx-input";
 import { EMPTY_FX, fxChoiceOf, type FxDraft } from "./fx-value";
@@ -35,7 +37,6 @@ import {
   EMPTY_DISPOSAL,
   EMPTY_REPAYMENT,
   isManualSplit,
-  signedUnrealized,
   type DisposalValue,
   type RepaymentValue,
 } from "./disposal-panel";
@@ -285,6 +286,45 @@ export function useTxForm() {
   const whtEligible = !!sub && whtCheck(sub).ok && moneyMoved;
   const whtOn = whtEligible && draft.wht.on;
 
+  /**
+   * ขายทรัพย์ — ต้นทุนทั้งก้อน ค่ารีโนเวทสะสม และส่วนเกินทุนที่ค้างอยู่ **อ่านจากสมุด** ผ่าน server action (ผู้ใช้ไม่ได้กรอก · D-115)
+   * ผู้ใช้กรอกได้แค่ราคาขายกับค่าใช้จ่ายในการขาย · ตอนบันทึกจริง server อ่านซ้ำเองและทิ้งค่าที่ฟอร์มส่งมา
+   */
+  const sellsAsset = !!sub?.requires?.includes("capitalGain");
+  const disposalKey = sellsAsset && draft.holderId && draft.assetId ? `${draft.holderId}|${draft.assetId}` : null;
+  const [disposalState, setDisposalState] = React.useState<{ key: string | null; loading: boolean; error: string | null; ctx: DisposalContext | null }>({
+    key: null,
+    loading: false,
+    error: null,
+    ctx: null,
+  });
+  React.useEffect(() => {
+    if (!disposalKey) {
+      setDisposalState({ key: null, loading: false, error: null, ctx: null });
+      return;
+    }
+    let live = true;
+    const [ownerId, assetId] = disposalKey.split("|");
+    setDisposalState({ key: disposalKey, loading: true, error: null, ctx: null });
+    loadDisposalContext({ ownerId, assetId })
+      .then((r) => {
+        if (!live) return;
+        setDisposalState(r.ok ? { key: disposalKey, loading: false, error: null, ctx: r.ctx } : { key: disposalKey, loading: false, error: r.message, ctx: null });
+      })
+      .catch(() => live && setDisposalState({ key: disposalKey, loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงอ่านต้นทุนของทรัพย์จากสมุดไม่ได้", ctx: null }));
+    return () => {
+      live = false;
+    };
+  }, [disposalKey]);
+  const disposalCtx = disposalState.key === disposalKey ? disposalState.ctx : null;
+  const disposalBuild = React.useMemo(
+    () =>
+      sellsAsset && disposalCtx
+        ? disposalFor(disposalCtx, { salePrice: parseAmount(draft.disposal.salePrice), sellingCosts: parseAmount(draft.disposal.sellingCosts) })
+        : null,
+    [sellsAsset, disposalCtx, draft.disposal.salePrice, draft.disposal.sellingCosts]
+  );
+
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);
 
   /**
@@ -324,9 +364,13 @@ export function useTxForm() {
     }
     // Backlog ข้อ 2: หมวดที่เป็นสัญญากู้ ต้องมีตารางงวดแล้วถึงจะส่งได้
     if (requires("loanTerms") && draft.loanTerms.schedule.length === 0) out.push("เงื่อนไขสัญญา + ตารางงวด");
-    // Backlog ข้อ 4: ขายทรัพย์ต้องรู้ต้นทุนและราคาขายก่อน ไม่งั้นคำนวณกำไรไม่ได้
-    if (requires("capitalGain") && (!draft.disposal.costBasis.trim() || !draft.disposal.salePrice.trim())) {
-      out.push("ต้นทุนและราคาขาย");
+    // ขายทรัพย์: ต้องเลือกทรัพย์ (ระบบอ่านต้นทุนจากสมุด) และกรอกราคาขาย · ถ้าอ่านต้นทุนไม่ได้/ขายผ่านฟอร์มไม่ได้ ข้อความบอกเหตุที่ตรงนี้
+    if (requires("capitalGain")) {
+      if (!draft.assetId) out.push("ทรัพย์ที่ขาย (ระบบอ่านต้นทุนจากสมุดให้)");
+      else if (disposalState.loading) out.push("ต้นทุนของทรัพย์จากสมุด (กำลังโหลด)");
+      else if (!disposalCtx) out.push(disposalState.error ? `ต้นทุนของทรัพย์จากสมุด — ${disposalState.error}` : "ต้นทุนของทรัพย์จากสมุด");
+      else if (!draft.disposal.salePrice.trim()) out.push("ราคาขาย");
+      else if (disposalBuild && !disposalBuild.ok) out.push(disposalBuild.message);
     }
     // Backlog ข้อ 5: ถ้าไม่มีตารางงวดอ้างอิง ต้องระบุเงินต้น/ดอกเบี้ยเอง ระบบไม่เดาให้
     if (
@@ -338,7 +382,7 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxState, fxCtx, fxResult]);
+  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxState, fxCtx, fxResult, disposalState, disposalCtx, disposalBuild]);
 
   const reset = React.useCallback(() => {
     setDraft(freshDraft());
@@ -347,20 +391,19 @@ export function useTxForm() {
 
   /** Backlog ข้อ 4 — ตัวเลขกำไร/ขาดทุน คิดที่นี่ที่เดียว ทั้งแผงและพรีวิวอ่านตัวเดียวกัน */
   const disposal: DisposalResult | null = React.useMemo(() => {
-    const costBasis = parseAmount(draft.disposal.costBasis);
-    const salePrice = parseAmount(draft.disposal.salePrice);
-    if (!(costBasis > 0 && salePrice > 0)) return null;
+    if (!disposalBuild?.ok) return null;
+    const d = disposalBuild.disposal;
     try {
       return computeDisposal({
-        costBasis,
-        salePrice,
-        sellingCosts: parseAmount(draft.disposal.sellingCosts),
-        unrealizedAdjustment: signedUnrealized(draft.disposal),
+        costBasis: d.costBasis,
+        salePrice: d.salePrice,
+        sellingCosts: d.sellingCosts,
+        unrealizedAdjustment: d.priorSurplus ?? 0,
       });
     } catch {
       return null;
     }
-  }, [draft.disposal]);
+  }, [disposalBuild]);
 
   /** Backlog ข้อ 5 — การแยกเงินต้น/ดอกเบี้ย พร้อมข้อความบอกเหตุถ้าแยกไม่ได้ */
   const repayment: { split: RepaymentSplit | null; error: string | null } = React.useMemo(() => {
@@ -410,14 +453,8 @@ export function useTxForm() {
       memo: draft.note || undefined,
       attachments: draft.attachments.length ? draft.attachments : undefined,
       notYetPaid: draft.notYetPaid && canAccrue,
-      disposal:
-        needsDisposal && disposal
-          ? {
-              costBasis: disposal.costBasis,
-              salePrice: disposal.salePrice,
-              sellingCosts: disposal.sellingCosts,
-            }
-          : undefined,
+      // ทั้งก้อนมาจากสมุด (disposalFor) — ใช้พรีวิวและกั้นปุ่ม · server ประกอบเองใหม่ตอนบันทึก
+      disposal: needsDisposal && disposalBuild?.ok ? disposalBuild.disposal : undefined,
       repayment:
         needsSplit && repayment.split
           ? { principal: repayment.split.principal, interest: repayment.split.interest }
@@ -435,7 +472,7 @@ export function useTxForm() {
           }
         : undefined,
     };
-  }, [draft, sub, canAccrue, disposal, repayment.split, whtOn, fxResult]);
+  }, [draft, sub, canAccrue, disposal, disposalBuild, repayment.split, whtOn, fxResult]);
 
   /**
    * รายการนี้ลดลูกหนี้/เจ้าหนี้ไหม — ถาม engine (ร่าง) แล้วอ่านบรรทัดที่ได้ ไม่ใช่เดาจากรหัสหมวด
@@ -593,6 +630,7 @@ export function useTxForm() {
     missing,
     reset,
     disposal,
+    disposalState: { loading: disposalState.loading && disposalState.key === disposalKey, error: disposalState.key === disposalKey ? disposalState.error : null, ctx: disposalCtx, buildError: disposalBuild && !disposalBuild.ok ? disposalBuild.message : null },
     repayment,
     transferToOwnerId,
     isCrossOwner,

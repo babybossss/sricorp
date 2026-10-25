@@ -110,15 +110,13 @@ describe("confirmOpeningImport · ประตูเดียว fn_reimport_ope
     expect(empty.every((c) => c.p_payload.lots.length === 0)).toBe(true);
   });
 
-  it("ไฟล์ตัวอย่างเดิมที่มี 1310/2310 → ปฏิเสธทั้งไฟล์ ไม่มีการเรียกประตูเลย (ไม่ลงบางส่วน ไม่ข้ามรหัสเงียบๆ)", async () => {
+  it("ไฟล์ตัวอย่างเดิมที่มี 1310/2310 ลงได้ทั้งไฟล์ (ตารางกฎมีหมวดยอดยกมาให้แล้ว) · ลูกหนี้/เจ้าหนี้ระหว่างกันไม่ถูกข้ามเงียบๆ", async () => {
     state.wb = loadFixture();
     const r = await confirm();
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.problems?.some((p) => p.ownerName === "ธนากร" && /1310/.test(p.message))).toBe(true);
-      expect(r.problems?.some((p) => p.ownerName === "สุธี" && /2310/.test(p.message))).toBe(true);
-    }
-    expect(ctx.db.reimportCalls).toHaveLength(0);
+    expect(r.ok).toBe(true);
+    const subsOf = (owner: string) => ctx.db.reimportCalls.find((c) => c.p_owner === owner)!.p_payload.entries.map((e) => e.txn_type_code);
+    expect(subsOf(OWNER.tk)).toContain("opn.intercompany_receivable");
+    expect(subsOf(OWNER.sutee)).toContain("opn.intercompany_payable");
   });
 
   it("ไม่มีทรัพย์ในระบบ (ไม่ส่งข้อมูลทรัพย์) → ปฏิเสธ ไม่เรียกประตู — ไม่ลงยอดหุ้นเป็นก้อนรวมที่ไม่ผูกทรัพย์", async () => {
@@ -269,12 +267,12 @@ describe("previewOpeningImport · วันตัดยอดจากไฟล�
     if (!r.ok) expect(r.issues[0].message).toMatch(/ไม่ตรงกัน/);
   });
 
-  it("พรีวิวบอกสิ่งที่กดยืนยันไม่ได้ (blockers) และผู้ถือที่ต้องแนบหลักฐาน · ล็อตเห็นทรัพย์ที่จะผูก · ไม่เขียนอะไร", async () => {
+  it("พรีวิวไฟล์เดิม: 1310/2310 ไม่เป็น blocker แล้ว · บอกผู้ถือที่ต้องแนบหลักฐาน · ล็อตเห็นทรัพย์ที่จะผูก · ไม่เขียนอะไร", async () => {
     state.wb = loadFixture(); // มี 1310/2310
     const r = await preview("");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.blockers.length).toBeGreaterThanOrEqual(2);
+    expect(r.blockers).toEqual([]);
     expect(r.evidenceOwners.map((o) => o.name)).toEqual(["SRI Corporation"]);
     expect(r.lots.map((l) => l.assetLabel)).toEqual(["PTT · หุ้น ปตท.", "SET50 · SET50", "K-FIXED · กองทุน K-FIXED"]);
     expect(r.canPost).toBe(true);

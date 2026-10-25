@@ -340,6 +340,8 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           result={api.disposal}
           input={api.postingInput}
           onDerivedAmount={api.setDerivedAmount}
+          assetChosen={!!draft.assetId}
+          state={api.disposalState}
         />
       ) : null}
 

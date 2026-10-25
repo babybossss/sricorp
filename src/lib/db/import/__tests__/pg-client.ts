@@ -5,7 +5,7 @@
  * และ `fn_reimport_opening` ที่เรียกคือฟังก์ชันจริง ไม่ใช่สำเนาที่เขียนเอง · ทุกคำสั่งรันเป็น role `authenticated`
  * ของผู้ใช้ที่ระบุ (ธุรกรรมเดียวต่อคำสั่ง) — ไม่ใช่ superuser
  *
- * รองรับ: from(t).select(cols).eq/in/order/limit/range · rpc('fn_reimport_opening')
+ * รองรับ: from(t).select(cols).eq/in/order/limit/range · rpc('fn_reimport_opening' · 'fn_post_entry' · 'fn_asset_cost_basis*')
  * อย่างอื่น = โยก error ทันที (ไม่เดา) เพื่อให้รู้ว่าโค้ดเริ่มใช้คำสั่งที่ตัวแทนนี้ยังไม่ได้พิสูจน์
  */
 
@@ -70,6 +70,10 @@ export function pgClient(db: TestDb, uid: string) {
   const RPC: Record<string, (a: Record<string, unknown>) => string> = {
     fn_reimport_opening: (a) => `sri_os.fn_reimport_opening(${lit(a.p_owner)}::uuid, ${jsonb(a.p_payload)})`,
     fn_post_entry: (a) => `sri_os.fn_post_entry(${jsonb(a.p_payload)})`,
+    // ฟังก์ชันอ่านต้นทุนของทรัพย์ (คืนค่าเดี่ยว: text/numeric) — ห่อ to_json ให้ parse เป็น JSON เหมือน PostgREST
+    fn_asset_cost_basis_mode: (a) => `to_json(sri_os.fn_asset_cost_basis_mode(${lit(a.p_asset)}::uuid))`,
+    fn_asset_cost_basis: (a) => `to_json(sri_os.fn_asset_cost_basis(${lit(a.p_asset)}::uuid))`,
+    fn_asset_revaluation_surplus: (a) => `to_json(sri_os.fn_asset_revaluation_surplus(${lit(a.p_asset)}::uuid))`,
   };
 
   async function rpc(fn: string, args: Record<string, unknown>): Promise<Result> {

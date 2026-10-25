@@ -184,10 +184,19 @@ describe("postEntry · error จาก DB ต้องถึงผู้ใช�
 });
 
 describe("postEntry · หมวดที่เส้นทางนี้ยังต่อไม่ครบ", () => {
-  it("สัญญากู้ (loanTerms) และขายทรัพย์ (capitalGain) ถูกกั้น ไม่บันทึกครึ่งเดียว", async () => {
+  it("สัญญากู้ (loanTerms) ถูกกั้น ไม่บันทึกครึ่งเดียว (ขายทรัพย์เปิดแล้ว — ดู disposal-posting.pg.test.ts)", async () => {
     await refused(
       req({}, { typeKey: "finance_in", subCode: "fin.loan_director", amount: 70000, assetId: undefined }),
       /ยังบันทึกจริงไม่ได้/
+    );
+  });
+});
+
+describe("postEntry · ขายทรัพย์ (capitalGain) · ข้อมูลไม่ครบต้องปฏิเสธก่อนแตะสมุด", () => {
+  it("ไม่เลือกทรัพย์ → ปฏิเสธ (ต้นทุนอ่านจากสมุดของทรัพย์ชิ้นนั้น ไม่รับต้นทุนที่พิมพ์เอง) · ต้นทุนที่ส่งมาก็ไม่ช่วย", async () => {
+    await refused(
+      req({}, { typeKey: "invest_sell", subCode: "inv.sell_re", amount: 4_000_000, assetId: undefined, disposal: { costBasis: 3_000_000, salePrice: 4_000_000 } }),
+      /ต้องเลือกทรัพย์ที่ขาย/
     );
   });
 });

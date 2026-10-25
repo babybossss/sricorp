@@ -175,10 +175,20 @@ describe("ข้อมูลสกุลเงินต่อบรรทัด 
 describe("notWiredReason · หมวดที่เส้นทางบันทึกยังต่อไม่ครบต้องถูกกั้น (ไม่บันทึกครึ่งเดียว)", () => {
   const subs = TX_TYPES.flatMap((t) => t.subs);
 
-  it("ทุกหมวดที่ตารางกฎติดธง loanTerms หรือ capitalGain ถูกกั้น พร้อมเหตุผล", () => {
-    const flagged = subs.filter((s) => s.requires?.includes("loanTerms") || s.requires?.includes("capitalGain"));
+  it("ทุกหมวดที่ตารางกฎติดธง loanTerms ถูกกั้น พร้อมเหตุผล", () => {
+    const flagged = subs.filter((s) => s.requires?.includes("loanTerms"));
     expect(flagged.length).toBeGreaterThan(0);
     for (const s of flagged) expect(notWiredReason(s), s.code).toMatch(/ยังบันทึกจริงไม่ได้/);
+  });
+
+  /**
+   * ขายทรัพย์ (capitalGain) เปิดแล้ว (25/10): ต้นทุน/ค่ารีโนเวท/ส่วนเกินทุนอ่านจากสมุดใน `postEntry` ไม่ใช่จากฟอร์ม
+   * ทรัพย์ที่ขายบางส่วนได้ยังไม่เปิด — ถูกปฏิเสธที่ `postEntry` พร้อมเหตุผล (ดู disposal-posting.pg.test.ts)
+   */
+  it("หมวดขายทรัพย์ไม่ถูกกั้นที่นี่แล้ว (ไม่ใช่ชุดว่าง)", () => {
+    const sell = subs.filter((s) => s.requires?.includes("capitalGain"));
+    expect(sell.map((s) => s.code).sort()).toEqual(["inv.sell_commodity", "inv.sell_re", "inv.sell_securities"]);
+    for (const s of sell) expect(notWiredReason(s), s.code).toBeNull();
   });
 
   /**
@@ -210,7 +220,7 @@ describe("notWiredReason · หมวดที่เส้นทางบัน�
 
   it("หมวดอื่นไม่ถูกกั้น (เช่น ค่าเช่า) และไม่รู้จักหมวดไม่ทำให้พัง", () => {
     const free = subs.filter(
-      (s) => !s.requires?.includes("loanTerms") && !s.requires?.includes("capitalGain") && !touchesFx(s)
+      (s) => !s.requires?.includes("loanTerms") && !touchesFx(s)
     );
     expect(free.length).toBeGreaterThan(0);
     for (const s of free) expect(notWiredReason(s), s.code).toBeNull();

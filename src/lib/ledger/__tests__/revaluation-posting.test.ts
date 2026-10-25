@@ -429,7 +429,7 @@ describe("ขายจริง — ล้างส่วนเกินทุ�
     bankAccountId: "b4",
     assetId: "stock1",
     contactId: "c1",
-    disposal: { costBasis: 1_000_000, salePrice: 1_500_000, unrealizedAdjustment: 460_000 },
+    disposal: { costBasis: 1_000_000, salePrice: 1_500_000, assetCostBefore: 1_000_000, priorSurplus: 460_000 },
     ...over,
   });
 
@@ -461,7 +461,7 @@ describe("ขายจริง — ล้างส่วนเกินทุ�
   it("เคยตีลง (ส่วนเกินติดลบ) → กลับทิศ และยังสมดุล", () => {
     const lines = allLines(
       buildPosting(
-        sell({ disposal: { costBasis: 1_000_000, salePrice: 1_500_000, unrealizedAdjustment: -270_000 } })
+        sell({ disposal: { costBasis: 1_000_000, salePrice: 1_500_000, assetCostBefore: 1_000_000, priorSurplus: -270_000 } })
       )
     );
     assertBalanced(lines);
@@ -553,6 +553,19 @@ describe("ขายบางส่วน — ล้างส่วนเกิ�
   it("ส่งยอดที่ตรงสัดส่วนมาด้วยก็ได้ (ยืนยันกันเอง) → ลงได้ปกติ", () => {
     const lines = allLines(buildPosting(partial({ unrealizedAdjustment: 138_000 })));
     expect(net(lines, REVALUATION_SURPLUS_COA)).toBe(138_000);
+  });
+
+  it("ส่วนเกินทุนที่ล้าง (unrealizedAdjustment) ส่งเดี่ยวๆ ไม่ได้ — ต้องจับคู่ assetCostBefore + priorSurplus (D-115)", () => {
+    const alone = (adj: number): PostingInput => {
+      const p = partial();
+      return { ...p, disposal: { costBasis: 300_000, salePrice: 450_000, unrealizedAdjustment: adj } };
+    };
+    for (const adj of [460_000, -270_000]) {
+      expect(() => buildPosting(alone(adj))).toThrow(PostingError);
+      expect(() => buildPosting(alone(adj))).toThrow(/assetCostBefore/);
+    }
+    // 0 ยังได้ (ทรัพย์ที่ไม่เคยตีราคา) — ด่านใหม่ไม่กันเกินจน 0 ก็ใช้ไม่ได้
+    expect(() => buildPosting(alone(0))).not.toThrow();
   });
 
   it("ส่งมาตัวเดียว (ขาดต้นทุนทั้งก้อน หรือขาดส่วนเกินที่ค้าง) → ปฏิเสธ ไม่ใช่เดา", () => {

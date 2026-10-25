@@ -66,6 +66,13 @@ import {
 } from "./guards";
 
 /**
+ * ค่ารีโนเวทที่บันทึกเป็นทุน (1510) เป็นต้นทุนของอสังหาริมทรัพย์ (1500) ชิ้นเดียวกัน — ใบจำหน่ายอสังหาฯ ต้องตัดสองบัญชีนี้พร้อมกัน
+ * รหัสทั้งสองตรงกับผังบัญชีใน `coa.ts` · ด่านฝั่ง DB (20261025000011) อนุญาต 1510 เฉพาะหมวดที่ `cr_coa_code = 1500`
+ */
+const PROPERTY_COA = "1500";
+const RENOVATION_COA = "1510";
+
+/**
  * ด่านตรวจร่วมอยู่ที่ `guards.ts` — re-export ไว้เพราะหน้าจอและเทสต์เรียกจากที่นี่มาก่อน
  * และเพื่อให้ "ที่เดียวที่สร้างรายการเงิน" ยังเป็นปากทางเดียวที่ผู้เรียกต้องรู้จัก
  */
@@ -881,6 +888,13 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
         );
       }
       surplusToClear = computed;
+    } else if (d.unrealizedAdjustment !== undefined && d.unrealizedAdjustment !== 0) {
+      // ส่วนเกินทุนที่ระบุมาเดี่ยวๆ ไม่มีต้นทุนทั้งก้อนมาเทียบ → ตรวจสัดส่วนที่ขายออกไม่ได้ (ขายบางส่วนแล้วล้างทั้งก้อน = D-112)
+      // ปฏิเสธ ไม่ใช่เชื่อตัวเลขที่ผู้เรียกกรอก (D-115) · ให้ส่ง assetCostBefore + priorSurplus ที่อ่านจากสมุดแทน
+      throw new PostingError(
+        "ส่วนเกินทุนที่ล้าง (unrealizedAdjustment) ส่งเดี่ยวๆ ไม่ได้ — ต้องส่งคู่กับต้นทุนทั้งก้อนก่อนขาย (assetCostBefore) " +
+          "และส่วนเกินทุนที่ค้างอยู่ (priorSurplus) ที่อ่านจากสมุด เพื่อให้ระบบคิดสัดส่วนที่ขายออกเอง ไม่เชื่อตัวเลขที่กรอก"
+      );
     }
 
     const r = computeDisposal({
@@ -905,11 +919,35 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
       );
     }
 
+    // ค่ารีโนเวทที่บันทึกเป็นทุน (1510) เป็นส่วนหนึ่งของต้นทุนทรัพย์ชิ้นเดียวกัน → ตัดออกในใบเดียวกันด้วยบรรทัดของมันเอง
+    const renovation = money(d.renovationBasis ?? 0, "ค่ารีโนเวทสะสมที่ตัดออก");
+    if (renovation > costBasis) {
+      throw new PostingError(`ค่ารีโนเวทสะสม (${renovation}) มากกว่าต้นทุนทั้งหมดที่ตัดออก (${costBasis}) — ค่ารีโนเวทเป็นส่วนหนึ่งของต้นทุน ไม่ใช่ส่วนเพิ่ม`);
+    }
+    if (renovation > 0 && sub.cr !== PROPERTY_COA) {
+      throw new PostingError(
+        `หมวด "${sub.label}" ตัดค่ารีโนเวทสะสมไม่ได้ — ค่ารีโนเวท (${RENOVATION_COA}) เป็นต้นทุนของอสังหาริมทรัพย์ (${PROPERTY_COA}) เท่านั้น ` +
+          "(ด่านฝั่ง DB อนุญาตบรรทัดนี้เฉพาะหมวดที่เครดิตบัญชีอสังหาริมทรัพย์)"
+      );
+    }
+
     const lines: PostingLine[] = [
       line({ coaCode: CASH_COA, bankAccountId, debit: netProceeds, cfCategory: sub.cashflow }),
       // ตัดทรัพย์ออก "ตามต้นทุน" ไม่ใช่ราคาขาย
-      line({ coaCode: sub.cr, assetId: input.assetId, credit: costBasis, cfCategory: sub.cashflow }),
+      line({ coaCode: sub.cr, assetId: input.assetId, credit: round2(costBasis - renovation), cfCategory: sub.cashflow }),
     ];
+    if (renovation > 0) {
+      lines.push(
+        line({
+          coaCode: RENOVATION_COA,
+          assetId: input.assetId,
+          credit: renovation,
+          cfCategory: sub.cashflow,
+          memo: "ตัดค่ารีโนเวทสะสมที่บันทึกเป็นทุนออกพร้อมทรัพย์",
+        })
+      );
+      summary.push(`ตัดค่ารีโนเวทสะสม ${renovation.toLocaleString("en-US")} บาทออกพร้อมต้นทุนทรัพย์ (รวมต้นทุนที่ตัด ${costBasis.toLocaleString("en-US")} บาท)`);
+    }
 
     if (gain > 0) {
       if (!sub.gainCoa) throw new PostingError(`หมวด "${sub.label}" ไม่ได้ระบุบัญชีรับรู้กำไรในตารางกฎ`);

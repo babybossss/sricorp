@@ -8,8 +8,11 @@
 
 import { parseAmount } from "@/lib/format";
 
+/**
+ * ฟอร์มขายทรัพย์เก็บแค่ราคาขายกับค่าใช้จ่ายในการขาย — ต้นทุน/ค่ารีโนเวท/ส่วนเกินทุนอ่านจากสมุด (ดู `lib/db/disposal-context.ts`)
+ * ช่อง `unrealized*` ไม่ถูกใช้ในฟอร์มขายอีกแล้ว (ส่วนเกินทุนอ่านจาก DB) คงไว้เพราะ `signedUnrealized` มีเทสต์ครอบและยังใช้เป็นตัวช่วยได้
+ */
 export type DisposalValue = {
-  costBasis: string;
   salePrice: string;
   sellingCosts: string;
   /** จำนวนบวกเสมอ — ทิศทางอยู่ที่ `unrealizedDirection` ไม่ให้พิมพ์เครื่องหมายเอง */
@@ -18,7 +21,6 @@ export type DisposalValue = {
 };
 
 export const EMPTY_DISPOSAL: DisposalValue = {
-  costBasis: "",
   salePrice: "",
   sellingCosts: "",
   unrealizedAmount: "",
