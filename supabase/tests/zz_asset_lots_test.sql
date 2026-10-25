@@ -183,13 +183,21 @@ begin
   if to_regclass('sri_os.asset_lots') is null or to_regclass('sri_os.asset_lot_consumptions') is null then
     raise exception 'FAIL: L0 — ยังไม่มีตารางล็อต (migration ไม่ถูก apply?) เทสต์นี้จะไม่ได้ตรวจอะไร';
   end if;
-  -- append-only: ต้องไม่มี policy UPDATE/DELETE
-  select string_agg(p.polname, ', ') into v
+  /**
+   * append-only: **ห้ามมี policy DELETE เลย** และ policy UPDATE มีได้ตัวเดียว
+   * คือ `lots_mark_reversed` (20261025000012) ซึ่งเปิดทางเดียวให้ติดร่องรอย
+   * การกลับรายการ — ก่อนมีมันนั้น `update asset_lots` ของ `fn_reimport_opening`
+   * ได้ **0 แถวเงียบๆ** แล้วล็อตเดิมไม่ถูกปิด = ต้นทุนสองชุด
+   * (ตารางการขายออกยังต้องไม่มีทั้ง UPDATE และ DELETE)
+   */
+  select string_agg(p.polname || '/' || p.polcmd::text, ', ') into v
     from pg_policy p
    where p.polrelid in ('sri_os.asset_lots'::regclass, 'sri_os.asset_lot_consumptions'::regclass)
-     and p.polcmd in ('w', 'd');
+     and p.polcmd in ('w', 'd')
+     and not (p.polrelid = 'sri_os.asset_lots'::regclass
+              and p.polcmd = 'w' and p.polname = 'lots_mark_reversed');
   if v is not null then
-    raise exception 'FAIL: L0 — มี policy UPDATE/DELETE ของตารางล็อต: %', v;
+    raise exception 'FAIL: L0 — มี policy UPDATE/DELETE ของตารางล็อตที่ไม่ได้ตัดสินใจไว้: %', v;
   end if;
   -- ฟังก์ชันคำนวณต้องเรียกตรงไม่ได้ (D-089)
   select string_agg(x.f, ', ') into v

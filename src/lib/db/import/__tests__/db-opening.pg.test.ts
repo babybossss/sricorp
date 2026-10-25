@@ -39,12 +39,6 @@ const STOCK_CATEGORY = "select id, class_id from sri_os.asset_categories order b
 describe.skipIf(!pgAvailable)("ยอดตั้งต้นลงสมุดกับ Postgres จริง", { timeout: 120_000 }, () => {
   let db: TestDb;
   let evidencePath = "";
-  /**
-   * ช่องโหว่ของ migration 20261025000009 ที่เจอเมื่อรันในฐานะผู้ใช้จริง (ดู P0b / P0c) — ใส่ตัวแก้ชั่วคราว **เฉพาะ DB ทดสอบนี้**
-   * เพื่อให้ตรวจส่วนที่เหลือของโค้ดฝั่งแอปต่อได้ · migration จริงห้ามแก้จากงานนี้ (supabase/** เป็นของเจ้าของ DB)
-   */
-  let gateBroken = false;
-  let lotReversalBlocked = false;
   const owner = (code: string) => db.su(`select id from sri_os.owners where code='${code}'`);
 
   /** สำเนานับของทั้งสมุด — ไว้พิสูจน์ "ไม่เกิดอะไรเลย" ด้วยตัวเลข ไม่ใช่ด้วยคำพูด */
@@ -107,22 +101,6 @@ describe.skipIf(!pgAvailable)("ยอดตั้งต้นลงสมุด�
         ('SUTEE', 'TTB', 'สุธี', 'สุธี - TTB')) b(code, bank, nm, dn) on b.code = o.code;
     `);
     evidencePath = `${owner("SRI_CORP")}/${UPLOADER}/0000000e-0000-4000-8000-000000000001.pdf`;
-
-    // (1) ประตูเรียกได้จริงในฐานะผู้ใช้ (authenticated) หรือไม่
-    try {
-      db.as(UID, `select sri_os.fn_reimport_opening('${owner("SUDJIT")}', '{"entries":[],"lots":[]}'::jsonb);`);
-    } catch (e) {
-      gateBroken = /permission denied for function/.test(String((e as Error).message));
-      if (!gateBroken) throw e;
-      db.su("grant execute on function sri_os.fn_opening_set(uuid), sri_os.fn_opening_fingerprint(uuid) to authenticated;");
-    }
-    // (2) ผู้ใช้ที่มีสิทธิ์จัดการทรัพย์ติดร่องรอยกลับรายการของล็อตได้หรือไม่ (ต้องมี policy UPDATE · ไม่มี = UPDATE ได้ 0 แถวเงียบๆ)
-    lotReversalBlocked = db.num("select count(*) from pg_policy where polrelid = 'sri_os.asset_lots'::regclass and polcmd in ('w', '*')") === 0;
-    if (lotReversalBlocked) {
-      db.su(`create policy lots_reverse_test_workaround on sri_os.asset_lots for update to authenticated
-               using (sri_os.fn_can('asset.manage') and exists (select 1 from sri_os.assets a where a.id = asset_id and sri_os.fn_can_see_owner(a.owner_id) and sri_os.fn_can_see_asset(a.id)))
-               with check (true);`);
-    }
   }, 240_000);
 
   afterAll(() => db?.drop());
@@ -133,23 +111,22 @@ describe.skipIf(!pgAvailable)("ยอดตั้งต้นลงสมุด�
              from (${STOCK_CATEGORY}) cat;`);
 
   /**
-   * **ช่องโหว่จริงของ migration 20261025000009 (ผู้ตรวจต้องรู้)** — `fn_reimport_opening` เป็น security invoker แต่เรียก
-   * `fn_opening_set` / `fn_opening_fingerprint` ซึ่งเป็น security definer ที่ถอนสิทธิ์ execute จาก authenticated แล้ว
-   * → ผู้ใช้จริงเรียกประตูไม่ได้เลย ("permission denied for function fn_opening_set") · เทสต์ SQL เดิมรันด้วย superuser จึงไม่เห็น
-   * `it.fails` = เทสต์ผ่านตราบที่ยังพัง และจะ **แดงทันทีที่ DB ถูกแก้** เพื่อบังคับให้ถอด `fails` + ถอด grant ชั่วคราวใน beforeAll
+   * ประตูต้องเรียกได้จาก role `authenticated` **โดยไม่มี grant/policy เสริมจากเทสต์** — เคยเรียกไม่ได้เลย
+   * ("permission denied for function fn_opening_set") เพราะเทสต์ SQL รันด้วย superuser · ปิดโดย 20261025000012
+   * การกลับรายการล็อตภายใต้ RLS (เคย update ได้ 0 แถวเงียบๆ) พิสูจน์ที่ P8: อัปโหลดแก้ธนากรที่มีล็อตแล้วล็อตเดิมถูกตัดออกจริง
+   * ทั้งไฟล์นี้รันผ่าน `db.as()` = authenticated · `db.su()` ใช้เตรียมข้อมูล/อ่านผลตรวจเท่านั้น ไม่อยู่ในเส้นทางที่ทดสอบ
    */
-  it.fails("P0b · ประตูอัปโหลดยอดตั้งต้นเรียกได้จาก role authenticated โดยไม่ต้องมี grant พิเศษ", () => {
-    expect(gateBroken).toBe(false);
+  it("P0b · ประตูอัปโหลดยอดตั้งต้นเรียกได้จาก role authenticated โดยไม่มีสิทธิ์เสริมจากเทสต์", () => {
+    const out = db.as(UID, `select sri_os.fn_reimport_opening('${owner("SUDJIT")}', '{"entries":[],"lots":[]}'::jsonb)::text;`);
+    expect(JSON.parse(out)).toMatchObject({ changed: false });
   });
 
-  /**
-   * **ช่องโหว่ที่สอง** — `fn_reimport_opening` ติดร่องรอยกลับรายการของล็อตด้วย `update asset_lots` ในฐานะผู้เรียก
-   * แต่ตารางล็อตไม่มี policy UPDATE (ตั้งใจให้ append-only) → RLS ทำให้ update ได้ **0 แถวโดยไม่มี error**
-   * ล็อตเดิมจึงไม่ถูกตัดออก → ล็อตซ้ำสองชุด → ด่านลายนิ้วมือท้ายฟังก์ชันจับได้และย้อนทั้งคำสั่ง
-   * ผลจริง: ผู้ถือที่มีล็อตหุ้น/ทอง **อัปโหลดแก้ไม่ได้เลย** (เคสที่ไม่มีล็อตไม่โดน)
-   */
-  it.fails("P0c · ผู้ใช้ที่มีสิทธิ์จัดการทรัพย์ติดร่องรอยกลับรายการของล็อตได้ (มี policy UPDATE ให้ RLS)", () => {
-    expect(lotReversalBlocked).toBe(false);
+  /** ผู้ใช้ที่มองผู้ถือไม่เห็นถูกปฏิเสธ **เสียงดัง** ไม่ใช่ได้ชุดว่าง (ชุดว่างจะถูกแปลว่า "ยังไม่มียอด" แล้วลงทับของจริง) */
+  it("P0c · ผู้ใช้ที่ไม่เห็นผู้ถือนั้นเรียกประตูไม่ได้ (ขอบเขตผู้ถือบังคับที่ DB)", () => {
+    const stranger = "0000000a-0000-4000-8000-0000000000b9";
+    db.su(`insert into auth.users(id) values ('${stranger}');
+           insert into sri_os.app_users(id, email, display_name, role, is_active) values ('${stranger}', 'x@local', 'x', 'staff', true);`);
+    expect(() => db.as(stranger, `select sri_os.fn_reimport_opening('${owner("SUDJIT")}', '{"entries":[],"lots":[]}'::jsonb);`)).toThrow(/ไม่มีสิทธิ์/);
   });
 
   it("P0 · ฐานข้อมูลทดสอบพร้อม: ผู้ถือ 6 คนที่ใช้งาน · ประตู fn_reimport_opening มีจริง · ยังไม่มียอดตั้งต้น", () => {
