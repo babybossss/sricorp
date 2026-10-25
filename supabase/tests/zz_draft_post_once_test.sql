@@ -529,9 +529,15 @@ declare v text;
 begin
   delete from sri_os.draft_entries where id in (select id from d_fix);
   delete from sri_os.user_owner_access where user_id in (select id from d_uid);
-  delete from sri_os.app_users where id in (select id from d_uid);
-  delete from auth.users where id in (select id from d_uid);
-  raise notice 'ok · เก็บ fixture ของช่วงสองเซสชันเรียบร้อย (ไม่มีใบในสมุดค้างเลย เพราะธุรกรรมของเซสชัน A ถูก rollback)';
+  -- ใบ fixture ของ D4 ถูก commit แล้ว (void แล้วก็ยังลบไม่ได้ — กฎเหล็กข้อ 1)
+  -- transactions.created_by จึงยังชี้ผู้ใช้เหล่านี้อยู่ = ลบ app_users ไม่ได้ **ซึ่งถูกต้อง**
+  begin
+    delete from sri_os.app_users where id in (select id from d_uid);
+    delete from auth.users where id in (select id from d_uid);
+    raise notice 'ok · เก็บ fixture ของช่วงสองเซสชันเรียบร้อยทั้งหมด';
+  exception when foreign_key_violation then
+    raise notice 'ok · ผู้ใช้ fixture ลบไม่ได้เพราะใบที่ commit แล้ว (ถึง void ก็ลบไม่ได้) ยังอ้างอยู่ — นี่คือกฎเหล็กข้อ 1 ทำงาน ไม่ใช่เทสต์พัง · DB ทดสอบถูกลบทิ้งทั้งก้อนอยู่แล้ว';
+  end;
 exception when others then
   -- เก็บไม่ได้ก็ไม่ให้เทสต์แดง แต่ต้องรู้ (harness ลบ DB ทิ้งอยู่แล้ว)
   raise warning 'เก็บ fixture ไม่หมด: % — ตรวจว่ามีด่านห้ามลบของตารางไหน', sqlerrm;

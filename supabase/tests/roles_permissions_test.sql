@@ -247,6 +247,14 @@ begin
 end $$;
 
 -- 7.2 Staff คีย์ร่างได้ แต่อนุมัติไม่ได้ · Manager อนุมัติได้
+-- ข้อนี้วัด **RLS** อย่างเดียว (ใครแตะแถวร่างได้)
+-- ตั้งแต่ 20261025000017 การ "อนุมัติ" ไม่ใช่แค่เปลี่ยนสถานะอีกแล้ว:
+-- approved ⇔ มี posted_txn_id และต้องลงสมุดในธุรกรรมเดียวกัน (ผ่าน fn_approve_draft)
+-- ฉะนั้นสองฝั่งแยกกันด้วยสิ่งที่ "พูดก่อน" ต่างกัน
+--   Staff   → RLS กรองแถวหายไปเลย = 0 แถว ไม่มี error (ด่านเงินไม่ได้ทำงานเลย)
+--   Manager → RLS ปล่อยผ่าน แล้วไปโดนด่านเงินเตะ = ได้ error ของด่านเงิน
+-- การได้ error ของด่านเงิน **คือ** หลักฐานว่า RLS ยอมให้ Manager เขียนแถวนี้
+-- (เส้นทางอนุมัติที่สำเร็จจริงทดสอบไว้ที่ zz_draft_post_once_test.sql)
 do $$
 declare n int;
 begin
@@ -261,11 +269,14 @@ begin
   if n <> 0 then raise exception 'FAIL: Staff อนุมัติร่างได้ % แถว', n; end if;
 
   perform pg_temp.login('mgr');
-  update sri_os.draft_entries set status = 'approved'
-   where id = '00000000-0000-0000-0000-0000000000d1';
-  get diagnostics n = row_count;
-  if n <> 1 then raise exception 'FAIL: Manager อนุมัติร่างไม่ได้ (% แถว)', n; end if;
-  raise notice 'ok 7.2 · Staff คีย์ร่างได้ อนุมัติไม่ได้ · Manager อนุมัติได้';
+  begin
+    update sri_os.draft_entries set status = 'approved'
+     where id = '00000000-0000-0000-0000-0000000000d1';
+    raise exception 'FAIL: อนุมัติร่างโดยไม่ลงสมุดได้ = ด่าน "อนุมัติ ⇔ ลงสมุด" หลุด';
+  exception when raise_exception then
+    if position('fn_approve_draft' in sqlerrm) = 0 then raise; end if;
+  end;
+  raise notice 'ok 7.2 · Staff คีย์ร่างได้ แต่ RLS กรองแถวอนุมัติทิ้ง (0 แถว) · Manager ผ่าน RLS แล้วไปหยุดที่ด่าน "อนุมัติ ⇔ ลงสมุด"';
 end $$;
 
 -- 7.3 post เข้า ledger: Staff ไม่ได้ · Manager ได้
