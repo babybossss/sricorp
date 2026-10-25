@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 import { buildPosting as buildPostingWith, allLines, assertBalanced } from "../posting";
 import { assertNoProfitAndLoss } from "../guards";
 import { planRevaluation } from "../mark-to-market";
+import type { AssetBook } from "../average-cost";
 import { PostingError, type PostingInput, type PostingLine } from "../types";
 import { REVALUATION_SURPLUS_COA, isCashAccount } from "@/lib/rules/coa";
 import { statementOf } from "@/lib/rules/statements";
@@ -22,6 +23,22 @@ const buildPosting = (i: PostingInput) => buildPostingWith(i, TEST_RESOLVER);
 
 const net = (lines: PostingLine[], code: string) =>
   lines.filter((l) => l.coaCode === code).reduce((a, l) => a + l.debit - l.credit, 0);
+
+/**
+ * ข้อมูลอ้างอิงของทรัพย์ — `planRevaluation()` ต้องรู้ว่าทรัพย์ชิ้นนี้เฉลี่ยต้นทุนได้ไหม
+ * เพราะ **ตอนขาย** ทรัพย์ชิ้นเดียวต้องล้างส่วนเกินทุนทั้งก้อน (ลูกพี่สั่ง 25/10)
+ */
+const CATEGORY_OF: Record<string, string> = {
+  stock1: "PAPER_STOCK_LISTED",
+  gold1: "COM_GOLD",
+  watch1: "COM_ALT",
+  condo1: "RE_RENTAL",
+  priv1: "PAPER_STOCK_PRIVATE",
+};
+const BOOK: AssetBook = (assetId) => {
+  const categoryCode = CATEGORY_OF[assetId];
+  return categoryCode ? { assetId, categoryCode } : undefined;
+};
 
 /** หุ้นต่างประเทศ: ต้นทุน 1,000,000 บาท · ถือ 40,000 USD */
 const plan = (over: Partial<Parameters<typeof planRevaluation>[0]> = {}) =>
@@ -36,7 +53,7 @@ const plan = (over: Partial<Parameters<typeof planRevaluation>[0]> = {}) =>
     valueOriginal: 40_000,
     valuationRef: "val-2026-10",
     ...over,
-  });
+  }, BOOK);
 
 const postPlan = (p: ReturnType<typeof planRevaluation>) =>
   p.entries.flatMap((e) => {
@@ -587,5 +604,60 @@ describe("ขายบางส่วน — ล้างส่วนเกิ�
       thrown = e;
     }
     expect(thrown).toBeInstanceOf(PostingError);
+  });
+});
+
+describe("ตีราคา — สองเส้นทางของ 'ตอนขาย' ต้องแยกกันตั้งแต่ตอนตีราคา (25/10)", () => {
+  it("ทรัพย์ชิ้นเดียว (ของสะสมใน 1720) → บอกยอดที่ต้องล้างทั้งก้อนตอนขาย", () => {
+    const p = plan({ assetId: "watch1", assetCoa: "1720", currency: "THB", rateToThb: 1, valueOriginal: 1_460_000 });
+    expect(p.costBasisMode).toBe("whole_item");
+    expect(p.targetSurplusThb).toBe(460_000);
+    // ขายทั้งชิ้น → ล้าง 460,000 ทั้งก้อน ไม่มีสัดส่วนให้คิด
+    expect(p.surplusToClearOnWholeDisposal).toBe(460_000);
+    expect(p.summary.some((l) => l.includes("ทั้งก้อน"))).toBe(true);
+  });
+
+  it("ทองคำ (เฉลี่ยได้) → ไม่บอกยอดทั้งก้อน เพราะขึ้นกับสัดส่วนตอนขาย", () => {
+    const p = plan({ assetId: "gold1", assetCoa: "1720", currency: "THB", rateToThb: 1, valueOriginal: 1_460_000 });
+    expect(p.costBasisMode).toBe("average");
+    expect(p.surplusToClearOnWholeDisposal).toBeNull();
+    expect(p.summary.some((l) => l.includes("ตามสัดส่วน"))).toBe(true);
+  });
+
+  it("หุ้นนอกตลาด (ห้ามเฉลี่ย แต่แบ่งขายรายล็อตได้) → บอกให้ระบุล็อตตอนขาย", () => {
+    const p = plan({ assetId: "priv1", assetCoa: "1700" });
+    expect(p.costBasisMode).toBe("specific_lot");
+    expect(p.surplusToClearOnWholeDisposal).toBeNull();
+    expect(p.summary.some((l) => l.includes("ระบุล็อต"))).toBe(true);
+  });
+
+  it("ไม่ส่งข้อมูลอ้างอิง / ทรัพย์ที่ตัวอ่านไม่รู้จัก → ปฏิเสธ ไม่ใช่เดา", () => {
+    let thrown: unknown;
+    try {
+      planRevaluation(
+        {
+          ownerId: "thanakorn",
+          assetId: "stock1",
+          assetCoa: "1700",
+          costBasisThb: 1_000_000,
+          priorSurplusThb: 0,
+          currency: "USD",
+          rateToThb: 36.5,
+          valueOriginal: 40_000,
+        },
+        undefined as unknown as AssetBook
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PostingError);
+    expect((thrown as Error).message).toMatch(/ไม่ได้ส่งข้อมูลอ้างอิงของทรัพย์/);
+
+    expect(() => plan({ assetId: "ไม่มีในทะเบียน" })).toThrow(/ไม่พบทรัพย์/);
+  });
+
+  it("ปฏิเสธ 'ข้อมูลอ้างอิงไม่ครบ' **ก่อน** ตรวจอย่างอื่น — ไม่หลุดไปสร้างใบด้วยโหมดที่เดา", () => {
+    // อัตราแลกเปลี่ยนก็ผิด แต่ข้อความต้องเป็นเรื่องทรัพย์ เพราะนั่นคือด่านแรก
+    expect(() => plan({ assetId: "ไม่รู้จัก", rateToThb: 0 })).toThrow(/ไม่พบทรัพย์/);
   });
 });

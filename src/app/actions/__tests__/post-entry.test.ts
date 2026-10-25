@@ -251,3 +251,55 @@ describe("postEntry · ผู้เช่าหักภาษี ณ ที่�
     );
   });
 });
+
+describe("postEntry · แปลงค่า/แลกเงินตรา: ข้อมูลที่ต้องอ่านจากสมุดไม่เชื่อ browser (เส้นทางเต็มกับ Postgres จริงอยู่ที่ fx-posting.pg.test.ts)", () => {
+  const FCD = "aaaaaaaa-0000-4000-8000-0000000000f1";
+  const fxReq = (over: Partial<PostEntryRequest> = {}, input: Partial<PostingInput> = {}): PostEntryRequest => ({
+    input: { typeKey: "transfer", subCode: "trf.fx_translate_up", amount: 5000, ownerId: OWNER.tk, bankAccountId: FCD, ...input },
+    docDate: "30/11/2026",
+    cashDate: "30/11/2026",
+    ...over,
+  });
+  const seedFcd = () => {
+    if (ctx.reference.ok) {
+      ctx.reference.ref.banks.push({ id: FCD, ownerId: OWNER.tk, name: "ธนากร FCD", bank: "BBL", last4: null, isActive: true, sortOrder: 9, currency: "USD" });
+    }
+    ctx.db.tables.fx_rates.push({ currency: "USD", rate_date: "2026-11-30", thb_per_unit: 37 });
+  };
+
+  it("ไม่ส่ง fx (ไม่ได้เลือกอัตรา) → ปฏิเสธ ไม่เรียก DB เขียนอะไร", async () => {
+    seedFcd();
+    await refused(fxReq(), /ต้องเลือกอัตรา/);
+  });
+
+  it("ไม่เลือกบัญชีเงินตรา → ปฏิเสธ", async () => {
+    seedFcd();
+    await refused(fxReq({ fx: { newRateDate: "2026-11-30" } }, { bankAccountId: "" }), /เลือกบัญชีเงินตรา/);
+  });
+
+  it("บัญชีบาทแต่ขอแปลงค่า → ปฏิเสธ (บัญชีบาทไม่มีเงินตราให้แปลง)", async () => {
+    seedFcd();
+    await refused(fxReq({ fx: { newRateDate: "2026-11-30" } }, { bankAccountId: BANK.tk }), /เป็นบัญชีบาท/);
+  });
+
+  it("บัญชีว่าง (ไม่มีเงินตราคงเหลือในสมุด) → ปฏิเสธ ไม่เดาว่ามี", async () => {
+    seedFcd();
+    await refused(fxReq({ fx: { newRateDate: "2026-11-30" } }), /ไม่มีUSDคงเหลือ|ไม่มี.*คงเหลือในสมุด/);
+  });
+
+  it("ส่ง fxTranslation/fxConversion มากับหมวดธรรมดา → ถูกตัดทิ้ง ไม่ใช่ปฏิเสธ/เชื่อ (ค่านี้ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้)", async () => {
+    const forged = req({}, {
+      fxTranslation: { currency: "USD", balanceOriginal: 1e9, bookRateToThb: 1, bookRateDate: "2026-01-01", newRateToThb: 99, newRateDate: "2026-01-02" },
+      fxConversion: { currency: "USD", amountOriginal: 1, balanceOriginalBefore: 1, bookRateToThb: 1, bookRateDate: "2026-01-01", dealRateToThb: 1, dealRateDate: "2026-01-01", unrealizedBefore: 0 },
+    });
+    const out = await postEntry(forged);
+    expect(out.ok, JSON.stringify(out)).toBe(true);
+    expect(ctx.db.balance("1100")).toBe(12000);
+  });
+
+  it("ไม่มีสิทธิ์ลงสมุด → ปฏิเสธก่อนอ่านสมุด", async () => {
+    seedFcd();
+    ctx.access.permissions = new Set(["txn.create"]) as never;
+    await refused(fxReq({ fx: { newRateDate: "2026-11-30" } }), /ลงสมุดบัญชีโดยตรงไม่ได้/);
+  });
+});

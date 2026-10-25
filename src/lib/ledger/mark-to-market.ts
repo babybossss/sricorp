@@ -49,6 +49,7 @@ import {
 import { coaLabel } from "@/lib/rules/coa";
 import { fxCheck, toThb } from "@/lib/rules/currency";
 import { PostingError, type PostingInput } from "./types";
+import { costBasisModeFor, type AssetBook } from "./average-cost";
 import { money, round2 } from "./guards";
 
 export type RevaluationPlanInput = {
@@ -79,6 +80,18 @@ export type RevaluationPlanInput = {
 export type RevaluationPlan = {
   /** ใบที่ต้องส่งเข้า `buildPosting()` ตามลำดับ — กลับรายการก่อน แล้วลงใหม่ */
   entries: PostingInput[];
+  /**
+   * **วิธีคิดต้นทุนของทรัพย์ชิ้นนี้** อ่านจากหมวดในข้อมูลอ้างอิง (D-115)
+   * ตีราคาเองใช้สมการเดียวกันทุกโหมด (มูลค่า − ต้นทุน) — ที่ต่างคือ**ตอนขาย**
+   */
+  costBasisMode: ReturnType<typeof costBasisModeFor>;
+  /**
+   * ส่วนเกินทุนที่ต้องล้าง **ตอนขายทรัพย์ชิ้นนี้ทั้งชิ้น**
+   * - `whole_item` → เท่ากับ `targetSurplusThb` **ทั้งก้อน** (ไม่มีสัดส่วนให้คิด)
+   * - โหมดอื่น → `null` เพราะยอดขึ้นกับสัดส่วนต้นทุนที่ตัดในใบขาย
+   *   (คิดที่ `surplusToReverseFor()` ตอนนั้น ไม่ใช่ตอนตีราคา)
+   */
+  surplusToClearOnWholeDisposal: number | null;
   /** มูลค่าตลาดแปลงเป็นบาทแล้ว */
   valueThb: number;
   /** ส่วนเกินทุนที่ควรค้างอยู่หลังลงครบ = valueThb − ต้นทุน */
@@ -128,7 +141,17 @@ function entryFor(
  * ไม่มีอัตรา = ปฏิเสธ (ไม่ใช่ใช้อัตราเดือนก่อน ซึ่งทำให้ยอดค้างที่อัตราเก่าเงียบๆ)
  * ไม่มีสกุลเงิน = ปฏิเสธ (ไม่ใช่เดาเป็นบาท ซึ่งทำให้ทรัพย์ 40,000 USD กลายเป็น 40,000 บาท)
  */
-export function planRevaluation(input: RevaluationPlanInput): RevaluationPlan {
+export function planRevaluation(input: RevaluationPlanInput, assets: AssetBook): RevaluationPlan {
+  /**
+   * **วิธีคิดต้นทุนต้องอ่านจากข้อมูลอ้างอิงก่อนทำอะไรทั้งนั้น** (D-115)
+   *
+   * ไม่ส่งตัวอ่านมา หรือตัวอ่านไม่รู้จักทรัพย์ → `PostingError` **ห้ามเดา**
+   * เพราะผลของการเดาไปโผล่ตอนขาย: ทรัพย์ชิ้นเดียวต้องล้างส่วนเกินทุน
+   * **ทั้งก้อน** ส่วนทรัพย์ที่เฉลี่ยได้ล้างตามสัดส่วน — เดาผิดทางไหนก็
+   * ทำให้ส่วนเกินทุนค้างหรือล้างเกิน แล้วกำไรของการขายครั้งถัดไปผิด
+   */
+  const costBasisMode = costBasisModeFor(input?.assetId, assets);
+
   const fx = fxCheck({ currency: input.currency, thbPerUnit: input.rateToThb });
   if (!fx.ok) throw new PostingError(fx.why);
 
@@ -210,5 +233,30 @@ export function planRevaluation(input: RevaluationPlanInput): RevaluationPlan {
       "รับรู้เข้างบกำไรขาดทุนตอนขายจริงเท่านั้น และตอนนั้นส่วนเกินทุนก้อนนี้จะถูกล้างออกพร้อมกัน"
   );
 
-  return { entries, valueThb, targetSurplusThb: target, priorSurplusThb: prior, summary };
+  /**
+   * **สองเส้นทางของ "ตอนขาย"** — ต้องบอกตั้งแต่ตอนตีราคา เพราะคนที่ตีราคา
+   * กับคนที่ขายอาจเป็นคนละคนละเดือน และยอดที่ต้องล้างต่างกันคนละแบบ
+   */
+  const surplusToClearOnWholeDisposal = costBasisMode === "whole_item" ? target : null;
+  summary.push(
+    costBasisMode === "whole_item"
+      ? "ทรัพย์ชิ้นเดียว (ห้ามเฉลี่ยต้นทุน · ลูกพี่สั่ง 25/10) — ตอนขายต้องล้างส่วนเกินทุน " +
+          `**ทั้งก้อน ${target.toLocaleString("en-US")} บาท** ในใบเดียวกับการขาย ` +
+          "เพราะขายทั้งชิ้นจึงไม่มีสัดส่วนให้คิด และแบ่งขายบางส่วนไม่ได้"
+      : costBasisMode === "average"
+        ? "ทรัพย์ที่ถัวเฉลี่ยต้นทุนได้ (หุ้นในตลาด · คริปโต · ทองคำ) — ขายบางส่วนภายหลัง " +
+            "ต้องล้างส่วนเกินทุน **ตามสัดส่วนของต้นทุนที่ตัดออก** (D-112) ไม่ใช่ทั้งก้อน"
+        : "ทรัพย์ที่ห้ามเฉลี่ยแต่แบ่งขายรายล็อตได้ (หุ้นนอกตลาด · ETF · กองทุน · พันธบัตร) — " +
+            "ตอนขายต้อง **ระบุล็อต** และล้างส่วนเกินทุนตามสัดส่วนของต้นทุนที่ตัดออก"
+  );
+
+  return {
+    entries,
+    costBasisMode,
+    surplusToClearOnWholeDisposal,
+    valueThb,
+    targetSurplusThb: target,
+    priorSurplusThb: prior,
+    summary,
+  };
 }
