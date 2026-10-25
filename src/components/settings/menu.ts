@@ -5,6 +5,7 @@
 export const SETTINGS_MENU: { label: string; href?: string }[] = [
   { label: "บัญชีธนาคาร", href: "/settings/banks" },
   { label: "ผังบัญชี & ประเภทรายการ", href: "/settings/tx-rules" },
+  { label: "อัตราแลกเปลี่ยน", href: "/settings/fx-rates" },
   { label: "ผู้ใช้ & สิทธิ์", href: "/settings/users" },
   { label: "นำเข้ายอดตั้งต้น", href: "/import" },
   { label: "Entity" },
