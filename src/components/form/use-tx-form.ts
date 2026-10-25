@@ -23,6 +23,10 @@ import { postEntry, type PostEntryOutcome } from "@/app/actions/post-entry";
 import { listOpenSources, type OpenSource } from "@/app/actions/open-sources";
 import { accrualReductionsOf } from "@/lib/db/clearing-link";
 import { notWiredReason } from "@/lib/db/post-entry";
+import { loadFxContext } from "@/app/actions/fx-context";
+import type { FxAccountContext } from "@/lib/db/fx-context";
+import { fxInputFor, fxKindOf } from "@/lib/db/fx-input";
+import { EMPTY_FX, fxChoiceOf, type FxDraft } from "./fx-value";
 import { showsBankField } from "./bank-field";
 import { EMPTY_CASH_FIELDS, cashFieldsFor, type CashFields } from "./cash-fields";
 import { EMPTY_LOAN_TERMS, type LoanTermsValue } from "./loan-terms-dialog";
@@ -63,6 +67,8 @@ export type TxDraft = CashFields & {
   wht: WhtDraft;
   /** ใบค้างที่รายการนี้ชำระ — เลือกเมื่อรายการลดลูกหนี้/เจ้าหนี้และผู้ถือมีของค้างเปิดอยู่หลายใบ */
   clearsSourceId: string;
+  /** หมวดแปลงค่า/แลกเงินตรา — เลือกอัตราจากตาราง + จำนวนเงินตราที่แลก (ยอดคงเหลือ/อัตราตามบัญชี/ผลต่างที่ค้างอ่านจากสมุด) */
+  fx: FxDraft;
 };
 
 /**
@@ -92,6 +98,7 @@ const freshDraft = (): TxDraft => ({
   repayment: EMPTY_REPAYMENT,
   wht: EMPTY_WHT,
   clearsSourceId: "",
+  fx: EMPTY_FX,
 });
 
 /** ค่า "ยังไม่ได้รับ-จ่าย" ตั้งต้น — อ้างจากฟอร์มเปล่าที่เดียว ไม่เขียนซ้ำ */
@@ -143,6 +150,8 @@ export function useTxForm() {
   const pickSub = React.useCallback((subCode: string) => {
     setDraft((d) => ({
       ...d,
+      // อัตราที่เลือกไว้เป็นของหมวดก่อนหน้า (ทิศแปลงค่า/แลกเงินต่างกัน) — ไม่ค้างข้ามหมวด
+      fx: subCode === d.subCode ? d.fx : EMPTY_FX,
       subCode,
       ...cashFieldsFor(subCode, d),
       notYetPaid: accrualFlagFor(subCode, d.subCode, d.notYetPaid),
@@ -156,6 +165,7 @@ export function useTxForm() {
       const subCode = isValidPair(typeKey, d.subCode) ? d.subCode : subs[0].code;
       return {
         ...d,
+        fx: subCode === d.subCode ? d.fx : EMPTY_FX,
         typeKey,
         subCode,
         ...cashFieldsFor(subCode, d),
@@ -178,6 +188,7 @@ export function useTxForm() {
         ...d,
         holderId,
         bankId: keepBank ? d.bankId : "",
+        fx: keepBank ? d.fx : EMPTY_FX,
         // ไฟล์หลักฐานอยู่ใต้โฟลเดอร์ของผู้ถือที่อัปโหลดให้ — เปลี่ยนผู้ถือแล้วไฟล์เดิมใช้เป็นหลักฐานไม่ได้
         attachments: holderId === d.holderId ? d.attachments : [],
         // ปลายทางเดิมอาจกลายเป็นบัญชีเดียวกับต้นทาง หรือเปลี่ยนจากข้ามผู้ถือเป็นในคนเดียวกัน
@@ -193,6 +204,8 @@ export function useTxForm() {
     setDraft((d) => ({
       ...d,
       bankId,
+      // ยอดคงเหลือและอัตราตามบัญชีเป็นของบัญชีเดิม — เปลี่ยนบัญชีแล้วอัตราที่เลือกไว้ต้องเลือกใหม่
+      fx: bankId === d.bankId ? d.fx : EMPTY_FX,
       transferToBankId: d.transferToBankId === bankId ? "" : d.transferToBankId,
     }));
   }, []);
@@ -224,6 +237,47 @@ export function useTxForm() {
   const moneyMoved = showsBankField(sub) && !(draft.notYetPaid && canAccrue);
   /** หมวดที่เส้นทางบันทึกยังต่อไม่ครบ (สัญญากู้ · ขายทรัพย์) — บอกเหตุผล ไม่ใช่บันทึกครึ่งเดียว */
   const notWired = notWiredReason(sub);
+
+  /**
+   * หมวดแปลงค่า/แลกเงินตรา — ยอดเงินตราคงเหลือ อัตราที่ยอดบาทตั้งอยู่ และผลต่างที่ค้างใน 3410 **อ่านจากสมุด** ผ่าน server action
+   * (ไม่ให้พิมพ์ · D-115) ผู้ใช้เลือกแค่วันของอัตราจากตารางอัตราและจำนวนที่แลก · ตอนบันทึกจริง server อ่านซ้ำเอง ไม่เชื่อค่าที่ฟอร์มถือ
+   */
+  const fxKind = fxKindOf(sub);
+  const fxKey = fxKind && draft.holderId && draft.bankId ? `${draft.holderId}|${draft.bankId}` : null;
+  const [fxState, setFxState] = React.useState<{ key: string | null; loading: boolean; error: string | null; ctx: FxAccountContext | null }>({
+    key: null,
+    loading: false,
+    error: null,
+    ctx: null,
+  });
+  React.useEffect(() => {
+    if (!fxKey) {
+      setFxState({ key: null, loading: false, error: null, ctx: null });
+      return;
+    }
+    let live = true;
+    const [ownerId, bankAccountId] = fxKey.split("|");
+    setFxState({ key: fxKey, loading: true, error: null, ctx: null });
+    loadFxContext({ ownerId, bankAccountId })
+      .then((r) => {
+        if (!live) return;
+        setFxState(r.ok ? { key: fxKey, loading: false, error: null, ctx: r.ctx } : { key: fxKey, loading: false, error: r.message, ctx: null });
+      })
+      .catch(() => live && setFxState({ key: fxKey, loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงโหลดข้อมูลเงินตราจากสมุดไม่ได้", ctx: null }));
+    return () => {
+      live = false;
+    };
+  }, [fxKey]);
+  const fxCtx = fxState.key === fxKey ? fxState.ctx : null;
+  const fxResult = React.useMemo(
+    () => (fxKind && sub && fxCtx ? fxInputFor(sub, fxCtx, fxChoiceOf(draft.fx)) : null),
+    [fxKind, sub, fxCtx, draft.fx]
+  );
+  // ยอดบาทที่ต้องกรอกมาจากอัตราที่เลือก — ช่องจำนวนเงินตามเสมอ (อ่านอย่างเดียว) ไม่ให้พิมพ์ทับจนขัดกับอัตรา
+  const fxAmount = fxResult?.ok ? fxResult.amount : null;
+  React.useEffect(() => {
+    if (fxAmount !== null) setDraft((d) => (parseAmount(d.amount) === fxAmount ? d : { ...d, amount: fxAmount.toFixed(2) }));
+  }, [fxAmount]);
   /**
    * หักภาษี ณ ที่จ่ายได้ไหม — ถามตารางกฎ (`whtCheck`) ไม่ไล่ชื่อหมวด · ต้องมีเงินเคลื่อนจริงด้วย
    * (ตั้งค้างแล้วยังไม่มีใครหัก — engine ปฏิเสธอยู่แล้ว ที่นี่แค่ไม่เปิดช่องให้กรอก)
@@ -254,6 +308,13 @@ export function useTxForm() {
     if (!dmyToIso(draft.docDate)) out.push("วันที่เอกสาร (วว/ดด/ปปปป)");
     if (moneyMoved && !dmyToIso(draft.cashDate)) out.push("วันที่เงินเข้า/ออกจริง (วว/ดด/ปปปป)");
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
+    // แปลงค่า/แลกเงินตรา: ต้องอ่านสมุดได้และเลือกอัตราครบ — ข้อความจาก fxInputFor บอกว่าขาดอะไร
+    if (fxKind) {
+      if (!draft.bankId) out.push("บัญชีเงินฝากสกุลต่างประเทศ");
+      else if (fxState.loading) out.push("ข้อมูลเงินตราจากสมุด (กำลังโหลด)");
+      else if (!fxCtx) out.push(fxState.error ? `ข้อมูลเงินตราจากสมุด — ${fxState.error}` : "ข้อมูลเงินตราจากสมุด");
+      else if (fxResult && !fxResult.ok) out.push(fxResult.message);
+    }
     if (whtOn && (!draft.wht.rate.trim() || !draft.wht.amount.trim())) out.push("อัตราและยอดภาษีที่ถูกหัก (จากใบรับรอง)");
     if (requires("asset") && !draft.assetId) out.push("โปรเจค (ทรัพย์)");
     if (requires("transferTarget")) {
@@ -277,7 +338,7 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner, moneyMoved, whtOn]);
+  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxState, fxCtx, fxResult]);
 
   const reset = React.useCallback(() => {
     setDraft(freshDraft());
@@ -341,7 +402,7 @@ export function useTxForm() {
       typeKey: draft.typeKey,
       subCode: draft.subCode,
       // ขายทรัพย์: ยอดของรายการคือเงินสุทธิเสมอ ไม่ใช่สิ่งที่พิมพ์ในช่อง
-      amount: needsDisposal && disposal ? disposal.netProceeds : parseAmount(draft.amount),
+      amount: needsDisposal && disposal ? disposal.netProceeds : fxResult?.ok ? fxResult.amount : parseAmount(draft.amount),
       ownerId: draft.holderId,
       bankAccountId: draft.bankId,
       assetId: draft.assetId || undefined,
@@ -363,6 +424,8 @@ export function useTxForm() {
           : undefined,
       transferToBankAccountId: draft.transferToBankId || undefined,
       intercompanyNature: draft.intercompanyNature || undefined,
+      // ข้อมูลเงินตราที่อ่านจากสมุด + อัตราที่เลือก (ใช้พรีวิวและกั้นปุ่ม · server ประกอบเองใหม่ตอนบันทึก)
+      ...(fxResult?.ok ? fxResult.patch : {}),
       // ส่งเมื่อติ๊กว่าถูกหักและหมวดนี้หักได้เท่านั้น — ค่าที่ค้างจากหมวดอื่นไม่หลุดไปกับรายการ
       wht: whtOn
         ? {
@@ -372,7 +435,7 @@ export function useTxForm() {
           }
         : undefined,
     };
-  }, [draft, sub, canAccrue, disposal, repayment.split, whtOn]);
+  }, [draft, sub, canAccrue, disposal, repayment.split, whtOn, fxResult]);
 
   /**
    * รายการนี้ลดลูกหนี้/เจ้าหนี้ไหม — ถาม engine (ร่าง) แล้วอ่านบรรทัดที่ได้ ไม่ใช่เดาจากรหัสหมวด
@@ -480,6 +543,8 @@ export function useTxForm() {
         docDate: draft.docDate,
         // ส่งเฉพาะเมื่อเลือกไว้ (ค้างใบเดียว server ผูกให้เอง)
         clearsSourceId: reductionKey && draft.clearsSourceId ? draft.clearsSourceId : undefined,
+        // เฉพาะหมวดแปลงค่า/แลกเงินตรา: ส่งแค่ "วันของอัตราที่เลือก + จำนวนเงินตรา" ที่เหลือ server อ่านจากสมุดเอง
+        fx: fxKind ? fxChoiceOf(draft.fx) : undefined,
         // หมวดที่ไม่มีเงินเคลื่อนไม่ส่งวันที่เงิน (cash_date ต้องเป็น null) · ค้างรับ-ค้างจ่ายก็ไม่ส่ง
         cashDate: moneyMoved ? draft.cashDate : "",
       });
@@ -495,13 +560,16 @@ export function useTxForm() {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved, reductionKey, draft.clearsSourceId]);
+  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved, reductionKey, draft.clearsSourceId, fxKind, draft.fx]);
 
   return {
     referenceState: refState,
     reference,
     canPost,
     notWired,
+    fxKind,
+    fxState: { loading: fxState.loading && fxState.key === fxKey, error: fxState.key === fxKey ? fxState.error : null, ctx: fxCtx },
+    fxResult,
     moneyMoved,
     whtEligible,
     clearSources,

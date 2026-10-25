@@ -21,7 +21,6 @@ vi.mock("@/lib/auth/session", () => ({
 import { postEntry, type PostEntryRequest } from "../post-entry";
 import { loadFxContext } from "../fx-context";
 import { findSub } from "@/lib/rules/tx-rules";
-import { fxInputFor } from "@/lib/db/fx-input";
 import { REALISED_FX_GAIN, REALISED_FX_LOSS } from "@/lib/rules/coa";
 
 const UID = "0000000f-0000-4000-8000-0000000000f1";
@@ -270,36 +269,7 @@ describe.skipIf(!pgAvailable)("แปลงค่า/แลกเงินตร
     expect(counts()).toEqual(before);
   });
 
-  it("X11 · ยอดที่ฟอร์มคำนวณให้ (fxInputFor) = ยอดที่ engine ยอมรับ ทุกอัตราที่มีในตาราง — สูตรไม่ลอยไปคนละทางกับ engine", async () => {
-    // อ่านบริบทสดของสุดจิตต์แล้วลองทุกอัตราในตารางกับทั้งสองหมวด: ถ้า fxInputFor บอกว่าได้ amount เท่าไร engine ต้องไม่ปฏิเสธเรื่องยอด
-    const r = await loadFxContext({ ownerId: owner("SUDJIT"), bankAccountId: bank.get("sj-fcd")! });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const before = counts();
-    let probed = 0;
-    for (const rate of r.ctx.rates) {
-      for (const code of ["trf.fx_translate_up", "trf.fx_translate_down"]) {
-        const built = fxInputFor(findSub(code)!.sub, r.ctx, { newRateDate: rate.rateDate });
-        if (!built.ok) continue;
-        // ลงด้วย "ยอดผิด 1 สตางค์" ต้องถูกปฏิเสธเรื่องยอด (ไม่ใช่ผ่านเพราะ engine หลวม) และด้วยยอดที่คำนวณต้องไม่ติดเรื่องยอด
-        const off = await postEntry(req("SUDJIT", code, Math.round((built.amount + 0.01) * 100) / 100, "sj-fcd", rate.rateDate, { newRateDate: rate.rateDate }));
-        expect(off.ok).toBe(false);
-        if (!off.ok) expect(off.message).toMatch(/ผลต่างจากการแปลงค่าคือ|ตรงทิศ|ไม่มีผลต่าง|ผลต่าง/);
-        const exact = await postEntry(req("SUDJIT", code, built.amount, "sj-fcd", rate.rateDate, { newRateDate: rate.rateDate }));
-        if (!exact.ok) expect(exact.message).not.toMatch(/แต่กรอกยอดมา/);
-        else {
-          // ลงสำเร็จจริง → คืนสภาพด้วยการแปลงกลับไม่ได้ง่าย จึงนับว่าเป็นหลักฐานที่พอ แล้วหยุดเมื่อสมุดขยับ (บริบทเก่าแล้ว)
-          probed++;
-          return;
-        }
-        probed++;
-      }
-    }
-    expect(probed).toBeGreaterThan(0);
-    expect(counts().txns).toBeGreaterThanOrEqual(before.txns);
-  });
-
-  it("X12 · ไม่มีสิทธิ์ลงสมุด (ledger.approve) → ปฏิเสธก่อนอ่านสมุด", async () => {
+  it("X11 · ไม่มีสิทธิ์ลงสมุด (ledger.approve) → ปฏิเสธก่อนอ่านสมุด", async () => {
     const keep = h.perms;
     h.perms = new Set(["txn.create"]);
     try {

@@ -71,7 +71,11 @@ select x.id, x.code, x.name, cat.class_id, cat.id,
     ('00000000-0000-0000-0000-00000003a001'::uuid, 'ACB-STOCK', 'หุ้น ก (ทดสอบ)'),
     ('00000000-0000-0000-0000-00000003a002'::uuid, 'ACB-OTHER', 'หุ้น ข (ตัวควบคุม)')
   ) as x(id, code, name)
-  cross join (select id, class_id from sri_os.asset_categories order by id limit 1) cat;
+  -- **หมวดต้องระบุชัด** ไม่ใช่ `order by id limit 1` — ตั้งแต่ 20261025000010
+  -- หมวดเป็นตัวตัดสินว่าทรัพย์เฉลี่ยต้นทุนได้หรือไม่ (ลูกพี่สั่ง 25/10)
+  -- เทสต์นี้พิสูจน์เส้นทาง **ถัวเฉลี่ย** จึงต้องเป็นหุ้นในตลาดหลักทรัพย์
+  cross join (select id, class_id from sri_os.asset_categories
+               where code = 'PAPER_STOCK_LISTED') cat;
 
 do $$
 declare s text := (select nspname from pg_namespace where oid = pg_my_temp_schema());

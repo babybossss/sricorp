@@ -52,6 +52,7 @@
  * → ส่งต้นทุนผิดเข้ามาจะไม่มีผล ไม่ใช่ถูกใช้ (D-115)
  */
 
+import { costBasisModeOfCategory, type CostBasisMode } from "@/lib/rules/asset-classes";
 import { PostingError } from "./types";
 
 /** ความละเอียดของจำนวนหน่วย — 8 ตำแหน่ง (คริปโตคือตัวที่ละเอียดสุด) */
@@ -295,6 +296,93 @@ function scopeLots(lots: Lot[], ownerId: string, assetId: string): ScopedLot[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * ข้อมูลอ้างอิงของทรัพย์ — **วิธีคิดต้นทุนต้องมาจากที่นี่ ไม่ใช่จากผู้เรียก**
+ * ------------------------------------------------------------------ */
+
+/**
+ * สิ่งที่ `lib/ledger` ต้องรู้เกี่ยวกับทรัพย์หนึ่งชิ้น — **แค่หมวด**
+ *
+ * ไม่มี `canAverage` / `isCondo` / `ticker` ให้ส่งเข้ามาโดยตั้งใจ (D-115):
+ * ถ้ารับธง "เฉลี่ยได้" จากผู้เรียกตรงๆ ด่านทั้งชุดในไฟล์นี้จะเชื่อสิ่งที่
+ * หน้าจอส่งมา แล้วคอนโดที่ถูกติดป้ายผิดก็จะถูกเฉลี่ยได้ทันที
+ * หมวดเป็นค่าที่เลือกตอน**สร้างทรัพย์** และฝั่ง DB อ่านจากตารางอ้างอิง
+ * `asset_categories.cost_basis_mode` ที่แก้ได้ด้วย migration เท่านั้น
+ */
+export type AssetRef = {
+  assetId: string;
+  /** รหัสหมวดย่อยจาก `asset_categories.code` (เช่น `RE_RENTAL`, `COM_GOLD`) */
+  categoryCode: string;
+};
+
+/**
+ * ตัวอ่านข้อมูลอ้างอิงของทรัพย์ — ฝั่งจริงอ่านจาก `sri_os.assets` + `asset_categories`
+ * ฝั่งเทสต์ส่งฟังก์ชันจำลองเข้ามา · **ห้าม import ตาราง mock เข้ามาในไฟล์นี้**
+ */
+export type AssetBook = (assetId: string) => AssetRef | null | undefined;
+
+/**
+ * **วิธีคิดต้นทุนของทรัพย์ชิ้นนี้** — ข้อมูลไม่ครบ → `PostingError` ห้ามเดา
+ *
+ * - ไม่ส่งตัวอ่านมา → ปฏิเสธ (เดาว่า "เฉลี่ยได้" แปลว่าคอนโดถูกเฉลี่ยเงียบๆ)
+ * - ตัวอ่านไม่รู้จักทรัพย์ → ปฏิเสธ (ตอนคิดเงินข้อมูลต้องครบ)
+ * - รู้จักทรัพย์แต่หมวดไม่รู้จัก/ว่าง → `whole_item` ซึ่งเป็นค่าที่ **ปฏิเสธการเฉลี่ย**
+ *   (ตรงกับ `asset_categories.cost_basis_mode default 'whole_item'` ฝั่ง DB)
+ */
+export function costBasisModeFor(assetId: string, assets: AssetBook): CostBasisMode {
+  const id = requireString(assetId, "assetId");
+  if (typeof assets !== "function") {
+    fail(
+      `ไม่ได้ส่งข้อมูลอ้างอิงของทรัพย์ ${id} มา — ตัดสินวิธีคิดต้นทุนไม่ได้ · ` +
+        "ลูกพี่สั่ง 25/10 ว่าเฉลี่ยได้เฉพาะ หุ้นในตลาดหลักทรัพย์ · คริปโต · ทองคำ " +
+        "ซึ่งอ่านจากหมวดของทรัพย์เท่านั้น (ห้ามเดา ห้ามอนุมานจาก ticker หรือรหัสบัญชี)",
+    );
+  }
+  const ref = assets(id);
+  if (ref === null || ref === undefined) {
+    // throw ตรงๆ ไม่ผ่าน fail() เพราะ TS ไม่แคบชนิดจากฟังก์ชัน never ที่เก็บใน const
+    throw new PostingError(
+      `ไม่พบทรัพย์ ${id} ในข้อมูลอ้างอิง — คิดต้นทุนไม่ได้ · ต้องสร้างทรัพย์และเลือกหมวดให้ชัดก่อน ` +
+        "(หมวดคือตัวตัดสินว่าเฉลี่ยต้นทุนได้หรือไม่)",
+    );
+  }
+  if (typeof ref !== "object") fail(`ข้อมูลอ้างอิงของทรัพย์ ${id} ไม่ใช่ข้อมูลทรัพย์`);
+  if (typeof ref.assetId === "string" && ref.assetId !== id) {
+    fail(
+      `ข้อมูลอ้างอิงตอบทรัพย์ ${ref.assetId} ขณะที่ถามทรัพย์ ${id} — ` +
+        "ตัวอ่านทรัพย์ตอบผิดชิ้น ปล่อยผ่านคือคิดต้นทุนของทรัพย์คนละชิ้น",
+    );
+  }
+  return costBasisModeOfCategory(ref.categoryCode);
+}
+
+const MODE_LABEL: Record<CostBasisMode, string> = {
+  average: "ถัวเฉลี่ยถ่วงน้ำหนักทั้งกอง",
+  specific_lot: "ระบุล็อตที่ขาย (ห้ามเฉลี่ย)",
+  whole_item: "ทรัพย์ชิ้นเดียว แบ่งไม่ได้ (ห้ามเฉลี่ย)",
+};
+
+/** ชื่อฟังก์ชันที่ควรใช้ของแต่ละโหมด — ข้อความต้องชี้ทางออก ไม่ใช่แค่บอกว่าผิด */
+const MODE_ENTRY: Record<CostBasisMode, string> = {
+  average: "sellAtAverageCost()",
+  specific_lot: "sellBySpecificLots()",
+  whole_item: "sellWholeItem()",
+};
+
+function requireMode(assetId: string, assets: AssetBook, want: CostBasisMode): CostBasisMode {
+  const mode = costBasisModeFor(assetId, assets);
+  if (mode !== want) {
+    fail(
+      `ทรัพย์ ${assetId} คิดต้นทุนแบบ "${MODE_LABEL[mode]}" จึงใช้เส้นทาง ` +
+        `"${MODE_LABEL[want]}" ไม่ได้ — ใช้ ${MODE_ENTRY[mode]} แทน · ` +
+        "ลูกพี่สั่ง 25/10: เฉลี่ยได้เฉพาะ หุ้นในตลาดหลักทรัพย์ · คริปโต · ทองคำ " +
+        "ที่เหลือห้ามเฉลี่ยทั้งหมด (อสังหาฯ ทุกชนิด · **หุ้นบริษัทนอกตลาด** · " +
+        "สินทรัพย์ทางเลือกอื่นที่ไม่ใช่ทอง)",
+    );
+  }
+  return mode;
+}
+
+/* ------------------------------------------------------------------ *
  * API
  * ------------------------------------------------------------------ */
 
@@ -310,9 +398,16 @@ export function availableQuantity(lots: Lot[], ownerId: string, assetId: string)
  * ไม่มีล็อตในขอบเขต = `PostingError` ไม่ใช่คืนกองว่างที่ต้นทุน 0
  * (กอง 0 ที่ถูกนำไปคิดกำไรแปลว่ากำไร = ยอดขายทั้งก้อน)
  */
-export function costPoolOf(lots: Lot[], ownerId: string, assetId: string): CostPool {
+export function costPoolOf(
+  lots: Lot[],
+  ownerId: string,
+  assetId: string,
+  assets: AssetBook,
+): CostPool {
   const owner = requireString(ownerId, "ownerId");
   const asset = requireString(assetId, "assetId");
+  // **กองรวมมีความหมายเฉพาะทรัพย์ที่เฉลี่ยได้** — คอนโดสองห้องไม่ใช่ "กอง"
+  requireMode(asset, assets, "average");
   const scoped = scopeLots(requireLots(lots), owner, asset);
   if (scoped.length === 0) {
     fail(
@@ -374,13 +469,18 @@ export function surplusToReverseFor(input: {
  *
  * ล็อตไม่พอ · ข้อมูลไม่ครบ · จำนวนหรือยอดเงินไม่ถูกต้อง → `PostingError`
  */
-export function sellAtAverageCost(lots: Lot[], input: SellInput): SellResult {
+export function sellAtAverageCost(lots: Lot[], input: SellInput, assets: AssetBook): SellResult {
   const safeLots = requireLots(lots);
   if (input === null || typeof input !== "object") {
     fail("ไม่ได้ส่งข้อมูลการขายมา — คิดต้นทุนถัวเฉลี่ยไม่ได้");
   }
 
   const assetId = requireString(input.assetId, "assetId");
+  /**
+   * **ถัวเฉลี่ยได้เฉพาะ หุ้นในตลาดหลักทรัพย์ · คริปโต · ทองคำ** (ลูกพี่สั่ง 25/10)
+   * อ่านจากหมวดของทรัพย์ในข้อมูลอ้างอิง ไม่ใช่จากธงที่ผู้เรียกส่งมา (D-115)
+   */
+  requireMode(assetId, assets, "average");
   const ownerId = requireString(input.ownerId, "ownerId");
   const quantity = requireNumber(input.quantity, "quantity");
   const proceeds = requireNumber(input.proceeds, "proceeds");
@@ -500,6 +600,286 @@ export function sellAtAverageCost(lots: Lot[], input: SellInput): SellResult {
     remaining,
     remainingBook,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * เส้นทางที่ **ห้ามเฉลี่ย** (ลูกพี่สั่ง 25/10)
+ * ------------------------------------------------------------------ */
+
+/** ล็อตที่ผู้ใช้ **ระบุ** ว่าจะขาย — ไม่ใช่ให้ระบบเลือกให้ (ไม่มี FIFO ไม่มีเฉลี่ย) */
+export type LotPick = { lotId: string; quantity: number };
+
+export type SpecificLotSellInput = {
+  assetId: string;
+  ownerId: string;
+  /** ล็อตที่ขายและจำนวนของแต่ละล็อต — **ต้องระบุ** ว่างไม่ได้ */
+  picks: LotPick[];
+  proceeds: number;
+  soldAt: string;
+  priorSurplus?: number;
+};
+
+export type SpecificLotSellResult = {
+  mode: "specific_lot";
+  /** ต้นทุนที่ตัดจากแต่ละล็อต — **ราคาของล็อตนั้นเอง** ไม่ใช่ค่าเฉลี่ยของกอง */
+  consumed: ConsumedLot[];
+  costRemoved: number;
+  gain: number;
+  outcome: SellOutcome;
+  surplusToReverse: number;
+  remainingCost: number;
+  remainingQuantity: number;
+  remaining: Lot[];
+  remainingBook: Lot[];
+  /**
+   * ต้นทุนถ้า**เผลอ**คิดแบบถัวเฉลี่ย — มีไว้ให้หน้าจอ/เทสต์เห็นว่าสองทางต่างกันเท่าไร
+   * **ห้ามนำไปลงบัญชี** (ชื่อฟิลด์บอกตรงๆ ว่าเป็นของเทียบ ไม่ใช่ของใช้)
+   */
+  costIfAveragedWrongly: number;
+};
+
+/**
+ * ขายโดย **ระบุล็อต** — ต้นทุนมาจากราคาของล็อตนั้นเอง (หุ้นนอกตลาด · ETF · กองทุน · พันธบัตร)
+ *
+ * ตรวจ **รายล็อต** ไม่ใช่รายทรัพย์ เพราะรายทรัพย์จะยอมให้สลับยอดระหว่าง
+ * ล็อตแพงกับล็อตถูกแล้วผลรวมยังตรง (รูปเดียวกับด่านฝั่ง DB ข้อ ข-2)
+ *
+ * การหาร `ต้นทุนล็อต ÷ จำนวนล็อต` **ไม่ใช่การเฉลี่ย**: ทุกหน่วยในล็อตเดียว
+ * ซื้อมาในราคาเดียวกันจริง ไม่ได้เอาราคาของล็อตอื่นมาเจือ
+ */
+export function sellBySpecificLots(
+  lots: Lot[],
+  input: SpecificLotSellInput,
+  assets: AssetBook,
+): SpecificLotSellResult {
+  const safeLots = requireLots(lots);
+  if (input === null || typeof input !== "object") {
+    fail("ไม่ได้ส่งข้อมูลการขายมา — คิดต้นทุนรายล็อตไม่ได้");
+  }
+  const assetId = requireString(input.assetId, "assetId");
+  const ownerId = requireString(input.ownerId, "ownerId");
+  requireMode(assetId, assets, "specific_lot");
+
+  const proceeds = requireNumber(input.proceeds, "proceeds");
+  const soldMs = parseTime(input.soldAt, "soldAt");
+  const priorSurplus =
+    input.priorSurplus === undefined ? 0 : requireNumber(input.priorSurplus, "ส่วนเกินทุนที่ค้างอยู่");
+  if (proceeds < 0) {
+    fail(`ยอดเงินที่ได้รับติดลบไม่ได้ (ได้ ${proceeds}) — ถ้ามีค่าใช้จ่ายให้หักก่อนส่งเข้ามา`);
+  }
+
+  if (!Array.isArray(input.picks) || input.picks.length === 0) {
+    fail(
+      `ทรัพย์ ${assetId} ห้ามถัวเฉลี่ยต้นทุน จึง **ต้องระบุล็อตที่ขาย** — ไม่ได้ส่ง picks มา · ` +
+        "ถ้าไม่ระบุ ระบบต้องเดาว่าตัดล็อตไหน ซึ่งการเดาทุกแบบ (เก่าก่อน · ถูกก่อน · เฉลี่ย) " +
+        "ให้กำไรคนละตัวเลข และเป็นการตัดสินใจเรื่องเงินแทนผู้ใช้โดยไม่มีใครเห็น",
+    );
+  }
+
+  const scoped = scopeLots(safeLots, ownerId, assetId);
+  if (scoped.length === 0) {
+    fail(
+      `ไม่มีล็อตของทรัพย์ ${assetId} ในมือผู้ถือ ${ownerId} เลย — ตัดต้นทุนไม่ได้ ` +
+        "ต้องบันทึกใบซื้อให้ครบก่อน (ระบบจะไม่สมมติต้นทุนให้)",
+    );
+  }
+  const soldDay = utcDay(soldMs);
+  const byId = new Map(scoped.map((l) => [l.source.id, l]));
+
+  let removedSatang = 0;
+  let removedUnits = 0;
+  const takenByLotId = new Map<string, number>();
+  const consumed: ConsumedLot[] = [];
+
+  input.picks.forEach((pick, i) => {
+    if (pick === null || typeof pick !== "object") fail(`picks[${i}] ไม่ใช่ข้อมูลล็อตที่ขาย`);
+    const lotId = requireString(pick.lotId, `picks[${i}].lotId`);
+    const lot = byId.get(lotId);
+    if (!lot) {
+      fail(
+        `ล็อต "${lotId}" ไม่อยู่ในสมุดของทรัพย์ ${assetId} ผู้ถือ ${ownerId} — ` +
+          "ระบุล็อตที่ไม่มีอยู่แปลว่าต้นทุนที่ตัดไม่มีที่มา",
+      );
+    }
+    if (takenByLotId.has(lotId)) {
+      fail(`ระบุล็อต "${lotId}" ซ้ำสองครั้งใน picks — รวมจำนวนให้เป็นรายการเดียวก่อนส่งเข้ามา`);
+    }
+    if (utcDay(lot!.acquiredMs) > soldDay) {
+      fail(
+        `ล็อต ${lotId} ซื้อวันที่ ${lot!.source.acquiredAt} ซึ่งหลังวันที่ขาย ${input.soldAt} — ` +
+          "ขายของที่ยังไม่ได้ซื้อไม่ได้",
+      );
+    }
+
+    const wantUnits = toUnits(requireNumber(pick.quantity, `picks[${i}].quantity`), `picks[${i}].quantity`);
+    if (wantUnits <= 0) fail(`picks[${i}].quantity ต้องมากกว่า 0 (ได้ ${pick.quantity})`);
+    if (wantUnits > lot!.units) {
+      fail(
+        `ขายจากล็อต ${lotId} ${formatQty(wantUnits)} หน่วย แต่ล็อตนั้นมี ${formatQty(lot!.units)} หน่วย — ` +
+          "ขายเกินล็อตไม่ได้ · ถ้าจะขายมากกว่านั้น ให้ระบุล็อตเพิ่ม ไม่ใช่เพิ่มจำนวนในล็อตเดียว",
+      );
+    }
+
+    // ตัดล็อตหมดพอดี → ตัดต้นทุนของล็อตนั้นทั้งก้อน (ไม่เหลือเศษสตางค์)
+    const takeSatang =
+      wantUnits === lot!.units
+        ? Math.round(lot!.exactSatang)
+        : Math.round((lot!.exactSatang * wantUnits) / lot!.units);
+
+    takenByLotId.set(lotId, wantUnits);
+    removedUnits += wantUnits;
+    removedSatang += takeSatang;
+    consumed.push({ lotId, quantity: fromUnits(wantUnits), cost: fromSatang(takeSatang) });
+  });
+
+  const totalUnits = scoped.reduce((sum, l) => sum + l.units, 0);
+  const totalSatang = Math.round(scoped.reduce((sum, l) => sum + l.exactSatang, 0));
+  const totalCost = fromSatang(totalSatang);
+  const costRemoved = fromSatang(removedSatang);
+  const gainSatang = toSatang(proceeds, "ยอดเงินที่ได้รับ") - removedSatang;
+
+  // ค่าเฉลี่ยของทั้งกอง — **คิดไว้เพื่อเทียบเท่านั้น** ไม่เคยถูกใช้ลงบัญชี
+  const costIfAveragedWrongly =
+    removedUnits === totalUnits
+      ? totalCost
+      : fromSatang(Math.round((totalSatang * removedUnits) / totalUnits));
+
+  const remainingOf = (lot: Lot, units: number) => units - (takenByLotId.get(lot.id) ?? 0);
+  const remaining: Lot[] = scoped
+    .map((sl) => ({ source: sl.source, units: remainingOf(sl.source, sl.units) }))
+    .filter((x) => x.units > 0)
+    .map((x) => ({ ...x.source, quantity: fromUnits(x.units) }));
+
+  const scopedUnitsById = new Map(scoped.map((sl) => [sl.source.id, sl.units]));
+  const remainingBook: Lot[] = [];
+  for (const l of safeLots) {
+    if (l.ownerId !== ownerId || l.assetId !== assetId) {
+      remainingBook.push({ ...l });
+      continue;
+    }
+    const left = remainingOf(l, scopedUnitsById.get(l.id) ?? 0);
+    if (left > 0) remainingBook.push({ ...l, quantity: fromUnits(left) });
+  }
+
+  return {
+    mode: "specific_lot",
+    consumed,
+    costRemoved,
+    gain: fromSatang(gainSatang),
+    outcome: gainSatang > 0 ? "gain" : gainSatang < 0 ? "loss" : "breakeven",
+    surplusToReverse: surplusToReverseFor({ priorSurplus, costBefore: totalCost, costRemoved }),
+    remainingCost: fromSatang(totalSatang - removedSatang),
+    remainingQuantity: fromUnits(totalUnits - removedUnits),
+    remaining,
+    remainingBook,
+    costIfAveragedWrongly,
+  };
+}
+
+export type WholeItemSellInput = {
+  assetId: string;
+  ownerId: string;
+  proceeds: number;
+  soldAt: string;
+  /**
+   * ต้นทุนของ **ชิ้นนั้นทั้งก้อน** ตามสมุดที่ post แล้ว (`fn_asset_cost_basis`)
+   * ไม่ใช่ราคาประเมิน และไม่ใช่ค่าเฉลี่ยของทรัพย์อื่นในตึกเดียวกัน
+   */
+  assetCost: number;
+  /** ส่วนเกินทุน (3400) ที่ค้างอยู่ของชิ้นนั้น — ละไว้ = 0 */
+  priorSurplus?: number;
+};
+
+export type WholeItemSellResult = {
+  mode: "whole_item";
+  costRemoved: number;
+  gain: number;
+  outcome: SellOutcome;
+  /** **ทั้งก้อน** — ทรัพย์ชิ้นเดียวไม่มีสัดส่วนให้คิด */
+  surplusToReverse: number;
+  remainingCost: 0;
+  remainingQuantity: 0;
+};
+
+/**
+ * ขายทรัพย์ชิ้นเดียวทั้งชิ้น (คอนโดรายห้อง · ที่ดิน · สัญญา · ของสะสม)
+ *
+ * **กำไร = ราคาขาย − ต้นทุนของชิ้นนั้นเอง** ไม่ใช่ค่าเฉลี่ยของห้องทั้งหมด
+ * และ **ล้าง 3400 ทั้งก้อน** เพราะไม่มี "สัดส่วน" ให้คิด
+ *
+ * ขายบางส่วนไม่ได้โดยโครงสร้าง: ชนิดนี้ **ไม่มีช่อง `quantity`/`picks`**
+ * และปฏิเสธเสียงดังถ้ามีคนส่งมา (เช่นลอกโค้ดมาจากเส้นทางถัวเฉลี่ย)
+ */
+export function sellWholeItem(input: WholeItemSellInput, assets: AssetBook): WholeItemSellResult {
+  if (input === null || typeof input !== "object") {
+    fail("ไม่ได้ส่งข้อมูลการขายมา — คิดต้นทุนไม่ได้");
+  }
+  const assetId = requireString(input.assetId, "assetId");
+  requireString(input.ownerId, "ownerId");
+  requireMode(assetId, assets, "whole_item");
+  parseTime(input.soldAt, "soldAt");
+
+  const extra = ["quantity", "picks", "units"].filter(
+    (k) => (input as Record<string, unknown>)[k] !== undefined,
+  );
+  if (extra.length > 0) {
+    fail(
+      `ทรัพย์ ${assetId} เป็นทรัพย์ชิ้นเดียว **แบ่งขายไม่ได้** แต่ส่ง ${extra.join(", ")} มาด้วย — ` +
+        "ขาย 30% ของคอนโดหนึ่งห้องไม่มีอยู่จริง · ถ้าจะแบ่งขายต้องแยกชิ้นก่อนตาม D-112 " +
+        "(ขายออกทั้งชิ้นแล้วซื้อเข้าเป็นหลายชิ้น ยอดสองฝั่งหักกันได้ศูนย์)",
+    );
+  }
+
+  const proceeds = requireNumber(input.proceeds, "proceeds");
+  if (proceeds < 0) {
+    fail(`ยอดเงินที่ได้รับติดลบไม่ได้ (ได้ ${proceeds}) — ถ้ามีค่าใช้จ่ายให้หักก่อนส่งเข้ามา`);
+  }
+  const assetCost = requireNumber(input.assetCost, "ต้นทุนของทรัพย์ชิ้นนี้");
+  if (!(assetCost > 0)) {
+    fail(
+      `ต้นทุนของทรัพย์ ${assetId} ต้องมากกว่า 0 (ได้ ${assetCost}) — ` +
+        "ทรัพย์ที่ไม่มีต้นทุนในสมุดแปลว่ายังไม่ได้บันทึกการซื้อ ตัดออกก่อนไม่ได้ · " +
+        "ต้นทุนต้องอ่านจากสมุดที่ post แล้ว (fn_asset_cost_basis) ไม่ใช่จาก state ของหน้าจอ",
+    );
+  }
+  const priorSurplus =
+    input.priorSurplus === undefined ? 0 : requireNumber(input.priorSurplus, "ส่วนเกินทุนที่ค้างอยู่");
+
+  const gainSatang = toSatang(proceeds, "ยอดเงินที่ได้รับ") - toSatang(assetCost, "ต้นทุนของทรัพย์ชิ้นนี้");
+
+  return {
+    mode: "whole_item",
+    costRemoved: assetCost,
+    gain: fromSatang(gainSatang),
+    outcome: gainSatang > 0 ? "gain" : gainSatang < 0 ? "loss" : "breakeven",
+    // **ทั้งก้อน** ไม่ผ่าน surplusToReverseFor() ซึ่งเป็นสมการของสัดส่วน
+    surplusToReverse: round2Satang(priorSurplus),
+    remainingCost: 0,
+    remainingQuantity: 0,
+  };
+}
+
+/** ปัดเป็นสตางค์ด้วยทางเดียวกับที่ใช้ทั้งไฟล์ (ติดลบได้ — เคยตีราคาลงคือเรื่องปกติ) */
+function round2Satang(baht: number): number {
+  return fromSatang(toSatang(baht, "ส่วนเกินทุนที่ค้างอยู่"));
+}
+
+/**
+ * **ปากทางเดียวของการขาย** — เลือกเส้นทางจาก *ข้อมูลอ้างอิง* ไม่ใช่จากที่ผู้เรียกบอก
+ *
+ * ผู้เรียกส่งข้อมูลของเส้นทางไหนมา ถ้าไม่ตรงกับโหมดของทรัพย์ **ปฏิเสธ**
+ * (ไม่ใช่แปลงให้ — การแปลงให้คือการตัดสินใจเรื่องเงินแทนผู้ใช้)
+ */
+export function planDisposal(
+  lots: Lot[],
+  input: SellInput | SpecificLotSellInput | WholeItemSellInput,
+  assets: AssetBook,
+): SellResult | SpecificLotSellResult | WholeItemSellResult {
+  if (input === null || typeof input !== "object") fail("ไม่ได้ส่งข้อมูลการขายมา");
+  const mode = costBasisModeFor(requireString(input.assetId, "assetId"), assets);
+  if (mode === "average") return sellAtAverageCost(lots, input as SellInput, assets);
+  if (mode === "specific_lot") return sellBySpecificLots(lots, input as SpecificLotSellInput, assets);
+  return sellWholeItem(input as WholeItemSellInput, assets);
 }
 
 /**

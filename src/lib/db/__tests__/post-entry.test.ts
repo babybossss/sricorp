@@ -182,36 +182,30 @@ describe("notWiredReason · หมวดที่เส้นทางบัน�
   });
 
   /**
-   * หมวดอัตราแลกเปลี่ยนแยกด้วยธง `requires` ไม่ได้ เพราะ `trf.fx_convert` ใช้
-   * `transferTarget` เหมือนการโอนธรรมดา จึงกั้นจาก **คู่บัญชีที่ตารางกฎประกาศ**
+   * หมวดอัตราแลกเปลี่ยนแยกด้วยธง `requires` ไม่ได้ เพราะ `trf.fx_convert` ใช้ `transferTarget` เหมือนการโอนธรรมดา
+   * จึงตัดสินจาก **คู่บัญชีที่ตารางกฎประกาศ** (ผ่าน `fxKindOf`)
+   *
+   * **เปิดแล้ว (25/10)**: ฟอร์มมีแผงเลือกอัตราจากตาราง และ `postEntry` อ่านยอดเงินตรา/อัตราตามบัญชี/ผลต่างที่ค้างจากสมุดเอง
+   * พิสูจน์กับ Postgres จริงใน `fx-posting.pg.test.ts` — ด่านนี้จึงไม่กั้นอีก ส่วน "ข้อมูลไม่ครบ" ถูกกั้นที่ `postEntry`
+   * (ไม่ส่งอัตรา → ปฏิเสธ · ดู post-entry.test.ts ของ actions)
    */
   const touchesFx = (s: (typeof subs)[number]) =>
     [s.dr, s.cr, s.gainCoa, s.lossCoa].some(
       (c) => c === FX_TRANSLATION_DIFF_COA || c === REALISED_FX_GAIN || c === REALISED_FX_LOSS
     );
 
-  /**
-   * **เหตุของด่านตอนนี้คือหน้าจอ ไม่ใช่เครื่องยนต์** — engine สร้างบรรทัดครบแล้ว
-   * (ขาผลต่าง · ขาล้าง 3410 ตามสัดส่วน · กำไร/ขาดทุนจริง · สกุล/อัตราต่อบรรทัด)
-   * และด่านฝั่ง DB อุดทั้งสามเคสที่ผู้ตรวจวัดได้ (20261025000005)
-   * แต่ฟอร์มยังไม่มีช่องให้กรอกอัตราและยอดที่ต้องอ่านจากสมุดจริง
-   * ปลดด่านนี้พร้อมกับตอนต่อช่องในฟอร์ม ไม่ใช่ก่อนหน้านั้น (บทเรียนข้อ 7)
-   */
-  it("ทุกหมวดที่แตะ 3410 หรือบัญชีกำไร/ขาดทุน FX ที่เกิดจริง ถูกกั้น", () => {
+  it("หมวดแปลงค่า/แลกเงินตราทั้งสามหมวดไม่ถูกกั้นแล้ว (และต้องมีอยู่จริง ไม่ใช่ทดสอบชุดว่าง)", () => {
     const fx = subs.filter(touchesFx);
-    expect(fx.length, "ไม่มีหมวด FX เลย — ด่านนี้จะไม่ได้กั้นอะไร").toBeGreaterThan(0);
-    for (const s of fx) expect(notWiredReason(s), s.code).toMatch(/ยังบันทึกจริงไม่ได้/);
+    expect(fx.map((s) => s.code).sort()).toEqual(["trf.fx_convert", "trf.fx_translate_down", "trf.fx_translate_up"]);
+    for (const s of fx) expect(notWiredReason(s), s.code).toBeNull();
   });
 
-  it("กั้น `trf.fx_convert` ด้วย ทั้งที่ธง requires เหมือนการโอนธรรมดา", () => {
+  it("แลกเงินยังมีธง requires เหมือนการโอนธรรมดา (จึงแยกด้วยธงไม่ได้ ต้องแยกจากคู่บัญชี) และทั้งคู่ลงได้", () => {
     const convert = subs.find((s) => s.code === "trf.fx_convert");
     const plain = subs.find((s) => s.code === "trf.internal");
-    expect(convert, "ไม่มีหมวดแลกเงิน").toBeTruthy();
-    expect(plain, "ไม่มีหมวดโอนระหว่างบัญชีตัวเอง").toBeTruthy();
-    // ธงเหมือนกัน → ถ้าด่านอ่านแต่ธง จะกั้นทั้งคู่หรือปล่อยทั้งคู่ ซึ่งผิดทั้งสองทาง
     expect(convert!.requires).toEqual(plain!.requires);
-    expect(notWiredReason(convert!), "แลกเงินต้องถูกกั้น").toMatch(/ยังบันทึกจริงไม่ได้/);
-    expect(notWiredReason(plain!), "โอนระหว่างบัญชีตัวเองต้องลงได้ปกติ").toBeNull();
+    expect(notWiredReason(convert!)).toBeNull();
+    expect(notWiredReason(plain!)).toBeNull();
   });
 
   it("หมวดอื่นไม่ถูกกั้น (เช่น ค่าเช่า) และไม่รู้จักหมวดไม่ทำให้พัง", () => {

@@ -49,12 +49,16 @@ on conflict (currency, rate_date) do nothing;
 insert into sri_os.assets(id, code, name, class_id, category_id, owner_id, currency)
 select '00000000-0000-0000-0000-0000000aa001', 'LOT-AAPL', 'หุ้น AAPL (ล็อต)',
        cat.class_id, cat.id, (select id from sri_os.owners where code = 'THANAKORN'), 'USD'
-  from (select id, class_id from sri_os.asset_categories order by id limit 1) cat;
+  -- **หมวดต้องระบุชัด** — ตั้งแต่ 20261025000010 หมวดเป็นตัวตัดสินว่าเฉลี่ยได้หรือไม่
+  -- AAPL = หุ้นในตลาดหลักทรัพย์ → เส้นทางถัวเฉลี่ยของ D-112 ยังใช้ได้เหมือนเดิม
+  from (select id, class_id from sri_os.asset_categories
+         where code = 'PAPER_STOCK_LISTED') cat;
 
 insert into sri_os.assets(id, code, name, class_id, category_id, owner_id, currency)
 select '00000000-0000-0000-0000-0000000aa002', 'LOT-GOLD', 'ทองคำแท่ง (ล็อต)',
        cat.class_id, cat.id, (select id from sri_os.owners where code = 'THANAKORN'), 'THB'
-  from (select id, class_id from sri_os.asset_categories order by id limit 1) cat;
+  -- ทองคำ — ลูกพี่ยืนยันว่าเฉลี่ยได้ (หนึ่งในสามอย่าง)
+  from (select id, class_id from sri_os.asset_categories where code = 'COM_GOLD') cat;
 
 create or replace function pg_temp.own(p_code text) returns uuid
 language sql stable as $fn$ select id from sri_os.owners where code = p_code $fn$;

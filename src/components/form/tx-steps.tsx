@@ -17,6 +17,7 @@ import { ContactPicker } from "./contact-picker";
 import { bankChoices, bankDirectionLabel, showsBankField } from "./bank-field";
 import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
+import { FxPanel } from "./fx-panel";
 import { JournalPreview } from "./journal-preview";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { coa } from "@/lib/rules/coa";
@@ -137,14 +138,21 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
   const needsContact = requires("contact");
   const needsAsset = requires("asset");
   // ขายทรัพย์: ยอดเงินมาจาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงด้านล่าง ไม่ให้พิมพ์ทับ
-  const amountDerived = requires("capitalGain");
+  // แปลงค่า/แลกเงินตรา: ยอดบาทมาจากอัตราที่เลือกในแผงด้านล่าง ไม่ให้พิมพ์ทับ (engine ปฏิเสธยอดที่ไม่ตรงอัตราแม้สตางค์เดียว)
+  const amountDerived = requires("capitalGain") || !!api.fxKind;
 
   return (
     <div className="flex flex-col gap-4">
       <Field
         label="จำนวนเงิน (บาท)"
         required
-        hint={amountDerived ? "คำนวณให้จาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงคำนวณกำไร/ขาดทุน" : undefined}
+        hint={
+          api.fxKind
+            ? "ตั้งให้จากอัตราที่เลือกในแผงด้านล่าง"
+            : amountDerived
+              ? "คำนวณให้จาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงคำนวณกำไร/ขาดทุน"
+              : undefined
+        }
       >
         <AmountInput
           value={draft.amount}
@@ -315,6 +323,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
 
       {/* โอนระหว่างบัญชี — ต้องมีปลายทาง และถ้าข้ามผู้ถือต้องบอกว่าเป็นอะไร */}
       {requires("transferTarget") ? <TransferSection api={api} narrow={narrow} /> : null}
+
+      {/* แปลงค่า / แลกเงินตรา — เลือกอัตราจากตาราง · ยอดคงเหลือและผลต่างที่ค้างอ่านจากสมุด */}
+      {api.fxKind ? <FxPanel api={api} /> : null}
 
       {/* Backlog ข้อ 2 — เงื่อนไขสัญญากู้/ให้กู้ */}
       {requires("loanTerms") ? (
