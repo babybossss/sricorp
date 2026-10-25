@@ -50,7 +50,9 @@ create extension if not exists dblink;
 -- fixtures ที่อยู่ข้ามสองช่วง (temp + ฟังก์ชันช่วย)
 -- ------------------------------------------------------------
 create temporary table d_uid (label text primary key, id uuid not null default gen_random_uuid());
-insert into d_uid(label) values ('approver'), ('approver2');
+-- `clerk` = พนักงานคีย์ร่าง · **คนคีย์ต้องไม่ใช่คนอนุมัติ** (C-2 · 20261025000018)
+-- ถ้าผู้อนุมัติคีย์ร่างเองแล้วอนุมัติเอง ด่าน C-2 จะปฏิเสธ → เคสของ C-1 จะวัดผิดด่าน
+insert into d_uid(label) values ('approver'), ('approver2'), ('clerk');
 
 create or replace function pg_temp.own(p_code text) returns uuid
 language sql stable as $fn$ select id from sri_os.owners where code = p_code $fn$;
@@ -92,17 +94,27 @@ returns jsonb language sql stable as $fn$
                            'cf_category', 'operating')))));
 $fn$;
 
-/** คีย์ร่างหนึ่งใบ (สถานะ pending) */
-create or replace function pg_temp.new_draft(p_memo text, p_amount numeric default 50000)
+/**
+ * คีย์ร่างหนึ่งใบ (สถานะ pending) **ในฐานะพนักงานคีย์ ไม่ใช่ผู้อนุมัติ**
+ * สวมสิทธิ์ `clerk` ชั่วคราวแล้วคืนให้ผู้เรียก — เพราะ C-2 ห้ามคนคีย์อนุมัติร่างตัวเอง
+ * ถ้าคีย์ด้วยชื่อผู้อนุมัติ เคสของไฟล์นี้จะถูกปฏิเสธด้วยด่าน C-2 แทน (วัดผิดด่าน)
+ */
+create or replace function pg_temp.new_draft(p_memo text, p_amount numeric default 50000,
+                                             p_id uuid default null)
 returns uuid language plpgsql as $fn$
-declare v_id uuid;
+declare v_id uuid; v_prev text := coalesce(current_setting('test.uid', true), '');
 begin
-  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, memo,
+  perform set_config('test.uid', pg_temp.uid('clerk')::text, true);
+  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, memo,
                                    attachments, created_by)
-  values (pg_temp.own('THANAKORN'), 'exp.other', '2026-02-01', p_amount, p_memo,
-          array['ใบแจ้งหนี้.pdf'], auth.uid())
+  values (coalesce(p_id, gen_random_uuid()), pg_temp.own('THANAKORN'), 'exp.other',
+          '2026-02-01', p_amount, p_memo, array['ใบแจ้งหนี้.pdf'], auth.uid())
   returning id into v_id;
+  perform set_config('test.uid', v_prev, true);
   return v_id;
+exception when others then
+  perform set_config('test.uid', v_prev, true);
+  raise;
 end $fn$;
 
 /** จำนวนใบและยอดรวมในสมุดของหมวดนี้ — ตัววัดว่า "ลงซ้ำ" เกิดขึ้นหรือไม่ */
@@ -135,7 +147,9 @@ create or replace function pg_temp.make_users() returns void
 language sql as $fn$
   insert into auth.users(id) select id from d_uid on conflict do nothing;
   insert into sri_os.app_users(id, email, display_name, role, is_active)
-  select u.id, u.label || '@local', u.label, 'management', true from d_uid u
+  select u.id, u.label || '@local', u.label,
+         case when u.label = 'clerk' then 'staff' else 'management' end, true
+    from d_uid u
   on conflict (id) do nothing;
   insert into sri_os.user_owner_access(user_id, owner_id)
   select u.id, o.id from d_uid u, sri_os.owners o
@@ -356,11 +370,8 @@ do $$
 begin
   perform set_config('test.uid', pg_temp.uid('approver')::text, true);
   set local role authenticated;
-  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, memo,
-                                   attachments, created_by)
-  select f.id, pg_temp.own('THANAKORN'), 'exp.other', '2026-02-01', 50000,
-         'C1-' || f.label || ' ร่างสำหรับสองเซสชัน', array['ใบแจ้งหนี้.pdf'], auth.uid()
-    from d_fix f where f.label = 't1';
+  perform pg_temp.new_draft('C1-t1 ร่างสำหรับสองเซสชัน', 50000,
+                            (select id from d_fix where label = 't1'));
   reset role;
 exception when others then
   reset role;
@@ -388,11 +399,7 @@ begin
   perform set_config('test.uid', pg_temp.uid('approver')::text, true);
   set local role authenticated;
 
-  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, memo,
-                                   attachments, created_by)
-  values (pg_temp.own('THANAKORN'), 'exp.other', '2026-02-01', 50000,
-          'C1-d4b ร่างที่จะถูกอัปเดตข้ามธุรกรรม', array['ใบแจ้งหนี้.pdf'], auth.uid())
-  returning id into v_draft;
+  v_draft := pg_temp.new_draft('C1-d4b ร่างที่จะถูกอัปเดตข้ามธุรกรรม');
 
   perform pg_temp.must_fail_like('D4 อัปเดตร่างให้ชี้ใบที่มาจากธุรกรรมอื่น', format($q$
     update sri_os.draft_entries

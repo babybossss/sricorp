@@ -89,8 +89,33 @@ select '00000000-0000-0000-0000-0000000d0003', id, 'inc.rent', date '2026-09-11'
   from sri_os.owners where code = 'THANAKORN';
 set local role authenticated;
 select pg_temp.login('mgmt');
-select pg_temp.eq('D1 ผู้อนุมัติปิดร่างที่ตัวเองสร้างได้ (DB ไม่ห้าม)', pg_temp.rows_hit(format($q$update sri_os.draft_entries set status = 'rejected', reject_reason = 'x', reviewed_by = %L, reviewed_at = now() where id = '00000000-0000-0000-0000-0000000d0003'$q$, pg_temp.uid('mgmt'))), 1::bigint);
+-- **D1 กลับด้านแล้ว** (20261025000018 · C-2): ผู้อนุมัติปิดร่างที่ตัวเองคีย์ไม่ได้
+-- `mgmt` เป็นระดับ management ไม่ใช่ super_admin → **ห้ามเด็ดขาด** ไม่มีทางใส่เหตุผลแล้วผ่าน
+-- (ข้อยกเว้นของ super_admin ที่ต้องมีเหตุผลกำกับ ทดสอบที่ zz_draft_self_review_test.sql)
+do $d1$
+declare v_refused boolean := false; v_msg text;
+begin
+  begin
+    update sri_os.draft_entries
+       set status = 'rejected', reject_reason = 'x',
+           reviewed_by = pg_temp.uid('mgmt'), reviewed_at = now()
+     where id = '00000000-0000-0000-0000-0000000d0003';
+  exception when others then
+    v_refused := true;
+    get stacked diagnostics v_msg = message_text;
+  end;
+  if not v_refused then
+    raise exception 'FAIL D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ได้ — การแยกหน้าที่หลุดทั้งชั้น (คนเดียวคีย์เอง อนุมัติเอง ลงสมุดเอง)';
+  end if;
+  if (select status::text from sri_os.draft_entries
+       where id = '00000000-0000-0000-0000-0000000d0003') <> 'pending' then
+    raise exception 'FAIL D1b · ร่างต้องยัง pending หลังถูกปฏิเสธ';
+  end if;
+  raise notice 'ok D1 · ผู้อนุมัติปิดร่างที่ตัวเองคีย์ไม่ได้ (%)', left(v_msg, 80);
+end $d1$;
 -- D2 ต้องใช้ร่างใหม่ที่ยัง pending ไม่ใช่ร่างที่ D1 เพิ่งปฏิเสธไป
+-- (ร่างนี้ `mgmt` คีย์เองเหมือนกัน แต่ `trg_draft_post_once` ยิงก่อน `trg_draft_review_separation`
+--  ตามลำดับชื่อ → ข้อความที่ได้ยังเป็นด่าน "ต้องมีใบในสมุด" ซึ่งเป็นสิ่งที่ข้อนี้วัด)
 -- ไม่งั้นจะไปชนด่าน "ร่างที่ตัดสินแล้วแก้ไม่ได้" ซึ่งเป็นคนละด่านกับที่ข้อนี้ตั้งใจวัด
 do $d2$
 declare
