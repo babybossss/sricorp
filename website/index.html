@@ -59,12 +59,16 @@
   .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:80px}
   .nav.scrolled{background:rgba(6,26,58,.96);backdrop-filter:blur(8px);box-shadow:0 1px 0 rgba(255,255,255,.06)}
   .logo{display:flex;align-items:center;gap:12px;color:#fff}
-  .logo-mark{width:40px;height:40px}
-  .logo-text b{display:block;font-size:20px;letter-spacing:.08em;line-height:1}
-  .logo-text span{font-size:11px;letter-spacing:.24em;opacity:.7}
+  .logo-mark{width:62px;height:54px;color:#fff}
+  .logo-sep{width:1px;height:30px;background:rgba(255,255,255,.25)}
+  .logo-text{font-size:12px;letter-spacing:.24em;line-height:1.4;opacity:.85}
   .menu{display:flex;gap:36px;align-items:center;color:rgba(255,255,255,.85);font-size:15px}
   .menu a:not(.btn):hover{color:#fff}
   .menu .btn{height:44px;padding:0 20px;font-size:15px}
+  .lang{display:flex;border:1px solid rgba(255,255,255,.3);border-radius:var(--r);overflow:hidden;margin-left:20px}
+  .lang button{background:none;border:0;color:rgba(255,255,255,.7);font:600 13px var(--font);letter-spacing:.1em;padding:0 12px;height:36px;cursor:pointer}
+  .lang button[aria-pressed="true"]{background:#fff;color:var(--navy-900)}
+  .nav-right{display:flex;align-items:center}
   .burger{display:none;background:none;border:0;color:#fff;font-size:26px;cursor:pointer}
 
   /* HERO */
@@ -174,7 +178,8 @@
     .menu.open{display:flex;position:absolute;top:80px;left:0;right:0;flex-direction:column;gap:0;background:var(--navy-900);padding:8px 24px 24px;align-items:stretch}
     .menu.open a:not(.btn){padding:14px 0;border-bottom:1px solid rgba(255,255,255,.08)}
     .menu.open .btn{margin-top:16px;justify-content:center}
-    .burger{display:block}
+    .burger{display:block;margin-left:12px}
+    .lang{margin-left:0}
     .services,.pf{grid-template-columns:1fr}
     .principles .wrap{grid-template-columns:1fr 1fr}
     .principles div:nth-child(3){border-left:0;padding-left:0}
@@ -197,23 +202,39 @@
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="sri-logo" viewBox="56 108 348 304">
+    <g fill="none" stroke="currentColor" stroke-width="17">
+      <path d="M136 188 C 112 184 80 166 74 134 L 138 134 C 150 140 156 152 160 166 C 166 150 178 138 196 134 L 222 134 C 214 168 194 184 168 192 L 168 230"/>
+      <path d="M160 230 L 388 230 L 388 248 A 136 136 0 0 1 252 384 A 136 136 0 0 1 116 248 C 116 222 124 204 136 188"/>
+      <path d="M244 316 C 226 344 222 374 234 402 C 268 384 286 352 288 318"/>
+      <path d="M330 280 C 318 300 300 312 280 318"/>
+    </g>
+    <circle cx="294" cy="264" r="9" fill="currentColor"/>
+    <text x="232" y="212" font-family="IBM Plex Sans Thai, Arial, sans-serif" font-weight="700" font-size="86" letter-spacing="-2" fill="currentColor">SRI</text>
+  </symbol>
+</svg>
 
 <!-- NAV -->
 <header class="nav" id="nav">
   <div class="wrap">
     <a href="#top" class="logo" aria-label="SRI Corporation">
-      <!-- โลโก้ชั่วคราว: แทนด้วยไฟล์ CI จริง assets/brand/logo-white.svg -->
-      <svg class="logo-mark" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="4" fill="#004AAD"/><path d="M8 25c4-8 12-11 20-7 2 1 4 0 5-2-1 5-4 8-9 8 2 2 2 5 0 7-1-3-3-4-6-4-4 0-7 0-10-2z" fill="#fff"/></svg>
-      <span class="logo-text"><b>SRI</b><span>CORPORATION</span></span>
+      <svg class="logo-mark"><use href="#sri-logo"/></svg><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
     </a>
     <nav class="menu" id="menu">
-      <a href="#services">บริการ</a>
-      <a href="#work">การทำงาน</a>
-      <a href="#portfolio">ผลงาน</a>
-      <a href="#contact">ติดต่อ</a>
-      <a href="#partner" class="btn btn-primary">ร่วมเป็นพาร์ทเนอร์</a>
+      <a href="#services" data-en="Services">บริการ</a>
+      <a href="#work" data-en="How We Work">การทำงาน</a>
+      <a href="#portfolio" data-en="Portfolio">ผลงาน</a>
+      <a href="#contact" data-en="Contact">ติดต่อ</a>
+      <a href="#partner" class="btn btn-primary" data-en="Become a Partner">ร่วมเป็นพาร์ทเนอร์</a>
     </nav>
-    <button class="burger" id="burger" aria-label="เมนู">☰</button>
+    <div class="nav-right">
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-lang="th" aria-pressed="true">TH</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <button class="burger" id="burger" aria-label="Menu">☰</button>
+    </div>
   </div>
 </header>
 
@@ -222,15 +243,15 @@
   <div class="ph"><img data-img="hero" alt=""></div>
   <div class="wrap">
     <div class="eyebrow">SRI Corporation · Sustainable Generations Wealth</div>
-    <h1>สร้างความมั่งคั่ง<br><em>ที่ส่งต่อได้หลายรุ่น</em></h1>
-    <p>อสังหาริมทรัพย์ · สินเชื่อ · การลงทุน ครบในที่เดียว<br>ทำงานด้วยวินัยแบบสถาบันการเงิน โปร่งใส ตรวจสอบได้ทุกขั้นตอน</p>
+    <h1 data-en="Building wealth<br><em>that lasts for generations</em>">สร้างความมั่งคั่ง<br><em>ที่ส่งต่อได้หลายรุ่น</em></h1>
+    <p data-en="Real estate · Financing · Investing — all under one roof.<br>Run with institutional discipline, transparent at every step.">อสังหาริมทรัพย์ · สินเชื่อ · การลงทุน ครบในที่เดียว<br>ทำงานด้วยวินัยแบบสถาบันการเงิน โปร่งใส ตรวจสอบได้ทุกขั้นตอน</p>
     <div class="cta">
-      <a href="#services" class="btn btn-primary">ดูบริการของเรา →</a>
-      <a href="#partner" class="btn btn-ghost">คุยกับทีม SRI</a>
+      <a href="#services" class="btn btn-primary" data-en="Explore our services →">ดูบริการของเรา →</a>
+      <a href="#partner" class="btn btn-ghost" data-en="Talk to SRI">คุยกับทีม SRI</a>
     </div>
     <div class="hero-pillars">
-      <a href="#svc-re"><span class="n">01</span><b>REAL ESTATE<small>ลงทุน · บริหาร · นายหน้า</small></b></a>
-      <a href="#svc-fin"><span class="n">02</span><b>FINANCING<small>จำนอง · Private Credit · Bridge Loan</small></b></a>
+      <a href="#svc-re"><span class="n">01</span><b>REAL ESTATE<small data-en="Investment · Management · Brokerage">ลงทุน · บริหาร · นายหน้า</small></b></a>
+      <a href="#svc-fin"><span class="n">02</span><b>FINANCING<small data-en="Mortgage · Private Credit · Bridge Loan">จำนอง · Private Credit · Bridge Loan</small></b></a>
       <a href="#svc-inv"><span class="n">03</span><b>INVESTING<small>SME · Institutional</small></b></a>
     </div>
   </div>
@@ -239,10 +260,10 @@
 <!-- PRINCIPLES -->
 <div class="principles">
   <div class="wrap">
-    <div><b>มั่นคง</b><span>ทุกดีลมีทรัพย์และสัญญารองรับ</span></div>
-    <div><b>โปร่งใส</b><span>เงื่อนไขชัด เอกสารครบ ไม่มีค่าแฝง</span></div>
-    <div><b>รวดเร็ว</b><span>ประเมินและตอบกลับไว ตัดสินใจได้จริง</span></div>
-    <div><b>ระยะยาว</b><span>คิดแบบ Family Office ข้ามรุ่น</span></div>
+    <div data-en="<b>Stability</b><span>Every deal is backed by assets and contracts</span>"><b>มั่นคง</b><span>ทุกดีลมีทรัพย์และสัญญารองรับ</span></div>
+    <div data-en="<b>Transparency</b><span>Clear terms, complete documents, no hidden fees</span>"><b>โปร่งใส</b><span>เงื่อนไขชัด เอกสารครบ ไม่มีค่าแฝง</span></div>
+    <div data-en="<b>Speed</b><span>Fast assessment and decisions you can act on</span>"><b>รวดเร็ว</b><span>ประเมินและตอบกลับไว ตัดสินใจได้จริง</span></div>
+    <div data-en="<b>Long-term</b><span>A family-office mindset, across generations</span>"><b>ระยะยาว</b><span>คิดแบบ Family Office ข้ามรุ่น</span></div>
   </div>
 </div>
 
@@ -252,21 +273,21 @@
     <div class="head">
       <div>
         <div class="eyebrow blue">What We Do</div>
-        <h2>3 ธุรกิจหลัก ที่เชื่อมกัน<br>เป็นระบบเดียว</h2>
+        <h2 data-en="Three core businesses,<br>one connected platform">3 ธุรกิจหลัก ที่เชื่อมกัน<br>เป็นระบบเดียว</h2>
       </div>
-      <p class="lead">ตั้งแต่หาทรัพย์ ปล่อยสินเชื่อ จนถึงร่วมลงทุน — ทีมเดียวดูแลครบ ทำให้ประเมินเร็วและเข้าใจความเสี่ยงจริง</p>
+      <p class="lead" data-en="From sourcing property and lending to co-investing — one team covers it all, so we assess fast and understand the real risk.">ตั้งแต่หาทรัพย์ ปล่อยสินเชื่อ จนถึงร่วมลงทุน — ทีมเดียวดูแลครบ ทำให้ประเมินเร็วและเข้าใจความเสี่ยงจริง</p>
     </div>
 
     <div class="services">
       <article class="svc" id="svc-re">
         <div class="ph"><img data-img="re" alt="อสังหาริมทรัพย์"><span class="num">01</span><span class="tag">REAL ESTATE SOLUTION</span></div>
         <div class="body">
-          <h3>REAL ESTATE<small>โซลูชันอสังหาริมทรัพย์</small></h3>
-          <p>ลงทุน บริหาร และซื้อขายทรัพย์ ด้วยข้อมูลจริงจากพอร์ตที่เราถือเอง</p>
+          <h3>REAL ESTATE<small data-en="Real estate solutions">โซลูชันอสังหาริมทรัพย์</small></h3>
+          <p data-en="Invest, manage and trade property — informed by real data from the portfolio we hold ourselves.">ลงทุน บริหาร และซื้อขายทรัพย์ ด้วยข้อมูลจริงจากพอร์ตที่เราถือเอง</p>
           <ul>
-            <li><b>Investment</b><span>ลงทุนอสังหาฯ</span></li>
-            <li><b>Management</b><span>บริหารทรัพย์ · ปล่อยเช่า</span></li>
-            <li><b>Broker</b><span>นายหน้าซื้อ-ขาย-เช่า</span></li>
+            <li><b>Investment</b><span data-en="Property investment">ลงทุนอสังหาฯ</span></li>
+            <li><b>Management</b><span data-en="Asset &amp; lease management">บริหารทรัพย์ · ปล่อยเช่า</span></li>
+            <li><b>Broker</b><span data-en="Sales &amp; leasing brokerage">นายหน้าซื้อ-ขาย-เช่า</span></li>
           </ul>
         </div>
       </article>
@@ -274,12 +295,12 @@
       <article class="svc" id="svc-fin">
         <div class="ph"><img data-img="fin" alt="สินเชื่อ"><span class="num">02</span><span class="tag">FINANCING</span></div>
         <div class="body">
-          <h3>FINANCING<small>สินเชื่อมีหลักทรัพย์</small></h3>
-          <p>เงินทุนยืดหยุ่น อนุมัติไว เงื่อนไขชัดเจน สำหรับเจ้าของทรัพย์และธุรกิจ</p>
+          <h3>FINANCING<small data-en="Asset-backed lending">สินเชื่อมีหลักทรัพย์</small></h3>
+          <p data-en="Flexible capital with fast approval and clear terms for property and business owners.">เงินทุนยืดหยุ่น อนุมัติไว เงื่อนไขชัดเจน สำหรับเจ้าของทรัพย์และธุรกิจ</p>
           <ul>
-            <li><b>Mortgage</b><span>สินเชื่อจำนอง</span></li>
-            <li><b>Private Credit</b><span>สินเชื่อเอกชน</span></li>
-            <li><b>Bridge Loan</b><span>เงินทุนระยะสั้น</span></li>
+            <li><b>Mortgage</b><span data-en="Mortgage loans">สินเชื่อจำนอง</span></li>
+            <li><b>Private Credit</b><span data-en="Private lending">สินเชื่อเอกชน</span></li>
+            <li><b>Bridge Loan</b><span data-en="Short-term financing">เงินทุนระยะสั้น</span></li>
           </ul>
         </div>
       </article>
@@ -287,11 +308,11 @@
       <article class="svc" id="svc-inv">
         <div class="ph"><img data-img="inv" alt="การลงทุน"><span class="num">03</span><span class="tag">INVESTING</span></div>
         <div class="body">
-          <h3>INVESTING<small>ร่วมลงทุน</small></h3>
-          <p>ร่วมลงทุนกับธุรกิจที่เติบโตได้จริง และลงทุนในสินทรัพย์ระดับสถาบัน</p>
+          <h3>INVESTING<small data-en="Co-investing">ร่วมลงทุน</small></h3>
+          <p data-en="Partnering with businesses built to grow, and investing in institutional-grade assets.">ร่วมลงทุนกับธุรกิจที่เติบโตได้จริง และลงทุนในสินทรัพย์ระดับสถาบัน</p>
           <ul>
-            <li><b>SME Investing</b><span>ร่วมทุนธุรกิจ SME</span></li>
-            <li><b>Institutional Investing</b><span>ลงทุนระดับสถาบัน</span></li>
+            <li><b>SME Investing</b><span data-en="SME co-investment">ร่วมทุนธุรกิจ SME</span></li>
+            <li><b>Institutional Investing</b><span data-en="Institutional-grade assets">ลงทุนระดับสถาบัน</span></li>
           </ul>
         </div>
       </article>
@@ -305,25 +326,25 @@
     <div class="head">
       <div>
         <div class="eyebrow blue">How We Work</div>
-        <h2>ทำงานจริง ลงพื้นที่จริง</h2>
+        <h2 data-en="Real work, on the ground">ทำงานจริง ลงพื้นที่จริง</h2>
       </div>
-      <p class="lead">เราดูทรัพย์ด้วยตัวเอง คุยกับเจ้าของตัวจริง และดูแลต่อจนจบดีล</p>
+      <p class="lead" data-en="We inspect every property ourselves, meet the real owners, and stay with you until the deal is done.">เราดูทรัพย์ด้วยตัวเอง คุยกับเจ้าของตัวจริง และดูแลต่อจนจบดีล</p>
     </div>
 
     <!-- รูปตัวอย่าง: เปลี่ยนเป็นรูปการทำงานจริงของทีม SRI -->
     <div class="gallery">
-      <figure class="ph"><img data-img="w1" alt=""><figcaption>ประชุมโครงสร้างดีลกับลูกค้า</figcaption></figure>
-      <figure class="ph"><img data-img="w2" alt=""><figcaption>ลงพื้นที่ประเมินทรัพย์</figcaption></figure>
-      <figure class="ph"><img data-img="w3" alt=""><figcaption>ตรวจสัญญาและเอกสาร</figcaption></figure>
-      <figure class="ph"><img data-img="w4" alt=""><figcaption>ส่งมอบทรัพย์</figcaption></figure>
-      <figure class="ph"><img data-img="w5" alt=""><figcaption>ปิดดีลกับพาร์ทเนอร์</figcaption></figure>
+      <figure class="ph"><img data-img="w1" alt=""><figcaption data-en="Structuring a deal with clients">ประชุมโครงสร้างดีลกับลูกค้า</figcaption></figure>
+      <figure class="ph"><img data-img="w2" alt=""><figcaption data-en="On-site property assessment">ลงพื้นที่ประเมินทรัพย์</figcaption></figure>
+      <figure class="ph"><img data-img="w3" alt=""><figcaption data-en="Contract &amp; document review">ตรวจสัญญาและเอกสาร</figcaption></figure>
+      <figure class="ph"><img data-img="w4" alt=""><figcaption data-en="Property handover">ส่งมอบทรัพย์</figcaption></figure>
+      <figure class="ph"><img data-img="w5" alt=""><figcaption data-en="Closing with partners">ปิดดีลกับพาร์ทเนอร์</figcaption></figure>
     </div>
 
     <div class="steps">
-      <div class="step"><span class="n">STEP 01</span><b>คุยโจทย์</b><p>เข้าใจเป้าหมายและข้อจำกัดของคุณ</p></div>
-      <div class="step"><span class="n">STEP 02</span><b>ประเมินจริง</b><p>ลงพื้นที่ ตรวจทรัพย์ ตรวจเอกสาร</p></div>
-      <div class="step"><span class="n">STEP 03</span><b>วางโครงสร้าง</b><p>เงื่อนไขชัด สัญญาครบ ก่อนเซ็น</p></div>
-      <div class="step"><span class="n">STEP 04</span><b>ดูแลต่อเนื่อง</b><p>ติดตามทุกงวด รายงานโปร่งใส</p></div>
+      <div class="step"><span class="n">STEP 01</span><b data-en="Understand your goals">คุยโจทย์</b><p data-en="We learn your objectives and constraints">เข้าใจเป้าหมายและข้อจำกัดของคุณ</p></div>
+      <div class="step"><span class="n">STEP 02</span><b data-en="Assess on site">ประเมินจริง</b><p data-en="Site visits, property and document checks">ลงพื้นที่ ตรวจทรัพย์ ตรวจเอกสาร</p></div>
+      <div class="step"><span class="n">STEP 03</span><b data-en="Structure the deal">วางโครงสร้าง</b><p data-en="Clear terms and complete contracts before signing">เงื่อนไขชัด สัญญาครบ ก่อนเซ็น</p></div>
+      <div class="step"><span class="n">STEP 04</span><b data-en="Ongoing care">ดูแลต่อเนื่อง</b><p data-en="Every installment tracked and reported transparently">ติดตามทุกงวด รายงานโปร่งใส</p></div>
     </div>
   </div>
 </section>
@@ -334,14 +355,14 @@
     <div class="head">
       <div>
         <div class="eyebrow blue">Portfolio</div>
-        <h2>ผลงานของเรา</h2>
+        <h2 data-en="Our Portfolio">ผลงานของเรา</h2>
       </div>
-      <p class="lead">กำลังรวบรวมผลงาน จะอัปเดตเร็วๆ นี้</p>
+      <p class="lead" data-en="We are compiling our track record — coming soon.">กำลังรวบรวมผลงาน จะอัปเดตเร็วๆ นี้</p>
     </div>
     <div class="pf">
-      <div><b>REAL ESTATE</b>เร็วๆ นี้</div>
-      <div><b>FINANCING</b>เร็วๆ นี้</div>
-      <div><b>INVESTING</b>เร็วๆ นี้</div>
+      <div><b>REAL ESTATE</b><span data-en="Coming soon">เร็วๆ นี้</span></div>
+      <div><b>FINANCING</b><span data-en="Coming soon">เร็วๆ นี้</span></div>
+      <div><b>INVESTING</b><span data-en="Coming soon">เร็วๆ นี้</span></div>
     </div>
   </div>
 </section>
@@ -352,29 +373,29 @@
   <div class="wrap">
     <div>
       <div class="eyebrow">Be Partner · Join Our Team</div>
-      <h2>เติบโตไปด้วยกัน<br>กับ SRI</h2>
-      <p class="lead">ไม่ว่าจะเป็นเจ้าของทรัพย์ นักลงทุน เอเจนต์ หรือคนที่อยากร่วมทีม — ฝากข้อมูลไว้ ทีมงานจะติดต่อกลับ</p>
+      <h2 data-en="Grow together<br>with SRI">เติบโตไปด้วยกัน<br>กับ SRI</h2>
+      <p class="lead" data-en="Property owners, investors, agents or future teammates — leave your details and our team will get back to you.">ไม่ว่าจะเป็นเจ้าของทรัพย์ นักลงทุน เอเจนต์ หรือคนที่อยากร่วมทีม — ฝากข้อมูลไว้ ทีมงานจะติดต่อกลับ</p>
       <ul>
-        <li>เจ้าของทรัพย์ที่ต้องการขาย เช่า หรือหาเงินทุน</li>
-        <li>นักลงทุนและพาร์ทเนอร์ร่วมดีล</li>
-        <li>เอเจนต์และนายหน้าอสังหาฯ</li>
-        <li>คนที่อยากร่วมงานกับทีม SRI</li>
+        <li data-en="Property owners looking to sell, lease or raise capital">เจ้าของทรัพย์ที่ต้องการขาย เช่า หรือหาเงินทุน</li>
+        <li data-en="Investors and co-investment partners">นักลงทุนและพาร์ทเนอร์ร่วมดีล</li>
+        <li data-en="Real estate agents and brokers">เอเจนต์และนายหน้าอสังหาฯ</li>
+        <li data-en="People who want to join the SRI team">คนที่อยากร่วมงานกับทีม SRI</li>
       </ul>
     </div>
 
     <form id="leadForm" novalidate>
       <div id="formBody">
         <div class="seg">
-          <label><input type="radio" name="type" value="Partner" checked>เป็นพาร์ทเนอร์</label>
-          <label><input type="radio" name="type" value="Team">ร่วมทีม</label>
+          <label><input type="radio" name="type" value="Partner" checked><span data-en="Become a Partner">เป็นพาร์ทเนอร์</span></label>
+          <label><input type="radio" name="type" value="Team"><span data-en="Join the Team">ร่วมทีม</span></label>
         </div>
-        <div class="field"><label for="f-name">ชื่อ-นามสกุล</label><input id="f-name" name="name" required autocomplete="name" placeholder="ชื่อของคุณ"></div>
-        <div class="field"><label for="f-email">อีเมล</label><input id="f-email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>
-        <div class="field"><label for="f-phone">เบอร์โทร</label><input id="f-phone" name="phone" type="tel" required autocomplete="tel" placeholder="08X-XXX-XXXX"></div>
-        <button class="btn btn-primary" type="submit">ส่งข้อมูล →</button>
-        <p class="note">ข้อมูลของคุณใช้เพื่อติดต่อกลับเท่านั้น</p>
+        <div class="field"><label for="f-name" data-en="Full name">ชื่อ-นามสกุล</label><input id="f-name" name="name" required autocomplete="name" placeholder="ชื่อของคุณ" data-en-ph="Your name"></div>
+        <div class="field"><label for="f-email" data-en="Email">อีเมล</label><input id="f-email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>
+        <div class="field"><label for="f-phone" data-en="Phone">เบอร์โทร</label><input id="f-phone" name="phone" type="tel" required autocomplete="tel" placeholder="08X-XXX-XXXX"></div>
+        <button class="btn btn-primary" type="submit" data-en="Submit →">ส่งข้อมูล →</button>
+        <p class="note" data-en="Your information is used only to contact you.">ข้อมูลของคุณใช้เพื่อติดต่อกลับเท่านั้น</p>
       </div>
-      <div class="ok" id="formOk"><b>ได้รับข้อมูลแล้ว ขอบคุณครับ</b>ทีม SRI จะติดต่อกลับโดยเร็ว</div>
+      <div class="ok" id="formOk"><b data-en="Thank you — we have received your details">ได้รับข้อมูลแล้ว ขอบคุณครับ</b><span data-en="The SRI team will be in touch shortly.">ทีม SRI จะติดต่อกลับโดยเร็ว</span></div>
     </form>
   </div>
 </section>
@@ -385,20 +406,19 @@
     <div class="foot">
       <div>
         <a href="#top" class="logo" style="margin-bottom:20px">
-          <svg class="logo-mark" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="4" fill="#004AAD"/><path d="M8 25c4-8 12-11 20-7 2 1 4 0 5-2-1 5-4 8-9 8 2 2 2 5 0 7-1-3-3-4-6-4-4 0-7 0-10-2z" fill="#fff"/></svg>
-          <span class="logo-text"><b>SRI</b><span>CORPORATION</span></span>
+          <svg class="logo-mark"><use href="#sri-logo"/></svg><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
         </a>
         <p style="color:#fff;font-weight:600">บริษัท เอสอาร์ไอ คอร์ปอเรชั่น จำกัด</p>
         <p>SRI Corporation Co., Ltd.</p>
-        <p style="margin-top:12px">[ที่อยู่บริษัท — รอข้อมูลจริง]</p>
+        <p style="margin-top:12px" data-en="[Company address — pending]">[ที่อยู่บริษัท — รอข้อมูลจริง]</p>
       </div>
       <div>
-        <h4>ติดต่อเรา</h4>
+        <h4 data-en="Contact Us">ติดต่อเรา</h4>
         <p><a href="mailto:info@sricorporation.com">info@sricorporation.com</a></p>
-        <p>[เบอร์โทรบริษัท]</p>
+        <p data-en="[Company phone]">[เบอร์โทรบริษัท]</p>
       </div>
       <div>
-        <h4>ติดตาม SRI</h4>
+        <h4 data-en="Follow SRI">ติดตาม SRI</h4>
         <div class="social">
           <a href="https://www.facebook.com/sricorpth" target="_blank" rel="noopener" aria-label="Facebook"><svg viewBox="0 0 24 24"><path d="M14 8V6c0-1 .4-1.5 1.6-1.5H18V1h-3.3C11.5 1 10.5 3 10.5 5.6V8H8v3.5h2.5V23H14V11.5h3.1L17.6 8z"/></svg></a>
           <a href="https://www.instagram.com/sricorpth" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM17.3 5.5a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zM12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.6 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2z"/></svg></a>
@@ -418,7 +438,8 @@
   // ===== รูปภาพ (รูปตัวอย่างจาก Unsplash — เปลี่ยนเป็นรูปจริงได้ที่นี่ เช่น "assets/img/hero.jpg") =====
   const U = id => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=80`;
   const IMAGES = {
-    hero:    U("photo-1486406146926-c627a92ad1ab"), // อาคารสำนักงานกระจก
+    hero:    ["assets/img/hero-bangkok.jpg",         // ภาพตึกกรุงเทพฯ จากลูกพี่ (วางไฟล์ไว้ที่ assets/img)
+              U("photo-1486406146926-c627a92ad1ab")], // สำรอง: อาคารสำนักงานกระจก
     re:      U("photo-1600585154340-be6161a56a0c"), // บ้านหรู
     fin:     U("photo-1450101499163-c8848c66ca85"), // เซ็นสัญญา
     inv:     U("photo-1611974789855-9c2a0a7236a3"), // กราฟตลาดทุน
@@ -430,8 +451,9 @@
     partner: U("photo-1497366216548-37526070297c")  // ออฟฟิศ
   };
   document.querySelectorAll("img[data-img]").forEach(img => {
-    img.onerror = () => img.remove();           // ถ้าโหลดไม่ได้ ใช้พื้นน้ำเงินแทน
-    img.src = IMAGES[img.dataset.img];
+    const srcs = [].concat(IMAGES[img.dataset.img]);
+    img.onerror = () => srcs.length ? (img.src = srcs.shift()) : img.remove(); // ลองรูปถัดไป ถ้าหมดใช้พื้นน้ำเงินแทน
+    img.src = srcs.shift();
     img.loading = img.dataset.img === "hero" ? "eager" : "lazy";
   });
 
@@ -443,7 +465,7 @@
     e.preventDefault();
     const f = e.target;
     if (!f.checkValidity()) { f.reportValidity(); return; }
-    const data = Object.fromEntries(new FormData(f));
+    const data = { ...Object.fromEntries(new FormData(f)), lang: document.documentElement.lang };
     if (FORM_ENDPOINT) {
       await fetch(FORM_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ ...data, _subject: `[SRI Website] ${data.type}: ${data.name}` }) });
@@ -453,6 +475,30 @@
     document.getElementById("formBody").style.display = "none";
     document.getElementById("formOk").style.display = "block";
   });
+
+  // ===== ภาษา TH / EN =====
+  const META = {
+    th: { title: "SRI Corporation", desc: document.querySelector('meta[name="description"]').content },
+    en: { title: "SRI Corporation", desc: "SRI Corporation — real estate, financing and investing under one roof, building wealth that lasts for generations." }
+  };
+  const i18n = document.querySelectorAll("[data-en]");
+  i18n.forEach(el => el.dataset.th = el.innerHTML);
+  const ph = document.querySelectorAll("[data-en-ph]");
+  ph.forEach(el => el.dataset.thPh = el.placeholder);
+  function setLang(lang) {
+    const en = lang === "en";
+    i18n.forEach(el => el.innerHTML = en ? el.dataset.en : el.dataset.th);
+    ph.forEach(el => el.placeholder = en ? el.dataset.enPh : el.dataset.thPh);
+    document.documentElement.lang = lang;
+    document.title = META[lang].title;
+    document.querySelector('meta[name="description"]').content = META[lang].desc;
+    document.querySelectorAll(".lang button").forEach(b => b.setAttribute("aria-pressed", b.dataset.lang === lang));
+    try { localStorage.setItem("sri-lang", lang); } catch (e) {}
+  }
+  document.querySelectorAll(".lang button").forEach(b => b.onclick = () => setLang(b.dataset.lang));
+  let saved = new URLSearchParams(location.search).get("lang");
+  if (!saved) { try { saved = localStorage.getItem("sri-lang"); } catch (e) {} }
+  if (saved === "en") setLang("en");
 
   // ===== Nav =====
   const nav = document.getElementById("nav");
