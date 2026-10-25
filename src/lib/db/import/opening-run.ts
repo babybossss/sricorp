@@ -52,10 +52,15 @@ type ViewRow = {
 export function supabaseOpeningStore(db: Db, coaCodeById: Record<string, string>): OpeningStore {
   return {
     async loadLookups(ownerIds) {
-      const [assets, rates] = await Promise.all([
-        db.from("assets").select("id, code, name, owner_id, status, currency").in("owner_id", ownerIds),
-        db.from("fx_rates").select("currency, rate_date, thb_per_unit"),
-      ]);
+      let assets, rates;
+      try {
+        [assets, rates] = await Promise.all([
+          db.from("assets").select("id, code, name, owner_id, status, currency").in("owner_id", ownerIds),
+          db.from("fx_rates").select("currency, rate_date, thb_per_unit"),
+        ]);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
       if (assets.error) return { ok: false, error: `อ่านทรัพย์ไม่สำเร็จ (${assets.error.message})` };
       if (rates.error) return { ok: false, error: `อ่านตารางอัตราแลกเปลี่ยนไม่สำเร็จ (${rates.error.message})` };
       return {
@@ -77,14 +82,19 @@ export function supabaseOpeningStore(db: Db, coaCodeById: Record<string, string>
     },
 
     async loadExisting() {
-      const fetched = await fetchAllPages<ViewRow>(
-        () =>
-          db
-            .from("v_ledger_posted")
-            .select("transaction_id, owner_id, doc_date, coa_id, bank_account_id, debit, credit, reverses_id")
-            .in("txn_type_code", openingCodes())
-            .order("line_id", { ascending: true }) as never
-      );
+      let fetched;
+      try {
+        fetched = await fetchAllPages<ViewRow>(
+          () =>
+            db
+              .from("v_ledger_posted")
+              .select("transaction_id, owner_id, doc_date, coa_id, bank_account_id, debit, credit, reverses_id")
+              .in("txn_type_code", openingCodes())
+              .order("line_id", { ascending: true }) as never
+        );
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
       if (!fetched.ok) return { ok: false, error: `อ่านยอดตั้งต้นเดิมในสมุดไม่สำเร็จ (${fetched.error})` };
       const reversed = new Set(fetched.rows.filter((r) => r.reverses_id).map((r) => r.reverses_id!));
       const byTxn = new Map<string, ExistingOpeningEntry>();

@@ -682,13 +682,19 @@ export type OpeningPlan = {
   totals: { owners: number; journals: number; lines: number; assets: number; liabilities: number; equity: number };
 };
 
-const signature = (docDate: string, lines: JournalLine[]): string =>
-  JSON.stringify([
-    docDate,
-    lines
-      .map((l) => [l.coaCode, l.bankAccountId ?? "", cents(l.debit), cents(l.credit)] as const)
-      .sort((a, b) => (a[0] + a[1] + a[2] + a[3]).localeCompare(b[0] + b[1] + b[2] + b[3])),
-  ]);
+/**
+ * ลายเซ็นเนื้อหาของชุดยอดตั้งต้นหนึ่งชุด — **รวมเป็นยอดสุทธิต่อ (รหัสบัญชี, บัญชีธนาคาร)** ไม่เทียบทีละบรรทัด
+ * เพราะในสมุดจริงยอดตั้งต้นของผู้ถือหนึ่งคนกระจายหลายใบ (หนึ่งหมวดต่อใบ · หุ้นต่อทรัพย์หนึ่งใบ) และแต่ละใบมีขา 3300 ของตัวเอง
+ * ขณะที่ชุดจากไฟล์เป็นบรรทัดเดียวต่อรหัสบัญชี — เทียบทีละบรรทัดจะเห็น "ต่าง" ทั้งที่ยอดสุทธิเท่ากัน
+ */
+const signature = (docDate: string, lines: JournalLine[]): string => {
+  const net = new Map<string, number>();
+  for (const l of lines) {
+    const k = `${l.coaCode}|${l.bankAccountId ?? ""}`;
+    net.set(k, (net.get(k) ?? 0) + cents(l.debit) - cents(l.credit));
+  }
+  return JSON.stringify([docDate, [...net].filter(([, v]) => v !== 0).sort(([x], [y]) => x.localeCompare(y))]);
+};
 
 export function planOpeningImport(parsed: ParsedOpening, existing: ExistingOpeningEntry[], ownerNames: Map<string, string>): OpeningPlan {
   const items: PlanItem[] = [];

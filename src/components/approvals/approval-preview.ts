@@ -1,37 +1,19 @@
-import type { Approval } from "@/lib/mock/ledger";
+import type { ApprovalItem } from "@/lib/db/approvals-model";
+import { approvalInput } from "@/lib/db/approvals-model";
 import type { LedgerResolver, PostingInput } from "@/lib/ledger/types";
 import { previewPosting, type PreviewResult } from "@/lib/ledger/preview";
 import { buildPosting } from "@/lib/ledger/posting";
 import { PostingError } from "@/lib/ledger/types";
 
 /**
- * ประกอบ input ของ engine จากรายการรออนุมัติ
- *
- * บัญชีอ่านจาก `item.bankAccountId` ที่คนคีย์เลือกเท่านั้น — ไม่หยิบ "บัญชีแรกของผู้ถือ" มาแทน
- * ถ้าไม่มี ส่งค่าว่างเข้าไปตรงๆ แล้วให้ engine เป็นคนตัดสินว่าพอไหม
- * (แผงนี้ห้ามเช็ค "รายการช่องที่ขาด" เอง — กติกาของ engine เปลี่ยนเมื่อไร แผงจะไม่ล้าหลัง)
- *
- * ค่าว่างเป็น "" ไม่ใช่ undefined เพื่อให้ตรงกับชนิด `PostingInput.bankAccountId: string`
- * ที่ engine ใช้อยู่ — engine ตรวจด้วย falsy จึงถือว่า "" คือไม่ได้ระบุเหมือนกัน
+ * พรีวิวและด่านของรายการรออนุมัติ — ที่เดียวที่แผงตรวจ รายการในคิว และปุ่มอนุมัติหมู่ใช้ร่วมกัน
+ * การแปลงร่าง → input ของ engine อยู่ที่ `approvalInput()` (ไม่เดาบัญชี ไม่เดาประเภท)
  */
-export function approvalInput(item: Approval): PostingInput {
-  return {
-    typeKey: item.typeKey,
-    subCode: item.subCode,
-    amount: Math.abs(item.amount),
-    ownerId: item.ownerId,
-    bankAccountId: item.bankAccountId ?? "",
-    assetId: item.assetId,
-    contactId: item.contactId,
-    // รออนุมัติ = ยังไม่มีใครยืนยันว่าเงินเคลื่อน · ธงมากับรายการ ไม่ใช่ให้แผงเดา
-    notYetPaid: !!item.notYetPaid,
-    // หลักฐานมากับตัวรายการ — ฝั่งนิติบุคคล engine ใช้ตัดสินว่าบันทึกได้ไหม ห้ามละไว้
-    attachments: item.attachments,
-  };
-}
+export { approvalInput };
 
 export type ApprovalPreview = {
-  input: PostingInput;
+  /** null = ไม่รู้จักหมวดย่อยของร่างนี้ */
+  input: PostingInput | null;
   /**
    * บรรทัดบัญชีสำหรับ "ให้คนอ่าน" — มาจาก `buildPostingDraft()` ผ่าน `previewPosting()`
    * ไฟล์แนบไม่เปลี่ยนคู่บัญชี จึงโชว์บรรทัดได้แม้ยังไม่มีหลักฐาน
@@ -47,6 +29,8 @@ export type ApprovalPreview = {
   blockedReason: string | null;
 };
 
+const UNKNOWN_SUB = (code: string) => `ไม่รู้จักหมวดย่อย "${code}" ในตารางกฎ — ระบบไม่เดาประเภทรายการให้ จึงอนุมัติไม่ได้`;
+
 /** ถาม engine ตัวจริง — คืนเหตุผลของ `PostingError` หรือ null ถ้าผ่าน */
 function engineVerdict(input: PostingInput, resolve: LedgerResolver): string | null {
   try {
@@ -59,26 +43,28 @@ function engineVerdict(input: PostingInput, resolve: LedgerResolver): string | n
   }
 }
 
-/** ผลพรีวิวของรายการรออนุมัติ — ที่เดียวที่แผงตรวจ ตารางคิว และปุ่มอนุมัติหมู่ใช้ร่วมกัน */
-export function previewApproval(item: Approval, resolve: LedgerResolver): ApprovalPreview {
+export function previewApproval(item: ApprovalItem, resolve: LedgerResolver): ApprovalPreview {
   const input = approvalInput(item);
+  if (!input) {
+    const reason = UNKNOWN_SUB(item.subCode);
+    return { input: null, preview: { ok: false, reason }, canApprove: false, blockedReason: reason };
+  }
   const preview = previewPosting(input, resolve);
   const blockedReason = engineVerdict(input, resolve);
   return { input, preview, canApprove: blockedReason === null, blockedReason };
 }
 
 export type BulkApprovalPlan = {
-  approvable: Approval[];
-  skipped: { item: Approval; reason: string }[];
+  approvable: ApprovalItem[];
+  skipped: { item: ApprovalItem; reason: string }[];
 };
 
 /**
  * แบ่งรายการเป็น "อนุมัติได้" กับ "ข้าม" รายตัวด้วย engine ตัวจริง
  *
- * รายการเดียวที่ติดต้องไม่ดับทั้งคิว (บทเรียน 7: กันแน่นเกินจนใช้งานไม่ได้)
- * แต่ก็ห้ามปล่อยรายการที่ติดให้ผ่านด้วย — ข้ามพร้อมเหตุผลของ engine เสมอ
+ * รายการเดียวที่ติดต้องไม่ดับทั้งคิว แต่ก็ห้ามปล่อยรายการที่ติดให้ผ่านด้วย — ข้ามพร้อมเหตุผลของ engine เสมอ
  */
-export function planBulkApproval(items: Approval[], resolve: LedgerResolver): BulkApprovalPlan {
+export function planBulkApproval(items: ApprovalItem[], resolve: LedgerResolver): BulkApprovalPlan {
   const plan: BulkApprovalPlan = { approvable: [], skipped: [] };
   for (const item of items) {
     const { canApprove, blockedReason } = previewApproval(item, resolve);

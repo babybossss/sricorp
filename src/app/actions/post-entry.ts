@@ -20,6 +20,8 @@ import { dmyToIso } from "@/lib/format";
 import { MANY_OPEN_MESSAGE, accrualReductionsOf, openSourcesFor, type AccrualReduction } from "@/lib/db/clearing-link";
 import { clearingRefFor } from "@/lib/db/pending-accruals";
 import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
+import { fxInputFor, fxKindOf, type FxChoice } from "@/lib/db/fx-input";
+import { readFxContext } from "@/lib/db/fx-context-server";
 
 /**
  * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
@@ -46,6 +48,12 @@ export type PostEntryRequest = {
    * ค้างใบเดียว = ไม่ต้องส่ง (server ผูกให้เอง) · ไม่ต้องส่งเลขอ้างอิงรูปใบล้าง: server ประกอบเองจากประวัติใน DB
    */
   clearsSourceId?: string;
+  /**
+   * **หมวดแปลงค่า/แลกเงินตราเท่านั้น** — สิ่งที่ผู้ใช้เลือก: วันของอัตราจากตารางอัตรา · จำนวนเงินตราที่แลก
+   * ยอดเงินตราคงเหลือ · อัตราที่ยอดบาทตั้งอยู่ · ผลต่างที่ค้างใน 3410 **ไม่รับจาก browser** — server อ่านจากสมุดเอง (D-115)
+   * ไม่ส่งมาทั้งที่หมวดต้องใช้ = ปฏิเสธ (ไม่เดา)
+   */
+  fx?: FxChoice;
 };
 
 export type PostEntryOutcome =
@@ -117,7 +125,9 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
 
   // เส้นทางนี้คือการบันทึกรายการใหม่ (source = manual) เท่านั้น — ธง `reversal` ปลดการกันบัญชีที่ปิดใช้งาน (D-092)
   // และต้องมาจากเส้นทางกลับรายการที่ส่ง reverses_id ด้วย · browser ส่งธงนี้มาเองไม่ได้ จึงตัดทิ้งเสมอ
-  const input: PostingInput = { ...req.input, reversal: undefined };
+  // และข้อมูลเงินตราที่ต้องอ่านจากสมุด (`fxTranslation` / `fxConversion`) ก็ตัดทิ้งเสมอ — ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้
+  // ค่าที่ใช้จริงถูกประกอบใหม่ด้านล่างจากสมุดที่ post แล้ว (เฉพาะหมวดที่ตารางกฎบอกว่าเกี่ยวกับอัตราแลกเปลี่ยน)
+  let input: PostingInput = { ...req.input, reversal: undefined, fxTranslation: undefined, fxConversion: undefined };
 
   // ---- หมวดที่เส้นทางนี้ยังต่อไม่ครบ ต้องปฏิเสธ ไม่ใช่บันทึกครึ่งเดียว ----
   const blocked = notWiredReason(findSub(input.subCode)?.sub);
@@ -135,6 +145,27 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   // ---- ข้อมูลอ้างอิงสด ----
   const refState = await loadReference();
   if (!refState.ok) return fail(`โหลดข้อมูลผู้ถือและบัญชีจากฐานข้อมูลไม่ได้ ยังไม่ได้บันทึกอะไร (${refState.error})`);
+
+  // ---- หมวดแปลงค่า/แลกเงินตรา: อ่านยอดเงินตรา อัตรา และผลต่างที่ค้างจากสมุดสด (ไม่เชื่อค่าจาก browser) ----
+  if (fxKindOf(findSub(input.subCode)?.sub)) {
+    const sub = findSub(input.subCode)!.sub;
+    if (!req.fx) {
+      return fail(`หมวด "${sub.label}" ต้องเลือกอัตราจากตารางอัตราแลกเปลี่ยน — ไม่ได้ส่งอัตราที่เลือกมา ยังไม่ได้บันทึกอะไร`);
+    }
+    if (!input.bankAccountId) return fail("เลือกบัญชีเงินตราที่จะ" + (fxKindOf(sub) === "translation" ? "แปลงค่า" : "แลก") + "ก่อน — ยังไม่ได้บันทึกอะไร");
+    let fxDb;
+    try {
+      fxDb = await createClient();
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    const read = await readFxContext(fxDb, refState.ref, { ownerId: input.ownerId, bankAccountId: input.bankAccountId });
+    if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+    const built = fxInputFor(sub, read.ctx, req.fx);
+    if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
+    // `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับด้วยค่าที่คำนวณ) — ถ้าสมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
+    input = { ...input, ...built.patch };
+  }
 
   // ---- engine ตัวจริง ----
   let payload;

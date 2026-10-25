@@ -12,6 +12,9 @@ import type { Reference } from "./reference-types";
  *   ผู้ถือที่ยังเป็น `planned` ถูกซ่อนจากตัวเลือกในฟอร์ม แต่ **engine ไม่ปฏิเสธ** เพราะข้อความ
  *   ของด่านนั้นพูดถึง "มุมมองรวม" ซึ่งไม่ตรงความจริง — ต้องให้ลูกพี่ตัดสินว่าจะกัน planned ที่ DB ไหม
  *
+ * `currency` ต้องส่งต่อให้ engine เสมอ — engine **ปฏิเสธ** เส้นทางเงินตราทุกเส้น (แปลงค่า · แลกเป็นบาท) เมื่อบัญชีไม่บอกสกุล
+ * (ไม่ตีความว่าบาท) · resolver ที่ลืมช่องนี้ทำให้ทั้งสองหมวดลงไม่ได้เลยแม้ข้อมูลครบ (เจอตอนรันกับ Postgres จริง 25/10)
+ *
  * **สถานะเปิด-ปิดของบัญชีจากสแนปช็อตนี้เก่าได้เท่าอายุของหน้า** — ห้ามใช้ตัดสินตอนบันทึกจริง
  * ตอนบันทึกจริง server action โหลดใหม่ทุกครั้ง และ trigger `fn_assert_bank_account_open` เป็นด่านสุดท้าย
  */
@@ -23,7 +26,7 @@ export function makeResolver(ref: Pick<Reference, "owners" | "banks">): LedgerRe
     ])
   );
   const banks = new Map<string, BankInfo>(
-    ref.banks.map((b) => [b.id, { id: b.id, name: b.name, ownerId: b.ownerId, isActive: b.isActive }])
+    ref.banks.map((b) => [b.id, { id: b.id, name: b.name, ownerId: b.ownerId, isActive: b.isActive, currency: b.currency }])
   );
   return {
     owner: (id) => owners.get(id) ?? null,
