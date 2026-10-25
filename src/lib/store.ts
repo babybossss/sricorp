@@ -2,7 +2,6 @@
 
 import { create } from "zustand";
 import { BANKS } from "@/lib/mock/banks";
-import { SEED_CONTACTS, type Contact } from "@/lib/mock/contacts";
 
 /**
  * สถานะทั้งแอป — รอบนี้เป็น mock ในหน่วยความจำ ยังไม่ต่อ Supabase
@@ -23,8 +22,6 @@ type AppState = {
   toggleLargeText: () => void;
 
   /** ผู้ติดต่อ — สร้างเพิ่มได้จากในฟอร์ม (Backlog ข้อ 3) */
-  contacts: Contact[];
-  addContact: (c: Omit<Contact, "id">) => Contact;
 
   /** ลำดับและสถานะเปิด-ปิดบัญชีธนาคาร (ลำดับนี้คือลำดับในทุกฟอร์ม) */
   bankOrder: string[];
@@ -38,7 +35,6 @@ type AppState = {
   clearToast: () => void;
 };
 
-let contactSeq = SEED_CONTACTS.length;
 
 export const useApp = create<AppState>((set, get) => ({
   entityId: "family",
@@ -51,12 +47,6 @@ export const useApp = create<AppState>((set, get) => ({
   largeText: false,
   toggleLargeText: () => set((s) => ({ largeText: !s.largeText })),
 
-  contacts: SEED_CONTACTS,
-  addContact: (input) => {
-    const contact: Contact = { ...input, id: `c${++contactSeq}` };
-    set((s) => ({ contacts: [...s.contacts, contact] }));
-    return contact;
-  },
 
   bankOrder: BANKS.map((b) => b.id),
   bankOff: Object.fromEntries(BANKS.map((b) => [b.id, b.off])),
