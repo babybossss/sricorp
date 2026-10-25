@@ -691,16 +691,26 @@ begin
 end $$;
 
 do $$
-declare v_s1 text; v_s2 text;
+declare v_s1 text; v_s2 text; v_uid_keep text;
 begin
   -- ---------- void แล้ว post ใหม่ ----------
   perform pg_temp.ipost('00000000-0000-0000-0000-0000000ff002', 200000);
+  /**
+   * fixture **ระดับ DB** (ร่างที่อนุมัติไปแล้วในอดีต) — ประตูร่าง 20261025000020
+   * ห้าม **ผู้ใช้ที่ล็อกอิน** INSERT ร่างที่เกิดมาเป็น approved พร้อมชื่อผู้อนุมัติ
+   * (นั่นคือประวัติการอนุมัติที่ไม่เคยเกิดขึ้น และข้ามด่าน C-1/C-2 ซึ่งเป็น
+   *  trigger ของ UPDATE) · การนำเข้าของเก่าจึงทำในฐานะระดับ DB: ไม่มีผู้ล็อกอิน
+   */
+  v_uid_keep := coalesce(current_setting('test.uid', true), '');
+  perform set_config('test.uid', '', true);
   insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status,
-                                   posted_txn_id, created_by, reviewed_by, reviewed_at)
+                                   posted_txn_id, created_by, reviewed_by, reviewed_at,
+                                   attachments)
   select '00000000-0000-0000-0000-0000000fe002', o.id, 'exp.other', current_date, 200000,
          'approved', '00000000-0000-0000-0000-0000000ff002',
-         pg_temp.iuid('i_staff'), pg_temp.iuid('i_mgmt'), now()
+         pg_temp.iuid('i_staff'), pg_temp.iuid('i_mgmt'), now(), array['ใบแจ้งหนี้.pdf']
     from sri_os.owners o where o.code = 'SRI_CORP';
+  perform set_config('test.uid', v_uid_keep, true);
   insert into sri_os.cash_confirmations(transaction_id, bank_account_id, expected_amount,
                                         actual_amount, actual_date, confirmed_by, confirmed_at)
   values ('00000000-0000-0000-0000-0000000ff002', '00000000-0000-0000-0000-0000000fb001',
@@ -766,9 +776,10 @@ begin
   end if;
 
   -- ร่างใบใหม่ที่ยังรออนุมัติ (ไม่มี posted_txn_id) — สลับเข้ามาใต้แถว received ไม่ได้
-  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status, created_by)
+  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status,
+                                   created_by, attachments)
   select '00000000-0000-0000-0000-0000000fe003', o.id, 'exp.other', current_date, 200000,
-         'pending', pg_temp.iuid('i_staff')
+         'pending', pg_temp.iuid('i_staff'), array['ใบแจ้งหนี้.pdf']
     from sri_os.owners o where o.code = 'SRI_CORP';
 
   v_err := pg_temp.ifail('สลับ draft_entry_id ใต้แถว received',

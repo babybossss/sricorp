@@ -640,8 +640,11 @@ begin
   values (v_b, v_o, 'KBANK', 'บัญชีเทสต์ X10', 'บัญชีเทสต์ X10');
   insert into sri_os.assets(id, code, name, class_id, category_id, owner_id)
   values (v_a, 'AA-X10', 'ทรัพย์เทสต์ X10', v_cls, v_cat, v_o);
-  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status, created_by)
-  values (v_d, v_o, 'exp.other', current_date, 100, 'pending', pg_temp.xuid('x_staff'));
+  -- ไฟล์แนบจำเป็นเพราะ v_o เป็นนิติบุคคล (ประตูร่าง 20261025000020 · C-3)
+  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, status,
+                                   created_by, attachments)
+  values (v_d, v_o, 'exp.other', current_date, 100, 'pending', pg_temp.xuid('x_staff'),
+          array['ใบแจ้งหนี้.pdf']);
   insert into sri_os.asset_drafts(id, kind, owner_id, name, class_id, category_id, created_by)
   values (v_ad, 'create', v_o, 'ร่างเทสต์ X10', v_cls, v_cat, pg_temp.xuid('x_staff'));
 

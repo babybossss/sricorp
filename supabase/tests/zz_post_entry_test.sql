@@ -66,6 +66,15 @@ values
 insert into sri_os.contacts(id, first_name, types)
 values ('00000000-0000-0000-0000-0000000c0001', 'ผู้เช่าตัวอย่าง', array['tenant']);
 
+-- ทรัพย์ที่ค่าเช่าใบนี้อ้างถึง — ตารางกฎระบุว่าหมวด `inc.rent` ต้องมีทรัพย์
+-- (ประตูร่าง 20261025000020 บังคับตั้งแต่ตอนคีย์ เหมือนที่ฟอร์มบังคับ)
+insert into sri_os.assets(id, code, name, class_id, category_id, owner_id)
+select '00000000-0000-0000-0000-0000000a0001', 'PE-1', 'ห้องเช่าตัวอย่าง',
+       k.class_id, k.id, o.id
+  from (select class_id, id from sri_os.asset_categories order by code limit 1) k,
+       sri_os.owners o
+ where o.code = 'THANAKORN';
+
 -- ตัวช่วย
 create or replace function pg_temp.must_fail(p_label text, p_sql text) returns void
 language plpgsql as $fn$
@@ -785,8 +794,10 @@ declare v_own uuid := (select id from sri_os.owners where code='THANAKORN'); v_n
 begin
   perform pg_temp.must_fail('T14a staff post ตรง', 'select sri_os.fn_post_entry(pg_temp.rent_payload(''staff ลอง post''))');
   -- เส้นทางที่ถูกต้องของ Staff = คีย์ร่าง
-  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, memo)
-  values (v_own, 'inc.rent', '2026-09-01', 12000, 'ร่างของ staff');
+  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, memo,
+                                   asset_id, contact_id)
+  values (v_own, 'inc.rent', '2026-09-01', 12000, 'ร่างของ staff',
+          '00000000-0000-0000-0000-0000000a0001', '00000000-0000-0000-0000-0000000c0001');
   select count(*) into v_n from sri_os.draft_entries where memo = 'ร่างของ staff';
   if v_n <> 1 then raise exception 'FAIL: staff คีย์ร่างไม่ได้ (เส้นทางที่ควรเปิดกลับปิด)'; end if;
   raise notice 'ok T14 · Staff post ตรงไม่ได้ (ต้องผ่านคิวร่าง) · คีย์ร่างได้';

@@ -80,8 +80,13 @@ insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
 select '00000000-0000-0000-0000-00000000dd01', id, 'KBANK', 'บัญชีเทสต์กันลบ', 'บัญชีเทสต์กันลบ'
   from sri_os.owners where code = 'SRI_CORP';
 
-insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
-select '00000000-0000-0000-0000-00000000dd02', o.id, 'inc.other', current_date, 5000, pg_temp.duid('d_staff')
+-- ร่างนี้ต้องผ่านประตูร่าง (20261025000020 · C-3): นิติบุคคลต้องมีไฟล์หลักฐาน ·
+-- และ `inc.other` ตั้งค้างรับไม่ได้ (can_accrue = false) จึงต้องมีวันเงินเข้า + บัญชี
+insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, cash_date, amount,
+                                 bank_account_id, created_by, attachments)
+select '00000000-0000-0000-0000-00000000dd02', o.id, 'inc.other', current_date, current_date,
+       5000, '00000000-0000-0000-0000-00000000dd01', pg_temp.duid('d_staff'),
+       array['ใบเสร็จ.pdf']
   from sri_os.owners o where o.code = 'SRI_CORP';
 
 -- ใบยืนยันเงินสามใบ: ยืนยันครบ · ยืนยันบางส่วน · **ยังไม่กรอกยอดจริง**

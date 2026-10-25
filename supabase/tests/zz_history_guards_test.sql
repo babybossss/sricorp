@@ -708,9 +708,11 @@ begin
 
   -- (ง) ข้อความที่ผู้ใช้เห็นตอนถูกปฏิเสธก็ต้องไม่ชี้ไปทางที่ไม่มีจริง
   --     ต้องมีแถวจริงก่อน ไม่งั้น "ลบ 0 แถว" ไม่ยิง trigger แล้วข้อนี้ผ่านฟรีๆ
-  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
+  -- นิติบุคคลต้องมีไฟล์หลักฐานตั้งแต่ตอนคีย์ (ประตูร่าง 20261025000020)
+  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by,
+                                   attachments)
   select '00000000-0000-0000-0000-00000000ce11', o.id, 'exp.other', current_date, 4000,
-         pg_temp.huid('h_staff')
+         pg_temp.huid('h_staff'), array['ใบแจ้งหนี้.pdf']
     from sri_os.owners o where o.code = 'SRI_CORP';
   insert into sri_os.cash_confirmations(id, draft_entry_id, bank_account_id, expected_amount)
   values ('00000000-0000-0000-0000-00000000ce12', '00000000-0000-0000-0000-00000000ce11',
@@ -772,9 +774,10 @@ do $$
 declare v_draft uuid; v_conf uuid;
 begin
   -- (ข) ยืนยันเงินเข้า-ออก: สร้างใบ + กรอกยอดจริง (UPDATE คือทางออกที่มีจริง)
-  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
+  insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by,
+                                   attachments)
   select '00000000-0000-0000-0000-00000000ce02', o.id, 'exp.other', current_date, 7000,
-         pg_temp.huid('h_staff')
+         pg_temp.huid('h_staff'), array['ใบแจ้งหนี้.pdf']
     from sri_os.owners o where o.code = 'SRI_CORP'
   returning id into v_draft;
 

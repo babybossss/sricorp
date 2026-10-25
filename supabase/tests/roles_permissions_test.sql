@@ -206,8 +206,13 @@ insert into sri_os.bank_accounts(id, owner_id, bank, account_name, display_name)
 select '00000000-0000-0000-0000-0000000000b1', id, 'KBANK', 'ทดสอบ', 'ทดสอบ'
   from sri_os.owners where code = 'SRI_CORP';
 
-insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by)
-select '00000000-0000-0000-0000-0000000000d1', o.id, 'exp.other', current_date, 1000, pg_temp.uid('staff')
+-- ร่างของนิติบุคคล **ต้องมีไฟล์หลักฐานตั้งแต่ตอนคีย์** (20261025000020 · C-3)
+-- เหตุผล: `trg_corporate_evidence` บังคับตอน post → ร่างที่ไม่มีไฟล์จะอนุมัติไม่ได้
+-- และจะค้างคิวตลอดไป จึงถูกปฏิเสธที่ประตูร่างแทน
+insert into sri_os.draft_entries(id, owner_id, txn_type_code, doc_date, amount, created_by,
+                                 attachments)
+select '00000000-0000-0000-0000-0000000000d1', o.id, 'exp.other', current_date, 1000,
+       pg_temp.uid('staff'), array['ใบแจ้งหนี้.pdf']
   from sri_os.owners o where o.code = 'SRI_CORP';
 
 insert into sri_os.period_closes(owner_id, period, closed_by)
@@ -259,8 +264,13 @@ do $$
 declare n int;
 begin
   perform pg_temp.login('staff');
-  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, created_by)
-  select o.id, 'exp.other', current_date, 500, pg_temp.uid('staff')
+  -- งวดเดือนนี้ของ SRI_CORP ถูกปิดไว้ข้างบน (period_closes) → ร่างของนิติบุคคล
+  -- ที่ลงย้อนเข้างวดที่ปิดแล้วจะอนุมัติไม่ได้ ประตูร่างจึงปฏิเสธตอนคีย์
+  -- ใช้วันสุดท้ายของเดือนก่อน ซึ่งยังเป็นงวดที่เปิดอยู่
+  insert into sri_os.draft_entries(owner_id, txn_type_code, doc_date, amount, created_by,
+                                   attachments)
+  select o.id, 'exp.other', (date_trunc('month', current_date) - interval '1 day')::date, 500,
+         pg_temp.uid('staff'), array['ใบแจ้งหนี้.pdf']
     from sri_os.owners o where o.code = 'SRI_CORP';
 
   update sri_os.draft_entries set status = 'approved'
