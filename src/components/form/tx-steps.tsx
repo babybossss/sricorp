@@ -477,7 +477,11 @@ function WhtSection({ api }: { api: TxFormApi }) {
 function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) {
   const { draft, patch, pickTransferTo, transferToOwnerId, isCrossOwner } = api;
   const ref = useReference();
-  const banks = orderedBanks(ref).filter((b) => b.isActive && b.id !== draft.bankId);
+  // ซื้อเงินตรา (ตารางกฎ: requires fxAcquisition) ปลายทางต้องเป็นบัญชีสกุลต่างประเทศของผู้ถือเดียวกัน — ไม่โชว์บัญชีที่ engine จะปฏิเสธอยู่แล้ว
+  const toFcdOnly = api.requires("fxAcquisition");
+  const banks = orderedBanks(ref).filter(
+    (b) => b.isActive && b.id !== draft.bankId && (!toFcdOnly || (b.ownerId === draft.holderId && b.currency !== "THB"))
+  );
   const toOwner = transferToOwnerId ? ref.owners.find((o) => o.id === transferToOwnerId) ?? null : null;
 
   return (
@@ -489,7 +493,7 @@ function TransferSection({ api, narrow }: { api: TxFormApi; narrow?: boolean }) 
           label="โอนเข้าบัญชี"
           required
           error={!draft.transferToBankId ? "ต้องระบุบัญชีปลายทาง" : undefined}
-          hint="เลือกบัญชีของคนอื่นได้ ระบบจะรู้เองว่าเป็นรายการข้ามผู้ถือ"
+          hint={toFcdOnly ? "เลือกได้เฉพาะบัญชีสกุลต่างประเทศของผู้ถือเดียวกัน" : "เลือกบัญชีของคนอื่นได้ ระบบจะรู้เองว่าเป็นรายการข้ามผู้ถือ"}
         >
           <Select value={draft.transferToBankId} onChange={(e) => pickTransferTo(e.target.value)}>
             <option value="">— เลือกบัญชีปลายทาง —</option>

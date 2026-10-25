@@ -244,7 +244,12 @@ export function useTxForm() {
    * (ไม่ให้พิมพ์ · D-115) ผู้ใช้เลือกแค่วันของอัตราจากตารางอัตราและจำนวนที่แลก · ตอนบันทึกจริง server อ่านซ้ำเอง ไม่เชื่อค่าที่ฟอร์มถือ
    */
   const fxKind = fxKindOf(sub);
-  const fxKey = fxKind && draft.holderId && draft.bankId ? `${draft.holderId}|${draft.bankId}` : null;
+  // ซื้อเงินตรา: บัญชีที่ต้องอ่านสมุด/สกุล/อัตราคือบัญชี **ปลายทาง** (FCD) · แปลงค่า/แลก: บัญชีเงินตราที่เลือกเป็นบัญชีหลัก
+  const fxAccountId = fxKind === "acquisition" ? draft.transferToBankId : draft.bankId;
+  const fxKey = fxKind && draft.holderId && fxAccountId ? `${draft.holderId}|${fxAccountId}` : null;
+  /** กดโหลดอัตรา/ยอดใหม่ — เผื่อเพิ่งเพิ่มอัตราที่หน้าตั้งค่าแล้วกลับมาที่ฟอร์มเดิม */
+  const [fxReloadTick, setFxReloadTick] = React.useState(0);
+  const reloadFx = React.useCallback(() => setFxReloadTick((n) => n + 1), []);
   const [fxState, setFxState] = React.useState<{ key: string | null; loading: boolean; error: string | null; ctx: FxAccountContext | null }>({
     key: null,
     loading: false,
@@ -268,7 +273,7 @@ export function useTxForm() {
     return () => {
       live = false;
     };
-  }, [fxKey]);
+  }, [fxKey, fxReloadTick]);
   const fxCtx = fxState.key === fxKey ? fxState.ctx : null;
   const fxResult = React.useMemo(
     () => (fxKind && sub && fxCtx ? fxInputFor(sub, fxCtx, fxChoiceOf(draft.fx)) : null),
@@ -350,7 +355,8 @@ export function useTxForm() {
     if (requires("contact") && !draft.contactId) out.push("ผู้ติดต่อ");
     // แปลงค่า/แลกเงินตรา: ต้องอ่านสมุดได้และเลือกอัตราครบ — ข้อความจาก fxInputFor บอกว่าขาดอะไร
     if (fxKind) {
-      if (!draft.bankId) out.push("บัญชีเงินฝากสกุลต่างประเทศ");
+      if (fxKind === "acquisition" && !draft.bankId) out.push("บัญชีบาทที่จ่าย");
+      else if (!fxAccountId) out.push(fxKind === "acquisition" ? "บัญชีสกุลต่างประเทศที่เงินตราเข้า" : "บัญชีเงินฝากสกุลต่างประเทศ");
       else if (fxState.loading) out.push("ข้อมูลเงินตราจากสมุด (กำลังโหลด)");
       else if (!fxCtx) out.push(fxState.error ? `ข้อมูลเงินตราจากสมุด — ${fxState.error}` : "ข้อมูลเงินตราจากสมุด");
       else if (fxResult && !fxResult.ok) out.push(fxResult.message);
@@ -382,7 +388,7 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxState, fxCtx, fxResult, disposalState, disposalCtx, disposalBuild]);
+  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxAccountId, fxState, fxCtx, fxResult, disposalState, disposalCtx, disposalBuild]);
 
   const reset = React.useCallback(() => {
     setDraft(freshDraft());
@@ -605,6 +611,7 @@ export function useTxForm() {
     canPost,
     notWired,
     fxKind,
+    reloadFx,
     fxState: { loading: fxState.loading && fxState.key === fxKey, error: fxState.key === fxKey ? fxState.error : null, ctx: fxCtx },
     fxResult,
     moneyMoved,

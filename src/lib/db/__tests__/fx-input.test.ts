@@ -251,3 +251,54 @@ describe("fxInputFor ↔ buildPosting · ยอดที่ฟอร์มคำ
     expect(lines.reduce((t, l) => t + l.debit - l.credit, 0)).toBe(0);
   });
 });
+
+describe("ซื้อเงินตราเข้า FCD (acquisition) · fxInputFor ↔ buildPosting", () => {
+  const rates = [rate("2026-10-01", 36.5)];
+  // ctx คือบัญชีปลายทาง (ยังไม่มียอดเงินตรา) — สกุลมาจากบัญชี ไม่ใช่จากผู้ใช้
+  const empty = ctxOf(0, 36.5, rates);
+
+  it("fxKindOf ตัดสินจากธง requires ของตารางกฎ → acquisition", () => {
+    expect(fxKindOf(sub("trf.fx_acquire"))).toBe("acquisition");
+  });
+
+  it("ไม่ส่งข้อมูล: ไม่เลือกอัตรา · วันที่ไม่มีในตาราง · ไม่ใส่จำนวน · จำนวน ≤ 0 → ปฏิเสธทุกกรณี (บัญชียังไม่มียอดก็ซื้อได้)", () => {
+    const s = sub("trf.fx_acquire");
+    for (const choice of [{}, { dealRateDate: "2026-10-02", amountOriginal: 1 }, { dealRateDate: "2026-10-01" }, { dealRateDate: "2026-10-01", amountOriginal: 0 }, { dealRateDate: "2026-10-01", amountOriginal: -5 }]) {
+      expect(fxInputFor(s, empty, choice).ok, JSON.stringify(choice)).toBe(false);
+    }
+  });
+
+  it("ซื้อ 10,000 USD @36.50 → ยอดบาท 365,000 · ผ่าน engine · P&L 0 · ไม่มี 3410 · ขา FCD พกสกุล/จำนวน/อัตรา ขาบาทไม่พก", () => {
+    const built = fxInputFor(sub("trf.fx_acquire"), empty, { dealRateDate: "2026-10-01", amountOriginal: 10_000 });
+    expect(built).toMatchObject({ ok: true, amount: 365_000 });
+    if (!built.ok) return;
+    expect(built.patch.fxAcquisition).toEqual({ currency: "USD", amountOriginal: 10_000, dealRateToThb: 36.5, dealRateDate: "2026-10-01" });
+    const out = buildPosting(
+      { typeKey: "transfer", subCode: "trf.fx_acquire", amount: built.amount, ownerId: "o1", bankAccountId: "thb", transferToBankAccountId: "fcd", ...built.patch },
+      resolver
+    );
+    const lines = out.transactions[0].lines;
+    const fcdLine = lines.find((l) => l.bankAccountId === "fcd")!;
+    const thbLine = lines.find((l) => l.bankAccountId === "thb")!;
+    expect(fcdLine).toMatchObject({ debit: 365_000, currency: "USD", amountOriginal: 10_000, fxRate: 36.5 });
+    expect(thbLine).toMatchObject({ credit: 365_000 });
+    expect(thbLine.currency).toBeUndefined();
+    expect(lines.some((l) => ["3410", "4330", "5930"].includes(l.coaCode))).toBe(false);
+  });
+
+  it("ยอดบาทที่คำนวณตรงกับ engine ทุกกรณีสุ่ม 300 ครั้ง (ทศนิยมจำนวนเงินตรา 2 ตำแหน่ง × อัตรา 4 ตำแหน่ง) และผิด 1 สตางค์ถูก engine ปฏิเสธ", () => {
+    let seed = 20261026;
+    const next = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+    for (let i = 0; i < 300; i++) {
+      const r = Math.round((20 + next() * 30) * 10_000) / 10_000;
+      const ao = Math.round((1 + next() * 99_999) * 100) / 100;
+      const ctx = ctxOf(0, r, [rate("2026-10-01", r)]);
+      const built = fxInputFor(sub("trf.fx_acquire"), ctx, { dealRateDate: "2026-10-01", amountOriginal: ao });
+      expect(built.ok).toBe(true);
+      if (!built.ok) continue;
+      const base = { typeKey: "transfer", subCode: "trf.fx_acquire", ownerId: "o1", bankAccountId: "thb", transferToBankAccountId: "fcd", ...built.patch } as PostingInput;
+      expect(() => buildPosting({ ...base, amount: built.amount }, resolver), `ao=${ao} r=${r}`).not.toThrow();
+      expect(() => buildPosting({ ...base, amount: Math.round((built.amount + 0.01) * 100) / 100 }, resolver)).toThrow(PostingError);
+    }
+  });
+});

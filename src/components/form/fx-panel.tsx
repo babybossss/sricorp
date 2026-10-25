@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -20,8 +21,10 @@ export function FxPanel({ api }: { api: TxFormApi }) {
   const { draft, patch, fxKind, fxState, fxResult } = api;
   const ctx = fxState.ctx;
   if (!fxKind) return null;
+  const acquisition = fxKind === "acquisition";
   const conversion = fxKind === "conversion";
-  const rateKey = conversion ? "dealRateDate" : "newRateDate";
+  // แลก/ซื้อใช้ "อัตราที่ได้จริง" (dealRateDate) · แปลงค่าใช้อัตราสิ้นงวด (newRateDate)
+  const rateKey = conversion || acquisition ? "dealRateDate" : "newRateDate";
 
   const pickRate = (date: string) => {
     // เลือกอัตราแล้วตั้งวันที่เอกสารและวันที่เงินเคลื่อนเป็นวันของอัตรานั้นให้ (แก้ต่อได้ในช่องวันที่ด้านบน)
@@ -30,9 +33,19 @@ export function FxPanel({ api }: { api: TxFormApi }) {
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
-      <div className="text-base font-semibold">{conversion ? "แลกเงินตราต่างประเทศเป็นบาท" : "ตีค่าเงินฝากสกุลต่างประเทศใหม่ตามอัตราสิ้นงวด"}</div>
+      <div className="text-base font-semibold">
+        {acquisition ? "ซื้อเงินตราต่างประเทศเข้าบัญชีสกุลต่างประเทศ" : conversion ? "แลกเงินตราต่างประเทศเป็นบาท" : "ตีค่าเงินฝากสกุลต่างประเทศใหม่ตามอัตราสิ้นงวด"}
+      </div>
 
-      {!draft.bankId ? (
+      {acquisition && !draft.bankId ? (
+        <div className="text-base leading-7 text-ink-600">
+          เลือก<b>บัญชีบาทที่จ่าย</b>ด้านบนก่อน
+        </div>
+      ) : acquisition && !draft.transferToBankId ? (
+        <div className="text-base leading-7 text-ink-600">
+          เลือก<b>บัญชีสกุลต่างประเทศที่เงินตราเข้า</b>ใน “โอนเข้าบัญชี” ด้านบน — ระบบจะรู้สกุลเงินจากบัญชีนั้นเอง ไม่ต้องพิมพ์สกุลหรือยอดบาท
+        </div>
+      ) : !acquisition && !draft.bankId ? (
         <div className="text-base leading-7 text-ink-600">
           เลือก<b>บัญชีเงินฝากสกุลต่างประเทศ</b>ด้านบนก่อน — ระบบจะอ่านยอดเงินตราคงเหลือและอัตราตามบัญชีจากสมุดให้ ไม่ต้องพิมพ์เอง
         </div>
@@ -46,6 +59,12 @@ export function FxPanel({ api }: { api: TxFormApi }) {
         </div>
       ) : ctx ? (
         <>
+          {acquisition ? (
+            <div className="rounded border border-line bg-surface p-[14px_16px] text-base leading-7">
+              เงินตราเข้าบัญชีสกุล <b>{ctx.currency}</b> · ยอดคงเหลือตามสมุดตอนนี้ {ctx.units.toLocaleString("en-US")} {ctx.currency}
+              <div className="text-sm text-ink-600">สกุลเงินมาจากบัญชีปลายทาง แก้ในฟอร์มไม่ได้</div>
+            </div>
+          ) : (
           <dl className="grid grid-cols-1 gap-x-6 gap-y-2 rounded border border-line bg-surface p-[14px_16px] text-base sm:grid-cols-2">
             <div>
               <dt className="text-sm text-ink-600">เงินตราคงเหลือตามสมุด</dt>
@@ -66,11 +85,18 @@ export function FxPanel({ api }: { api: TxFormApi }) {
             </div>
             <div className="text-sm leading-6 text-ink-600 sm:self-end">ตัวเลขชุดนี้อ่านจากสมุดที่บันทึกแล้ว แก้ในฟอร์มไม่ได้</div>
           </dl>
+          )}
 
           <Field
-            label={conversion ? "อัตราที่แลกได้จริง (เลือกจากตารางอัตราแลกเปลี่ยน)" : "อัตราสิ้นงวดที่จะใช้ (เลือกจากตารางอัตราแลกเปลี่ยน)"}
+            label={
+              acquisition
+                ? "อัตราที่ซื้อได้จริง (เลือกจากตารางอัตราแลกเปลี่ยน)"
+                : conversion
+                  ? "อัตราที่แลกได้จริง (เลือกจากตารางอัตราแลกเปลี่ยน)"
+                  : "อัตราสิ้นงวดที่จะใช้ (เลือกจากตารางอัตราแลกเปลี่ยน)"
+            }
             required
-            hint="เลือกได้เฉพาะวันที่มีในตารางอัตรา — พิมพ์อัตราเองไม่ได้ เพราะฐานข้อมูลปฏิเสธอัตราที่ไม่ตรงกับที่ประกาศไว้ · ไม่มีอัตราที่ต้องการ ให้ผู้ดูแลระบบเพิ่มอัตราของวันนั้นก่อน"
+            hint="เลือกได้เฉพาะวันที่มีในตารางอัตรา — พิมพ์อัตราเองไม่ได้ เพราะฐานข้อมูลปฏิเสธอัตราที่ไม่ตรงกับที่ประกาศไว้ · ไม่มีอัตราที่ต้องการ ให้เพิ่มที่ “ตั้งค่า > อัตราแลกเปลี่ยน” ก่อน แล้วกลับมากดโหลดอัตราใหม่"
             error={ctx.rates.length === 0 ? `ยังไม่มีอัตรา ${ctx.currency} ในตารางอัตราแลกเปลี่ยนเลย` : undefined}
           >
             <Select value={draft.fx[rateKey]} onChange={(e) => pickRate(e.target.value)} disabled={ctx.rates.length === 0}>
@@ -82,6 +108,21 @@ export function FxPanel({ api }: { api: TxFormApi }) {
               ))}
             </Select>
           </Field>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="secondary" onClick={api.reloadFx} className="max-sm:min-h-control-mobile">
+              โหลดอัตราล่าสุดอีกครั้ง
+            </Button>
+            <Link href="/settings/fx-rates" target="_blank" rel="noreferrer" className="text-base">
+              เพิ่มอัตราที่หน้าตั้งค่า (เปิดแท็บใหม่)
+            </Link>
+          </div>
+
+          {acquisition ? (
+            <Field label={`จำนวน ${ctx.currency} ที่ซื้อ`} required hint="ยอดบาทที่จ่ายคิดให้เอง = จำนวนเงินตรา × อัตราที่เลือก (พิมพ์ยอดบาทเองไม่ได้)">
+              <Input value={draft.fx.amountOriginal} onChange={(e) => patch({ fx: { ...draft.fx, amountOriginal: e.target.value } })} inputMode="decimal" placeholder="0.00" />
+            </Field>
+          ) : null}
 
           {conversion ? (
             <Field label={`จำนวน ${ctx.currency} ที่แลก`} required hint={`ไม่เกินยอดคงเหลือ ${ctx.units.toLocaleString("en-US")} ${ctx.currency}`}>
@@ -110,7 +151,13 @@ export function FxPanel({ api }: { api: TxFormApi }) {
 
           {fxResult?.ok ? (
             <div className="rounded border border-line bg-surface p-[14px_16px] text-base leading-7">
-              <div className="text-sm text-ink-600">{conversion ? "บาทที่จะได้รับ (จำนวนที่แลก × อัตราที่แลกได้จริง)" : "ผลต่างที่จะลงส่วนของเจ้าของ (ไม่เข้างบกำไรขาดทุน)"}</div>
+              <div className="text-sm text-ink-600">
+                {acquisition
+                  ? "บาทที่ต้องจ่าย (จำนวนเงินตรา × อัตราที่ซื้อได้จริง) · เป็นต้นทุนของเงินตรา ไม่ใช่ค่าใช้จ่าย ไม่เข้างบกำไรขาดทุน"
+                  : conversion
+                    ? "บาทที่จะได้รับ (จำนวนที่แลก × อัตราที่แลกได้จริง)"
+                    : "ผลต่างที่จะลงส่วนของเจ้าของ (ไม่เข้างบกำไรขาดทุน)"}
+              </div>
               <div className="text-h2 font-semibold tabular-nums">{money(fxResult.amount)} บาท</div>
               <div className="text-sm text-ink-600">ช่องจำนวนเงินด้านบนตั้งตามนี้ให้แล้ว · ตัวเลขกำไร/ขาดทุนและบรรทัดล้างผลต่างจะแสดงในขั้นยืนยัน</div>
               {api.postingError ? <div className="mt-2 text-warn-fg">ยังบันทึกไม่ได้: {api.postingError}</div> : null}

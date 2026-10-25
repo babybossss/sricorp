@@ -4,12 +4,11 @@
  * พิสูจน์: (1) อัตราที่เพิ่มแล้วหน้าแลกเงินเห็นทันที (อ่านจาก DB) (2) คนไม่มี settings.manage ถูก RLS ปฏิเสธ — ไม่ใช่แค่ซ่อนปุ่ม
  * (3) อัตราที่มีรายการอ้างถึงแล้วลบไม่ได้ / แถวเดิมไม่ถูกเขียนทับ (4) ค่าที่ไม่ควรรับถูกปฏิเสธและไม่มีอะไรถูกเขียน
  *
- * ตัวแทน PostgREST ของเทสต์นี้ (insert/delete) เขียนในไฟล์นี้เอง เพราะตัวกลางของทีม (pg-client.ts) รองรับแค่ select/rpc
- * รหัส error จำลองจากข้อความของ Postgres (PostgREST จริงคืน SQLSTATE มาให้ตรงๆ)
+ * ตัวแทน PostgREST (insert/delete) อยู่ที่ pg-fx-client.ts เพราะตัวกลางของทีม (pg-client.ts) รองรับแค่ select/rpc
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createTestDb, pgAvailable, SqlError, type TestDb } from "@/lib/db/import/__tests__/pg-harness";
-import { pgClient } from "@/lib/db/import/__tests__/pg-client";
+import { createTestDb, pgAvailable, type TestDb } from "@/lib/db/import/__tests__/pg-harness";
+import { fxClientFor } from "./pg-fx-client";
 
 const h = vi.hoisted(() => ({ client: null as unknown, uid: "" }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -27,10 +26,6 @@ const U = {
   staff: "0000000e-0000-4000-8000-0000000000e3",
 };
 
-const lit = (v: unknown) => (v === null || v === undefined ? "null" : typeof v === "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
-const codeOf = (m: string) =>
-  /row-level security|permission denied/i.test(m) ? "42501" : /duplicate key/i.test(m) ? "23505" : /foreign key/i.test(m) ? "23503" : /check constraint/i.test(m) ? "23514" : undefined;
-
 /** วันที่ (ISO) ย้อนหลัง n วันจากวันนี้ — เทสต์ใช้วันจริงของเครื่อง เพราะหน้านี้ปฏิเสธอัตราของอนาคต */
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 const dmy = (iso: string) => `${iso.slice(8)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
@@ -43,57 +38,9 @@ describe.skipIf(!pgAvailable)("จัดการอัตราแลกเป�
   );
   const count = () => db.num("select count(*) from sri_os.fx_rates");
 
-  /** ตัวแทน PostgREST: select/order/limit ใช้ของกลาง · insert().select().single() และ delete().eq().eq().select() เขียนเอง */
-  function clientFor(uid: string) {
-    const base = pgClient(db, uid);
-    return {
-      ...base,
-      from(table: string) {
-        if (table !== "fx_rates") return base.from(table);
-        const read = base.from(table);
-        return Object.assign(read, {
-          insert(row: Record<string, unknown>) {
-            const cols = Object.keys(row);
-            return {
-              select: () => ({
-                single: async () => {
-                  try {
-                    const out = db.as(
-                      uid,
-                      `with i as (insert into sri_os.fx_rates(${cols.join(", ")}) values (${cols.map((c) => lit(row[c])).join(", ")}) returning *) select row_to_json(i) from i;`
-                    );
-                    return { data: JSON.parse(out), error: null };
-                  } catch (e) {
-                    if (e instanceof SqlError) return { data: null, error: { message: e.message, code: codeOf(e.message) } };
-                    throw e;
-                  }
-                },
-              }),
-            };
-          },
-          delete() {
-            const where: string[] = [];
-            const q = {
-              eq: (c: string, v: unknown) => (where.push(`${c} = ${lit(v)}`), q),
-              select: async () => {
-                try {
-                  const out = db.as(uid, `with d as (delete from sri_os.fx_rates where ${where.join(" and ")} returning currency) select coalesce(json_agg(d), '[]'::json) from d;`);
-                  return { data: JSON.parse(out), error: null };
-                } catch (e) {
-                  if (e instanceof SqlError) return { data: null, error: { message: e.message, code: codeOf(e.message) } };
-                  throw e;
-                }
-              },
-            };
-            return q;
-          },
-        });
-      },
-    };
-  }
   const as = (who: keyof typeof U) => {
     h.uid = U[who];
-    h.client = clientFor(U[who]);
+    h.client = fxClientFor(db, U[who]);
   };
 
   const input = (over: Partial<{ currency: string; rateDate: string; rate: string; note: string }> = {}) => ({

@@ -1,5 +1,5 @@
 /**
- * ประกอบ `fxTranslation` / `fxConversion` ของ `PostingInput` จาก **ข้อมูลในสมุด + อัตราที่เลือกจากตาราง**
+ * ประกอบ `fxTranslation` / `fxConversion` / `fxAcquisition` ของ `PostingInput` จาก **ข้อมูลในสมุด + อัตราที่เลือกจากตาราง**
  *
  * ผู้ใช้เลือกได้แค่ 3 อย่าง (`FxChoice`): วันของอัตรา (เลือกจากตารางอัตรา ไม่พิมพ์ตัวเลข) และจำนวนเงินตราที่จะแลก
  * ที่เหลือทั้งหมดมาจาก `FxAccountContext` ซึ่งอ่านจากสมุด: ยอดเงินตราคงเหลือ · อัตราที่ยอดบาทตั้งอยู่ · ผลต่างที่ค้างใน 3410
@@ -22,11 +22,11 @@ export type FxChoice = {
   newRateDate?: string;
   /** แลกเงิน: วันของอัตราที่แลกได้จริง (เลือกจากตารางอัตรา) */
   dealRateDate?: string;
-  /** แลกเงิน: จำนวนเงินตราที่แลกออก */
+  /** แลกเงิน: จำนวนเงินตราที่แลกออก · ซื้อเงินตรา: จำนวนเงินตราที่ซื้อเข้า */
   amountOriginal?: number;
 };
 
-export type FxKind = "translation" | "conversion";
+export type FxKind = "translation" | "conversion" | "acquisition";
 
 export type FxInputResult =
   | {
@@ -34,13 +34,14 @@ export type FxInputResult =
       kind: FxKind;
       /** ยอดบาทที่ช่อง "จำนวนเงิน" ต้องเป็น (engine ตรวจซ้ำ) */
       amount: number;
-      patch: Pick<PostingInput, "fxTranslation" | "fxConversion">;
+      patch: Pick<PostingInput, "fxTranslation" | "fxConversion" | "fxAcquisition">;
     }
   | { ok: false; kind: FxKind; message: string };
 
 /** หมวดนี้ต้องใช้ข้อมูลอัตราหรือไม่ — ถามจากคู่บัญชีในตารางกฎ (ไม่ใช่รหัสหมวด) · null = ไม่เกี่ยวกับเงินตรา */
 export function fxKindOf(sub: SubCategory | undefined): FxKind | null {
   if (!sub) return null;
+  if (sub.requires?.includes("fxAcquisition")) return "acquisition";
   if (isFxTranslationSub(sub)) return "translation";
   if (isFxRealisingSub(sub)) return "conversion";
   return null;
@@ -52,6 +53,24 @@ export function fxInputFor(sub: SubCategory, ctx: FxAccountContext, choice: FxCh
   const kind = fxKindOf(sub);
   if (!kind) throw new Error(`หมวด ${sub.code} ไม่เกี่ยวกับอัตราแลกเปลี่ยน`);
   const no = (message: string): FxInputResult => ({ ok: false, kind, message });
+
+  /*
+   * ซื้อเงินตราเข้า FCD: `ctx` คือบัญชี **ปลายทาง** (สกุลมาจากบัญชีนั้น ไม่ใช่จากผู้ใช้) · ไม่ต้องมียอดคงเหลือมาก่อน
+   * ผู้ใช้เลือกแค่วันของอัตราจากตาราง + จำนวนเงินตราที่ซื้อ → ยอดบาทที่จ่าย = จำนวน × อัตรา (toThb ตัวเดียวกับ engine)
+   */
+  if (kind === "acquisition") {
+    if (!choice.dealRateDate) return no("เลือกอัตราที่ซื้อได้จริงจากตารางอัตราแลกเปลี่ยน");
+    const deal = rateOn(ctx.rates, choice.dealRateDate);
+    if (!deal) return no(`ไม่มีอัตรา ${ctx.currency} ของวันที่ ${choice.dealRateDate} ในตารางอัตรา — เลือกเฉพาะวันที่มีในตาราง`);
+    const ao = choice.amountOriginal;
+    if (typeof ao !== "number" || !Number.isFinite(ao) || ao <= 0) return no(`กรอกจำนวน ${ctx.currency} ที่จะซื้อ (มากกว่า 0)`);
+    return {
+      ok: true,
+      kind,
+      amount: toThb(ao, deal.thbPerUnit),
+      patch: { fxAcquisition: { currency: ctx.currency, amountOriginal: ao, dealRateToThb: deal.thbPerUnit, dealRateDate: deal.rateDate } },
+    };
+  }
 
   if (!(ctx.units > 0)) {
     return no(`บัญชีนี้ไม่มี${ctx.currency}คงเหลือในสมุด (${ctx.units} ${ctx.currency}) จึงไม่มีอะไรให้${kind === "translation" ? "แปลงค่า" : "แลก"}`);

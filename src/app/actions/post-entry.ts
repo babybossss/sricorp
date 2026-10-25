@@ -127,9 +127,9 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
 
   // เส้นทางนี้คือการบันทึกรายการใหม่ (source = manual) เท่านั้น — ธง `reversal` ปลดการกันบัญชีที่ปิดใช้งาน (D-092)
   // และต้องมาจากเส้นทางกลับรายการที่ส่ง reverses_id ด้วย · browser ส่งธงนี้มาเองไม่ได้ จึงตัดทิ้งเสมอ
-  // และข้อมูลเงินตราที่ต้องอ่านจากสมุด (`fxTranslation` / `fxConversion`) ก็ตัดทิ้งเสมอ — ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้
+  // และข้อมูลเงินตราที่ต้องอ่านจากสมุด (`fxTranslation` / `fxConversion` / `fxAcquisition`) ก็ตัดทิ้งเสมอ — ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้
   // ค่าที่ใช้จริงถูกประกอบใหม่ด้านล่างจากสมุดที่ post แล้ว (เฉพาะหมวดที่ตารางกฎบอกว่าเกี่ยวกับอัตราแลกเปลี่ยน)
-  let input: PostingInput = { ...req.input, reversal: undefined, fxTranslation: undefined, fxConversion: undefined };
+  let input: PostingInput = { ...req.input, reversal: undefined, fxTranslation: undefined, fxConversion: undefined, fxAcquisition: undefined };
 
   // ---- หมวดที่เส้นทางนี้ยังต่อไม่ครบ ต้องปฏิเสธ ไม่ใช่บันทึกครึ่งเดียว ----
   const blocked = notWiredReason(findSub(input.subCode)?.sub);
@@ -149,24 +149,29 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   if (!refState.ok) return fail(`โหลดข้อมูลผู้ถือและบัญชีจากฐานข้อมูลไม่ได้ ยังไม่ได้บันทึกอะไร (${refState.error})`);
 
   // ---- หมวดแปลงค่า/แลกเงินตรา: อ่านยอดเงินตรา อัตรา และผลต่างที่ค้างจากสมุดสด (ไม่เชื่อค่าจาก browser) ----
-  if (fxKindOf(findSub(input.subCode)?.sub)) {
+  const fxKind = fxKindOf(findSub(input.subCode)?.sub);
+  if (fxKind) {
     const sub = findSub(input.subCode)!.sub;
     if (!req.fx) {
       return fail(`หมวด "${sub.label}" ต้องเลือกอัตราจากตารางอัตราแลกเปลี่ยน — ไม่ได้ส่งอัตราที่เลือกมา ยังไม่ได้บันทึกอะไร`);
     }
-    if (!input.bankAccountId) return fail("เลือกบัญชีเงินตราที่จะ" + (fxKindOf(sub) === "translation" ? "แปลงค่า" : "แลก") + "ก่อน — ยังไม่ได้บันทึกอะไร");
+    // ซื้อเงินตรา: บัญชีที่ใช้อ่านสมุด/สกุลคือบัญชี **ปลายทาง** (FCD) · แปลงค่า/แลก: บัญชีเงินตราที่เลือก
+    const fcdAccountId = fxKind === "acquisition" ? input.transferToBankAccountId : input.bankAccountId;
+    if (!input.bankAccountId) return fail(fxKind === "acquisition" ? "เลือกบัญชีบาทที่จ่ายก่อน — ยังไม่ได้บันทึกอะไร" : "เลือกบัญชีเงินตราที่จะ" + (fxKind === "translation" ? "แปลงค่า" : "แลก") + "ก่อน — ยังไม่ได้บันทึกอะไร");
+    if (!fcdAccountId) return fail("เลือกบัญชีสกุลต่างประเทศที่เงินตราเข้าก่อน — ยังไม่ได้บันทึกอะไร");
     let fxDb;
     try {
       fxDb = await createClient();
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));
     }
-    const read = await readFxContext(fxDb, refState.ref, { ownerId: input.ownerId, bankAccountId: input.bankAccountId });
+    const read = await readFxContext(fxDb, refState.ref, { ownerId: input.ownerId, bankAccountId: fcdAccountId });
     if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
     const built = fxInputFor(sub, read.ctx, req.fx);
     if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
-    // `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับด้วยค่าที่คำนวณ) — ถ้าสมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
-    input = { ...input, ...built.patch };
+    // แปลงค่า/แลก: `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับ) — สมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
+    // ซื้อเงินตรา: ผู้ใช้ไม่มีช่องยอดบาท (ยอด = จำนวนเงินตรา × อัตรา) → server คิดเองและทับค่าที่ส่งมา
+    input = { ...input, ...built.patch, ...(fxKind === "acquisition" ? { amount: built.amount } : {}) };
   }
 
   // ---- ขายทรัพย์: ต้นทุน · ค่ารีโนเวทสะสม · ส่วนเกินทุนที่ค้าง อ่านจากสมุดสด (ผู้ใช้กรอกได้แค่ราคาขายกับค่าใช้จ่ายในการขาย) ----
