@@ -39,9 +39,5 @@ Unsplash License (ใช้เชิงพาณิชย์ได้ฟรี) 
 | Real Estate | Sua Truong | https://unsplash.com/photos/PHMabtedGwQ |
 | Financing | Dimitri Karastelev | https://unsplash.com/photos/ZH4FUYiaczY |
 | Investing | Vitaly Gariev | https://unsplash.com/photos/1nVQJc4YLKM |
-| ดูแลลูกค้า (รูปใหญ่) | litoon dev | https://unsplash.com/photos/PjGmtZedbO4 |
-| วิเคราะห์ดีล | TRAN NHU TUAN | https://unsplash.com/photos/x-QxTWZ4mE8 |
-| ห้องประชุม | Benjamin Child | https://unsplash.com/photos/0sT9YhNgSEs |
-| ทีมผู้เชี่ยวชาญ | Dalton Ngangi | https://unsplash.com/photos/QWS5ingwMh0 |
-| ปิดดีล | Luigi Estuye | https://unsplash.com/photos/uIH-y7kmaeE |
+| รูปชุด "ทำงานจริง" 5 รูป | ชุดแรกจาก Unsplash (Unsplash License) | photo-1600880292203, photo-1560518883, photo-1554224155, photo-1582407947304, photo-1521791136064 |
 | พื้นหลังฟอร์ม | Van Tay Media | https://unsplash.com/photos/HYDapQuENOM |
