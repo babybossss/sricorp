@@ -1,15 +1,17 @@
 import { cache } from "react";
 import { connection } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { PERMISSIONS, type Permission } from "./permissions";
+import { type Permission } from "./permissions";
+import { ACCESS_SELECT, accessFromRow, type AccessRow } from "./access-row";
 
 /**
  * ผู้ใช้ปัจจุบัน + ชุดสิทธิ์ — ถาม DB หนึ่งครั้งต่อ request (react `cache`)
  * ใช้ได้เฉพาะ server component / server action / route handler
  *
- * สิทธิ์ทุกตัวมาจาก `fn_can()` ใน DB ตัวเดียวกับที่ RLS ใช้ ไม่มีตาราง role → permission ฝั่งนี้
+ * สิทธิ์อ่านจากตารางของ DB (`app_users` → `roles` → `role_permissions`) ในคำสั่งเดียว — ความหมายเท่า `fn_can()` ที่ RLS ใช้
+ * (ดู `access-row.ts` + เทสต์เทียบกับ `fn_can` จริง) ไม่มีตาราง role → permission ฝั่งนี้
  * ถามด้วย session ของผู้ใช้เอง (ไม่ใช้สิทธิ์ที่สูงกว่า) และ **ล้มเหลว = ไม่มีสิทธิ์**
- * พร้อมเหตุผลให้หน้าจอบอก ไม่ใช่เงียบ
+ * พร้อมเหตุผลให้หน้าจอบอก ไม่ใช่เงียบ · ไม่แคชข้าม request (react `cache` ต่อ request เท่านั้น)
  */
 
 export type CurrentUser = { id: string; email: string | null };
@@ -44,40 +46,17 @@ export const getAccess = cache(async (): Promise<AccessState> => {
   }
   const user: CurrentUser = { id: data.user.id, email: data.user.email ?? null };
 
-  const [checks, profileRes] = await Promise.all([
-    Promise.all(
-      PERMISSIONS.map(async (p) => {
-        const { data: ok, error } = await supabase.rpc("fn_can", { p_permission: p });
-        return { p, ok: ok === true, error };
-      })
-    ),
-    supabase
-      .from("app_users")
-      .select("display_name, role, roles(label)")
-      .eq("id", user.id)
-      .maybeSingle(),
-  ]);
-
-  const failed = checks.find((c) => c.error);
-  if (failed?.error) {
-    return {
-      user,
-      permissions: EMPTY,
-      profile: null,
-      error: `ตรวจสิทธิ์กับฐานข้อมูลไม่สำเร็จ (${failed.error.message})`,
-    };
+  // **ถาม DB ครั้งเดียว**: ผู้ใช้ + ระดับ + สิทธิ์ของระดับนั้น ในแถวเดียว (เดิมเรียก fn_can ทีละสิทธิ์ = 16 round trip ต่อหน้า)
+  // ถามด้วย session ของผู้ใช้เอง (RLS: อ่านได้เฉพาะแถวของตัวเอง) · ล้มเหลว = ไม่มีสิทธิ์ พร้อมเหตุผล
+  const { data: row, error } = await supabase
+    .from("app_users")
+    .select(ACCESS_SELECT)
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error) {
+    return { user, permissions: EMPTY, profile: null, error: `ตรวจสิทธิ์กับฐานข้อมูลไม่สำเร็จ (${error.message})` };
   }
-
-  const permissions = new Set<Permission>(checks.filter((c) => c.ok).map((c) => c.p));
-
-  let profile: AppProfile | null = null;
-  const row = profileRes.data as
-    | { display_name: string; role: string; roles: { label: string } | { label: string }[] | null }
-    | null;
-  if (row) {
-    const roleRow = Array.isArray(row.roles) ? row.roles[0] : row.roles;
-    profile = { displayName: row.display_name, roleKey: row.role, roleLabel: roleRow?.label ?? null };
-  }
+  const { permissions, profile } = accessFromRow(row as unknown as AccessRow | null);
 
   return { user, permissions, profile, error: null };
 });
