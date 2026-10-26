@@ -49,7 +49,10 @@ export const COA: CoaAccount[] = [
   { code: "1510", nameTh: "ค่ารีโนเวท (บันทึกเป็นทุน)", nameEn: "Renovation capitalised", type: "asset" },
   { code: "1600", nameTh: "เงินมัดจำจ่าย", nameEn: "Deposits paid", type: "asset" },
   // เพิ่มจากแม่บท: พอร์ตหลักทรัพย์ยังไม่มีรหัสใน Excel เดิม
-  { code: "1700", nameTh: "เงินลงทุนในหลักทรัพย์", nameEn: "Investment in securities", type: "asset" },
+  // ชื่อครอบ **ทั้งในตลาดและนอกตลาด** โดยตั้งใจ — ETF กองทุน พันธบัตรก็ลงที่นี่
+  // ห้ามใส่คำว่า "ในตลาด" ในชื่อ เพราะหุ้นนอกตลาดลงบัญชีนี้เหมือนกัน
+  // (เส้นแบ่งในตลาด/นอกตลาดอยู่ที่ *หมวดทรัพย์* ไม่ใช่รหัสบัญชี — ดู asset-classes.ts)
+  { code: "1700", nameTh: "เงินลงทุนในหุ้นและหลักทรัพย์", nameEn: "Investment in shares & securities", type: "asset" },
   // แยกจาก 1700 เพราะทองคำและคริปโตเป็นคนละหมวดใหญ่ (Commodity & Cash ไม่ใช่ Paper Asset)
   // ถ้าใช้บัญชีเดียวกับหุ้น จะแยกสองหมวดนี้ออกจากกันในรายงานไม่ได้เลย
   { code: "1720", nameTh: "เงินลงทุนในทองคำ คริปโต และสินทรัพย์ทางเลือก", nameEn: "Gold, crypto & alternative assets", type: "asset" },
