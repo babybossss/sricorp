@@ -75,6 +75,16 @@ export const COA: CoaAccount[] = [
    * อสังหาฯ (15xx) มัดจำจ่าย (16xx) หรือเงินลงทุน (17xx)
    */
   { code: "1800", nameTh: "ภาษีถูกหัก ณ ที่จ่ายรอเครดิต", nameEn: "Withholding tax credit", type: "asset" },
+  /**
+   * บัญชีรองรับของที่ไม่เข้าพวกบัญชีเฉพาะ (ลูกพี่สั่ง 26/10)
+   *
+   * **ไม่ใช่บัญชีรวมของสินทรัพย์ทั้งหมวด** — อสังหาฯ (1500) เงินลงทุน (1700/1710/1720)
+   * ก็เป็นสินทรัพย์ไม่หมุนเวียนเหมือนกัน แต่มีบัญชีของตัวเองซึ่งต้องใช้ตัวนั้น
+   * ถ้าเทของลงบัญชีรองรับแทน รายงานจะแยกไม่ออกว่าเงินไปอยู่กับอะไร
+   * คำเตือนนี้บังคับผ่าน `caution` ของหมวดรายการที่ลงบัญชีเหล่านี้
+   */
+  { code: "1900", nameTh: "สินทรัพย์หมุนเวียนอื่น", nameEn: "Other current assets", type: "asset" },
+  { code: "1950", nameTh: "สินทรัพย์ไม่หมุนเวียน", nameEn: "Non-current assets", type: "asset" },
 
   // ---------- หนี้สิน 2xxx ----------
   { code: "2100", nameTh: "เจ้าหนี้การค้า-เจ้าหนี้อื่น", nameEn: "Trade & other payables", type: "liability" },
@@ -84,6 +94,9 @@ export const COA: CoaAccount[] = [
   // เพิ่มจากแม่บท: แยกเงินกู้ธนาคารออกจากเงินกู้ยืมอื่น
   { code: "2410", nameTh: "เงินกู้ธนาคาร", nameEn: "Bank borrowing", type: "liability" },
   { code: "2310", nameTh: "เจ้าหนี้ระหว่างกัน (ในกองกลาง)", nameEn: "Intercompany payable", type: "liability" },
+  // บัญชีรองรับฝั่งหนี้สิน (ลูกพี่สั่ง 26/10) — เหตุผลและข้อควรระวังเดียวกับ 1900/1950
+  { code: "2500", nameTh: "หนี้สินหมุนเวียนอื่น", nameEn: "Other current liabilities", type: "liability" },
+  { code: "2600", nameTh: "หนี้สินไม่หมุนเวียน", nameEn: "Non-current liabilities", type: "liability" },
 
   // ---------- ส่วนของเจ้าของ 3xxx ----------
   { code: "3100", nameTh: "ทุนตั้งต้น", nameEn: "Paid-in capital", type: "equity" },

@@ -25,14 +25,19 @@ const bad = (p: ParsedOpening, e: PrepareEnv = env()) => {
 const owner = (r: ReturnType<typeof ok>, id: string) => r.owners.find((o) => o.ownerId === id)!;
 
 describe("ตารางเทียบรหัสบัญชี → หมวดยอดยกมา (อ่านจากตารางกฎ)", () => {
-  it("ตรงกับตารางกฎ 23 รหัส (ทุกบัญชีงบดุลยกเว้นส่วนของเจ้าของ 3200/3300/3400/3410) — ไม่มีรหัสเพิ่มหรือขาด", () => {
+  it("ตรงกับตารางกฎ 27 รหัส (ทุกบัญชีงบดุลยกเว้นส่วนของเจ้าของ 3200/3300/3400/3410) — ไม่มีรหัสเพิ่มหรือขาด", () => {
     const expected: Record<string, string> = {
       "1100": "opn.cash", "1200": "opn.receivable_rent", "1210": "opn.receivable_interest", "1220": "opn.receivable_other",
       "1290": "opn.allowance", "1300": "opn.loan_principal", "1310": "opn.intercompany_receivable",
       "1400": "opn.srr_principal", "1410": "opn.mortgage_principal", "1500": "opn.property", "1510": "opn.renovation",
       "1600": "opn.deposit_paid", "1700": "opn.securities", "1710": "opn.related_investment", "1720": "opn.gold_alt",
-      "1800": "opn.wht_credit", "2100": "opn.payable", "2200": "opn.tenant_deposit", "2300": "opn.loan_director",
-      "2310": "opn.intercompany_payable", "2400": "opn.loan_other", "2410": "opn.loan_bank", "3100": "opn.capital",
+      "1800": "opn.wht_credit",
+      // บัญชีรองรับ (ลูกพี่สั่ง 26/10) — ต้องมีหมวดยอดยกมาด้วย ไม่งั้นนำเข้ายอดตั้งต้นไม่ได้
+      "1900": "opn.other_current_asset", "1950": "opn.other_noncurrent_asset",
+      "2100": "opn.payable", "2200": "opn.tenant_deposit", "2300": "opn.loan_director",
+      "2310": "opn.intercompany_payable", "2400": "opn.loan_other", "2410": "opn.loan_bank",
+      "2500": "opn.other_current_liability", "2600": "opn.other_noncurrent_liability",
+      "3100": "opn.capital",
     };
     expect(Object.fromEntries([...openingSubByAccount()].map(([k, v]) => [k, v.code]))).toEqual(expected);
   });
