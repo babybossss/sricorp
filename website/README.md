@@ -32,3 +32,16 @@ Mockup v0.2 ของหน้า Homepage (TH / EN) · เปิด `index.html
 
 ## เครดิตรูปตัวอย่าง
 Unsplash License (ใช้เชิงพาณิชย์ได้ฟรี) — จะเปลี่ยนเป็นรูปงานจริงของ SRI ก่อนขึ้นเว็บจริง
+
+## เครดิตรูป (Unsplash License)
+| ตำแหน่ง | ช่างภาพ | ลิงก์ |
+|---|---|---|
+| Real Estate | Sua Truong | https://unsplash.com/photos/PHMabtedGwQ |
+| Financing | Dimitri Karastelev | https://unsplash.com/photos/ZH4FUYiaczY |
+| Investing | Vitaly Gariev | https://unsplash.com/photos/1nVQJc4YLKM |
+| ประชุมดีล | Felix Viray | https://unsplash.com/photos/WEKYnsgn0x8 |
+| ลงพื้นที่ | Ferdy Yudha Pradana | https://unsplash.com/photos/Z26xhCklph0 |
+| ตรวจเอกสาร | blue sky | https://unsplash.com/photos/dMUUUv5erIY |
+| ส่งมอบทรัพย์ | Jakub Żerdzicki | https://unsplash.com/photos/bqUZEAeWuok |
+| ปิดดีล | Van Tay Media | https://unsplash.com/photos/T5QgMRe-sCs |
+| พื้นหลังฟอร์ม | Van Tay Media | https://unsplash.com/photos/HYDapQuENOM |
