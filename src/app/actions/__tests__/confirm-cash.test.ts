@@ -1,5 +1,5 @@
 import "./mocks";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ctx, resetCtx } from "./ctx";
 import { ASSET, BANK, CONTACT, COA_BY_ID, OWNER } from "./fake-db";
 import { postEntry } from "../post-entry";
@@ -438,5 +438,27 @@ describe("ล้างยอดค้างที่ผู้เช่าหั�
     expect(ctx.db.balance("1200")).toBe(0);
     expect(ctx.db.balance("1100")).toBe(97500);
     expect(ctx.db.balance("1800")).toBe(2500);
+  });
+});
+
+describe("จำนวน query ไม่โตตามจำนวนรายการที่ยืนยัน (กัน N+1 กลับมา)", () => {
+  /** นับ query ไปยังสมุด (v_ledger_posted) ระหว่างยืนยัน */
+  async function ledgerReadsWhileConfirming(n: number): Promise<number> {
+    resetCtx();
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) ids.push(await postAccrual(1000 + i, { memo: `ค้างรับ ${i}` }));
+    const spy = vi.spyOn(ctx.db.client, "from");
+    const out = await confirmCash({ items: ids.map((id, i) => item(id, { amount: String(1000 + i) })) });
+    expect(out.ok, JSON.stringify(out)).toBe(true);
+    const reads = spy.mock.calls.filter(([t]) => t === "v_ledger_posted").length;
+    spy.mockRestore();
+    return reads;
+  }
+
+  it("ยืนยัน 1 รายการ = ยืนยัน 5 รายการ = อ่านสมุด 4 query (ไม่ใช่ 4 × จำนวนรายการ: เดิม 5 รายการ = 20)", async () => {
+    const one = await ledgerReadsWhileConfirming(1);
+    const five = await ledgerReadsWhileConfirming(5);
+    expect(one).toBe(4);
+    expect(five).toBe(4);
   });
 });

@@ -194,13 +194,17 @@ describe("แก้ตรง", () => {
 });
 
 describe("ตีราคา", () => {
-  const val = { assetId: ASSETS.roomA, asOf: "30/09/2026", value: "3,900,000", method: "manual" };
+  // วันที่ตีราคาต้องไม่ใช่อนาคต → คิดจากวันนี้ย้อนหลัง (ไม่ใช้วันคงที่ที่จะกลายเป็นอนาคตเมื่อนาฬิกาถอย/เป็นอดีตไกลเมื่อเวลาเดินไป)
+  const ago = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const dmyOf = (iso: string) => `${iso.slice(8)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+  const FIRST = ago(30);
+  const val = { assetId: ASSETS.roomA, asOf: dmyOf(FIRST), value: "3,900,000", method: "manual" };
 
   it("Management: เพิ่มประวัติใหม่ ไม่ลงสมุด · ครั้งที่สองไม่ทับครั้งแรก", async () => {
     expect((await recordValuation(val)).ok).toBe(true);
-    expect((await recordValuation({ ...val, asOf: "24/10/2026", value: "4000000" })).ok).toBe(true);
+    expect((await recordValuation({ ...val, asOf: dmyOf(ago(1)), value: "4000000" })).ok).toBe(true);
     expect(env.db.tables.asset_valuations).toHaveLength(2);
-    expect(env.db.tables.asset_valuations[0]).toMatchObject({ value: 3_900_000, as_of: "2026-09-30", created_by: USERS.admin });
+    expect(env.db.tables.asset_valuations[0]).toMatchObject({ value: 3_900_000, as_of: FIRST, created_by: USERS.admin });
     expect(env.db.base.rows).toHaveLength(0); // ไม่แตะสมุด
   });
 

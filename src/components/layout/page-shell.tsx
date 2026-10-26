@@ -13,10 +13,10 @@ import { loadReference } from "@/lib/db/reference";
  * แล้วส่งลงไปซ่อนเมนู/ปุ่มที่กดไม่ได้ — เพื่อความสะดวก ไม่ใช่ความปลอดภัย (RLS คือของจริง)
  */
 export async function PageShell({ title, children }: { title: string; children: React.ReactNode }) {
-  const access = await getAccess();
-  const permissions = [...access.permissions];
+  // สองอย่างนี้ไม่พึ่งกัน → ถามพร้อมกัน (ต่อหน้าเสียเวลารอเท่าตัวที่ช้ากว่า ไม่ใช่รวมกัน) · ทั้งคู่แคชต่อ request อยู่แล้ว
   // ผู้ถือ · บัญชี · ทรัพย์ · ผู้ติดต่อ จริงจาก DB (ผ่าน RLS ของผู้ใช้) — โหลดไม่ได้ = ฟอร์มบอกเหตุผล ไม่ใช้ข้อมูลจำลอง
-  const reference = await loadReference();
+  const [access, reference] = await Promise.all([getAccess(), loadReference()]);
+  const permissions = [...access.permissions];
 
   return (
     <PermissionsProvider permissions={permissions}>

@@ -4,6 +4,7 @@ import { PageShell } from "@/components/layout/page-shell";
 import { NoAccess, type NoAccessReason } from "@/components/auth/no-access";
 import { createClient } from "@/lib/supabase/server";
 import { getAccess } from "./session";
+import { loadReference } from "@/lib/db/reference";
 import { ROUTE_ACCESS, hasAccess, type GatedRoute } from "./routes";
 
 /**
@@ -20,7 +21,9 @@ import { ROUTE_ACCESS, hasAccess, type GatedRoute } from "./routes";
  *   ห้ามใช้สิทธิ์ที่สูงกว่าผู้ใช้ ไม่งั้นการกั้นหน้าจอกลายเป็นด่านเดียวที่เหลือ
  */
 export async function gateRoute(route: GatedRoute, title: string): Promise<React.ReactElement | null> {
-  const access = await getAccess();
+  // เริ่มโหลดข้อมูลอ้างอิงที่ PageShell ต้องใช้ "พร้อมกับ" ตรวจสิทธิ์ — ตัวกั้นรันก่อน PageShell เสมอ ถ้าไม่ทำตรงนี้
+  // สองอย่างจะต่อคิวกัน (สิทธิ์เสร็จก่อนแล้วค่อยเริ่มข้อมูลอ้างอิง) · ทั้งคู่แคชต่อ request จึงไม่ถามซ้ำ
+  const [access] = await Promise.all([getAccess(), loadReference()]);
 
   // middleware ควรกันไว้แล้ว — กันซ้ำเผื่อ session หมดอายุระหว่างทาง
   if (!access.user && !access.error) redirect("/login");

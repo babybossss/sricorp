@@ -113,10 +113,13 @@ export async function confirmCash(req: { items: ConfirmCashItem[] }): Promise<Co
   // ---- ตรวจทุกแถวก่อนเขียนแถวไหน ----
   const prepared: { sourceId: string; payload: PostEntryPayload }[] = [];
   const problems: string[] = [];
+  // อ่านยอดค้างจากสมุดสด **ครั้งเดียว** ก่อนวนตรวจ (เดิมอ่านซ้ำทุกรายการ: 10 รายการ = 40 query) — ช่วงตรวจนี้ไม่มีการเขียนคั่น
+  // จึงเป็นภาพเดียวกันทุกรายการอยู่แล้ว · ผู้ตัดสินสุดท้ายคือ fn_post_entry ฝั่ง DB (ล็อกแถว + ตรวจยอดล้างเกิน + เลขอ้างอิงใบล้าง)
+  // ซึ่งตรวจซ้ำตอนเขียนจริงเสมอ ไม่ว่ายอดที่อ่านไว้จะเก่าไปแค่ไหน
+  const read = await readPendingAccruals(supabase, refState.ref.coaCodeById);
+  if (!read.ok) return refuse(`${read.error} — ยังไม่ได้บันทึกอะไร`);
   for (const it of items) {
     const sourceId = it.sourceId.toLowerCase();
-    const read = await readPendingAccruals(supabase, refState.ref.coaCodeById);
-    if (!read.ok) return refuse(`${read.error} — ยังไม่ได้บันทึกอะไร`);
     const src = read.items.find((p) => p.id.toLowerCase() === sourceId);
     const label = src?.memo ?? sourceId;
     if (!src) {

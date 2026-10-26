@@ -1,5 +1,5 @@
 import { env, mockFactories, ASSETS, USERS, VIEW, OWNER, BANK, CONTACT, fresh, as, seedAssets } from "@/lib/db/__tests__/assets-test-env";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/supabase/server", () => mockFactories.supabase());
 vi.mock("@/lib/auth/session", () => mockFactories.session());
@@ -17,6 +17,15 @@ import type { PendingAccrual } from "@/lib/db/pending-accruals";
 /** หน้าแรกอ่านสมุดจริง (ลงด้วย postEntry ตัวจริง) — ตัวเลขต้องเท่าที่ลงและเท่ากับหน้างบการเงิน */
 
 const TODAY = "2026-10-25";
+// หน้าแรกอ่าน "วันนี้" จากนาฬิกาจริง (loadDashboard) ส่วนข้อมูลทดสอบเขียนเป็นวันที่จริงของเดือนนั้น → ตรึงนาฬิกาที่ TODAY
+// ไม่งั้นเทสต์เขียวเฉพาะวันที่เขียน แล้วแดงเองเมื่อเวลาเดินไป (เทสต์ที่แปรผันตามปฏิทินคือเทสต์ที่หยุดทดสอบโดยไม่มีสัญญาณ)
+// ตรึงเฉพาะ Date (เที่ยงวันตามเวลากรุงเทพฯ) timer อื่นเดินปกติ
+beforeAll(() => {
+  vi.useFakeTimers({ now: new Date(`${TODAY}T05:00:00Z`), toFake: ["Date"] });
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 async function post(input: Partial<PostingInput> & Pick<PostingInput, "typeKey" | "subCode" | "amount">, docDate: string, cashDate = docDate, owner = OWNER.tk) {
   as(VIEW.management());
   const out = await postEntry({
