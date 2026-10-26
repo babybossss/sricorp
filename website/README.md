@@ -9,7 +9,7 @@ Mockup v0.2 ของหน้า Homepage (TH / EN) · เปิด `index.html
 4. การทำงานจริง (รูป + 4 ขั้นตอน)
 5. Portfolio (รออัปเดต)
 6. ฟอร์ม Be Partner / Team (ชื่อ · อีเมล · เบอร์โทร)
-7. Footer — ที่อยู่ · อีเมล · Facebook / IG / TikTok
+7. Footer — ที่อยู่ · อีเมล · โทร · Facebook / IG / TikTok / LINE OA (@sricorp)
 
 ## ภาษา TH / EN
 - ปุ่มสลับภาษามุมขวาบน · จำภาษาที่เลือกไว้ · ลิงก์ตรงภาษาอังกฤษ `index.html?lang=en`
