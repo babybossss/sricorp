@@ -8,9 +8,10 @@
 <!--
   MOCKUP v0.1 — หน้า Homepage SRI Corporation
   - รูปทั้งหมดเป็นรูปตัวอย่างจาก Unsplash (เปลี่ยนเป็นรูปงานจริงที่ IMAGES ด้านล่าง / โฟลเดอร์ assets/img)
-  - โลโก้เป็นตัวแทนชั่วคราว รอไฟล์ CI จริง (assets/brand)
+  - โลโก้ใช้ไฟล์ CI ต้นฉบับ (assets/brand)
   - ฟอร์มยังไม่ส่งจริง ตั้งปลายทางที่ FORM_ENDPOINT / FORM_TO
 -->
+<link rel="icon" href="assets/brand/sri-logo-blue.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -59,7 +60,7 @@
   .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:80px}
   .nav.scrolled{background:rgba(6,26,58,.96);backdrop-filter:blur(8px);box-shadow:0 1px 0 rgba(255,255,255,.06)}
   .logo{display:flex;align-items:center;gap:12px;color:#fff}
-  .logo-mark{width:62px;height:54px;color:#fff}
+  .logo-mark{height:50px;width:auto}
   .logo-sep{width:1px;height:30px;background:rgba(255,255,255,.25)}
   .logo-text{font-size:12px;letter-spacing:.24em;line-height:1.4;opacity:.85}
   .menu{display:flex;gap:36px;align-items:center;color:rgba(255,255,255,.85);font-size:15px}
@@ -74,6 +75,7 @@
   /* HERO */
   .hero{position:relative;min-height:100vh;display:flex;align-items:flex-end;color:#fff;overflow:hidden;background:var(--navy-900)}
   .hero .ph{position:absolute;inset:0}
+  .hero .ph img{object-position:70% 100%}
   .hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(3,15,36,.55) 0%,rgba(3,15,36,.35) 35%,rgba(3,15,36,.92) 100%),linear-gradient(90deg,rgba(0,58,138,.55),transparent 70%)}
   .hero .wrap{position:relative;z-index:2;padding-top:160px;padding-bottom:64px;width:100%}
   .hero h1{font-size:clamp(38px,5.6vw,72px);max-width:880px;margin:20px 0 22px}
@@ -202,24 +204,12 @@
 </style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="sri-logo" viewBox="56 108 348 304">
-    <g fill="none" stroke="currentColor" stroke-width="17">
-      <path d="M136 188 C 112 184 80 166 74 134 L 138 134 C 150 140 156 152 160 166 C 166 150 178 138 196 134 L 222 134 C 214 168 194 184 168 192 L 168 230"/>
-      <path d="M160 230 L 388 230 L 388 248 A 136 136 0 0 1 252 384 A 136 136 0 0 1 116 248 C 116 222 124 204 136 188"/>
-      <path d="M244 316 C 226 344 222 374 234 402 C 268 384 286 352 288 318"/>
-      <path d="M330 280 C 318 300 300 312 280 318"/>
-    </g>
-    <circle cx="294" cy="264" r="9" fill="currentColor"/>
-    <text x="232" y="212" font-family="IBM Plex Sans Thai, Arial, sans-serif" font-weight="700" font-size="86" letter-spacing="-2" fill="currentColor">SRI</text>
-  </symbol>
-</svg>
 
 <!-- NAV -->
 <header class="nav" id="nav">
   <div class="wrap">
     <a href="#top" class="logo" aria-label="SRI Corporation">
-      <svg class="logo-mark"><use href="#sri-logo"/></svg><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
+      <img class="logo-mark" src="assets/brand/sri-logo-white.png" alt="SRI"><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
     </a>
     <nav class="menu" id="menu">
       <a href="#services" data-en="Services">บริการ</a>
@@ -406,7 +396,7 @@
     <div class="foot">
       <div>
         <a href="#top" class="logo" style="margin-bottom:20px">
-          <svg class="logo-mark"><use href="#sri-logo"/></svg><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
+          <img class="logo-mark" src="assets/brand/sri-logo-white.png" alt="SRI"><span class="logo-sep"></span><span class="logo-text">SRI<br>CORPORATION</span>
         </a>
         <p style="color:#fff;font-weight:600">บริษัท เอสอาร์ไอ คอร์ปอเรชั่น จำกัด</p>
         <p>SRI Corporation Co., Ltd.</p>

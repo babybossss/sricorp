@@ -19,12 +19,15 @@ Mockup v0.2 ของหน้า Homepage (TH / EN) · เปิด `index.html
 - สี CI `#004AAD` + Navy `#061A3A` · เสริมมิติด้วยทอง `#C8A96A` (ใช้น้อย)
 - ฟอนต์ IBM Plex Sans Thai (ไทยไม่มีหัว ใกล้ Sukhumvit Set) — ตัวเดียวกับ SRI OS
 
+## ไฟล์แบรนด์
+- `assets/brand/sri-logo-original.png` — ไฟล์โลโก้ต้นฉบับ (500×500 พื้นขาว)
+- `assets/brand/sri-logo-blue.png` / `sri-logo-white.png` — ตัดจากต้นฉบับ พื้นโปร่งใส (ไม่ได้วาดใหม่)
+- `assets/img/hero-bangkok.jpg` — ภาพหลักหน้าแรก (ตัดแถบน้ำเงินและโลโก้ด้านบนของภาพเดิมออก)
+
 ## สิ่งที่ยังเป็นตัวแทนชั่วคราว
 | รายการ | แก้ที่ |
 |---|---|
-| ภาพหลักหน้าแรก (ตึกกรุงเทพฯ) | วางไฟล์ `assets/img/hero-bangkok.jpg` แล้วขึ้นเองทันที (ยังไม่มีไฟล์จะใช้รูปสำรอง) |
 | รูปอื่นๆ (Unsplash) | `IMAGES` ใน `index.html` → ใส่รูปจริงใน `assets/img/` |
-| โลโก้ | วาดเป็น SVG จากรูป CI แล้ว (`assets/brand/sri-logo-blue.svg`, `sri-logo-white.svg`) — ถ้ามีไฟล์ vector ต้นฉบับ (AI/SVG) ส่งมาแทนได้ |
 | ที่อยู่ / เบอร์โทร | footer ใน `index.html` |
 | ฟอร์มยังไม่ส่งจริง | `FORM_TO` (ตอนนี้ sricorpth@gmail.com) และ `FORM_ENDPOINT` |
 
