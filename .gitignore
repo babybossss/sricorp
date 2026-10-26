@@ -19,3 +19,6 @@ next-env.d.ts
 scratch/
 
 .rules.json
+
+# สคริปต์ python ที่สร้างเทมเพลต Excel
+__pycache__/
