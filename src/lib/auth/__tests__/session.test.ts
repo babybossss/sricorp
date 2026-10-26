@@ -3,8 +3,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
- * `getAccess()` ต้องถาม DB ครั้งเดียวต่อ request — เดิมเรียก `fn_can` ทีละสิทธิ์ (16 ครั้ง) ก่อน render อะไรได้ ทำให้เว็บช้ามาก
+ * `getAccess()` ต้องถาม DB **ครั้งเดียว**ต่อ request — เดิมเรียก `fn_can` ทีละสิทธิ์ (16 ครั้ง) ก่อน render อะไรได้ ทำให้เว็บช้ามาก
  * เทสต์นี้นับการเรียก client จริง: ถ้าใครเพิ่มลูป/เรียกซ้ำกลับเข้ามา เทสต์แดงทันที
+ *
+ * คำขอเดียวนั้นคือ RPC `sri_os.fn_my_access(array[...])` ซึ่งคืนโปรไฟล์ + คำตอบของทุกสิทธิ์
+ * **คำตอบมาจาก `fn_can` ที่เดียว** (fn_my_access → fn_can_many → fn_can) ฝั่งนี้ไม่ตัดสินสิทธิ์เอง
+ * ก่อนหน้านี้เคยอ่าน `app_users → roles → role_permissions` เองในคำสั่งเดียว ซึ่งเร็วเท่ากัน
+ * แต่เป็น **เกณฑ์สิทธิ์ที่สอง** (ดูเหตุผลใน access-row.ts) จึงถูกถอดออก
  */
 const calls = vi.hoisted(() => ({ getUser: 0, from: 0, rpc: 0, table: [] as string[] }));
 const state = vi.hoisted(() => ({
@@ -27,9 +32,10 @@ vi.mock("@/lib/supabase/server", () => ({
           return { data: { user: state.user }, error: state.userError };
         },
       },
-      rpc: async () => {
+      rpc: async (fn: string) => {
         calls.rpc++;
-        return { data: true, error: null };
+        calls.table.push(fn);
+        return { data: state.row, error: state.rowError };
       },
       from: (table: string) => {
         calls.from++;
@@ -48,13 +54,14 @@ vi.mock("@/lib/supabase/server", () => ({
 import { getAccess } from "../session";
 import { PERMISSIONS } from "../permissions";
 
+/** คำตอบของ fn_my_access (DB ตอบ boolean มาให้แล้ว ฝั่งนี้ไม่คิดเอง) */
 const row = (over: Record<string, unknown> = {}) => ({
-  display_name: "ลูกพี่",
-  role: "management",
-  is_active: true,
-  roles: { label: "ผู้บริหาร", role_permissions: [{ permission_key: "ledger.approve" }, { permission_key: "settings.manage" }] },
+  user_id: "u1",
+  profile: { display_name: "ลูกพี่", role_key: "management", role_label: "ผู้บริหาร", is_active: true },
+  permissions: { "ledger.approve": true, "settings.manage": true, "ledger.read": false },
   ...over,
 });
+const allowAll = (keys: readonly string[]) => Object.fromEntries(keys.map((k) => [k, true]));
 
 beforeEach(() => {
   calls.getUser = calls.from = calls.rpc = 0;
@@ -67,15 +74,15 @@ beforeEach(() => {
 });
 
 describe("getAccess · ถาม DB ครั้งเดียว", () => {
-  it("ผู้ใช้ปกติ: ตรวจตัวตน 1 ครั้ง + อ่านสิทธิ์ 1 query (ตาราง app_users) · ไม่เรียก fn_can เลย · สิทธิ์ครบตามระดับ", async () => {
+  it("ผู้ใช้ปกติ: ตรวจตัวตน 1 ครั้ง + ถามสิทธิ์ 1 RPC (fn_my_access) · ไม่อ่านตารางสิทธิ์เอง · สิทธิ์ครบตามที่ DB ตอบ", async () => {
     const a = await getAccess();
-    expect(calls).toMatchObject({ getUser: 1, from: 1, rpc: 0, table: ["app_users"] });
+    expect(calls).toMatchObject({ getUser: 1, from: 0, rpc: 1, table: ["fn_my_access"] });
     expect([...a.permissions].sort()).toEqual(["ledger.approve", "settings.manage"]);
     expect(a).toMatchObject({ error: null, user: { id: "u1" }, profile: { displayName: "ลูกพี่", roleKey: "management", roleLabel: "ผู้บริหาร" } });
   });
 
   it(`จำนวนการเรียก DB ไม่ขึ้นกับจำนวนสิทธิ์ (มี ${PERMISSIONS.length} สิทธิ์ แต่ยังเรียก DB ครั้งเดียว) — กันลูปต่อสิทธิ์กลับเข้ามา`, async () => {
-    state.row = row({ roles: { label: "x", role_permissions: PERMISSIONS.map((p) => ({ permission_key: p })) } });
+    state.row = row({ permissions: allowAll(PERMISSIONS) });
     const a = await getAccess();
     expect(a.permissions.size).toBe(PERMISSIONS.length);
     expect(calls.from + calls.rpc).toBe(1);
@@ -91,21 +98,24 @@ describe("getAccess · ถาม DB ครั้งเดียว", () => {
   });
 
   it("ผู้ใช้ปิดใช้งาน → ไม่มีสิทธิ์ใดเลย (แต่ยังมี profile ให้หน้าจอบอก) · ไม่ลงทะเบียน → ไม่มีทั้งสิทธิ์และ profile", async () => {
-    state.row = row({ is_active: false });
+    state.row = row({
+      profile: { display_name: "ลูกพี่", role_key: "management", role_label: "ผู้บริหาร", is_active: false },
+      permissions: allowAll(PERMISSIONS),   // ถึง DB พลาดตอบ true มา ฝั่งนี้ก็ต้องไม่ให้สิทธิ์
+    });
     const off = await getAccess();
     expect(off.permissions.size).toBe(0);
     expect(off.profile).not.toBeNull();
-    state.row = null;
+    state.row = row({ profile: null, permissions: allowAll(PERMISSIONS) });
     const none = await getAccess();
     expect(none.permissions.size).toBe(0);
     expect(none.profile).toBeNull();
     expect(none.error).toBeNull();
   });
 
-  it("สิทธิ์ที่ TS ไม่รู้จักถูกทิ้ง · ระดับอ่านไม่ได้ (roles = null) → ไม่มีสิทธิ์", async () => {
-    state.row = row({ roles: { label: "x", role_permissions: [{ permission_key: "ledger.approve" }, { permission_key: "made.up" }] } });
+  it("สิทธิ์ที่ TS ไม่รู้จักถูกทิ้ง · ค่าที่ไม่ใช่ true ไม่ถือว่าอนุญาต · ไม่มี permissions เลย → ไม่มีสิทธิ์", async () => {
+    state.row = row({ permissions: { "ledger.approve": true, "made.up": true, "txn.create": "true" } });
     expect([...(await getAccess()).permissions]).toEqual(["ledger.approve"]);
-    state.row = row({ roles: null });
+    state.row = row({ permissions: null });
     expect((await getAccess()).permissions.size).toBe(0);
   });
 
@@ -120,10 +130,19 @@ describe("getAccess · ถาม DB ครั้งเดียว", () => {
 });
 
 describe("session.ts · ไม่มีการเรียก DB ในลูป (ด่านซ้อนกับเทสต์นับ)", () => {
-  it("ไม่มี .rpc( และไม่มี map(async …) ใน session.ts", () => {
-    const src = readFileSync(path.join(__dirname, "..", "session.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    expect(src).not.toMatch(/\.rpc\s*\(/);
-    expect(src).not.toMatch(/\.map\s*\(\s*async/);
-    expect(src).not.toMatch(/Promise\.all/);
+  const src = () =>
+    readFileSync(path.join(__dirname, "..", "session.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+
+  it("ไม่มีลูปถาม DB · ยิง DB ครั้งเดียวในไฟล์ (RPC ตัวเดียว ไม่มี select ตาราง)", () => {
+    expect(src()).not.toMatch(/\.map\s*\(\s*async/);
+    expect(src()).not.toMatch(/Promise\.all/);
+    expect((src().match(/supabase\.(rpc|from)\(/g) ?? []).length).toBe(1);
+  });
+
+  it("ไม่ไล่ตารางสิทธิ์เอง (กฎสิทธิ์ต้องอยู่ที่ fn_can ที่เดียว)", () => {
+    expect(src()).not.toMatch(/role_permissions/);
+    expect(src()).not.toMatch(/from\(\s*["']app_users["']\s*\)/);
   });
 });

@@ -1,41 +1,62 @@
 import { isPermission, type Permission } from "./permissions";
 
 /**
- * แถวเดียวที่ `getAccess()` ถาม DB: ผู้ใช้ + ระดับสิทธิ์ + สิทธิ์ของระดับนั้น (embed ผ่าน FK ใน PostgREST)
+ * แปลงคำตอบของ **คำขอเดียว** ที่ `getAccess()` ยิงไปที่ DB:
  *
- *   app_users(display_name, role, is_active, roles(label, role_permissions(permission_key)))
+ *   sri_os.fn_my_access(array[<ชื่อสิทธิ์ทุกตัวที่ฝั่งนี้รู้จัก>])
+ *     → { user_id, profile: {display_name, role_key, role_label, is_active} | null,
+ *         permissions: { "<ชื่อสิทธิ์>": true|false, ... } }
  *
- * แทนการเรียก `fn_can()` ทีละสิทธิ์ (16 round trip ต่อหนึ่งหน้า) — ความหมายต้องเท่ากับ `fn_can` ทุกประการ:
- *   มีสิทธิ์ ⇔ ผู้ใช้มีแถวใน app_users ∧ is_active ∧ ระดับของเขามีสิทธิ์นั้นใน role_permissions
- * ผู้ใช้ไม่ active = ไม่มีสิทธิ์ใดเลย (แต่ยังมี profile ให้หน้าจอบอกว่าถูกปิดใช้งาน) · ไม่มีแถว = ไม่มีทั้งสิทธิ์และ profile
- * เทสต์ `access-row.pg.test.ts` เทียบกับ `fn_can` ของ DB จริงทุกระดับ/ทุกสิทธิ์ เพื่อให้สองทางนี้แยกจากกันไม่ได้เงียบๆ
+ * **ไฟล์นี้ไม่ตัดสินสิทธิ์** — มันแค่อ่าน boolean ที่ DB ตอบมา
+ * ใครมีสิทธิ์อะไรอยู่ใน `sri_os.fn_can()` ที่เดียว (ซึ่ง RLS ก็ใช้ตัวเดียวกัน)
+ * ห้ามเอา `roles` / `role_permissions` กลับมาไล่เองที่นี่อีก — เคยทำแล้วและมันคือ
+ * **เกณฑ์สิทธิ์ที่สอง**: สิ่งที่หน้าจอโชว์กับสิ่งที่ DB บังคับแยกจากกันได้เงียบๆ
+ * (เทสต์ `access-row.pg.test.ts` แดงถ้าไฟล์นี้หรือ `session.ts` เอ่ยถึงตารางพวกนั้น)
  *
  * ฟังก์ชันล้วน ไม่ import อะไรของ server จึงเทสต์ตรงๆ ได้
  */
 
-export type AccessRow = {
-  display_name: string;
-  role: string;
-  is_active: boolean;
-  roles: RoleEmbed | RoleEmbed[] | null;
-};
-type RoleEmbed = { label: string; role_permissions: { permission_key: string }[] | null };
+/** ชื่อ RPC ที่ `getAccess()` เรียก — เทสต์ยืนยันว่าตรงกับฟังก์ชันที่มีจริงใน DB */
+export const ACCESS_RPC = "fn_my_access";
 
-export const ACCESS_SELECT = "display_name, role, is_active, roles(label, role_permissions(permission_key))";
+export type AccessPayload = {
+  user_id?: string | null;
+  profile?: {
+    display_name?: string | null;
+    role_key?: string | null;
+    role_label?: string | null;
+    is_active?: boolean | null;
+  } | null;
+  permissions?: Record<string, unknown> | null;
+};
 
 export type AccessFromRow = {
   permissions: Set<Permission>;
   profile: { displayName: string; roleKey: string; roleLabel: string | null } | null;
 };
 
-export function accessFromRow(row: AccessRow | null): AccessFromRow {
-  if (!row) return { permissions: new Set(), profile: null };
-  const roleRow = Array.isArray(row.roles) ? row.roles[0] : row.roles;
-  const profile = { displayName: row.display_name, roleKey: row.role, roleLabel: roleRow?.label ?? null };
-  // ผู้ใช้ที่ปิดใช้งาน หรือระดับที่อ่านไม่ได้ → ไม่มีสิทธิ์ใดเลย (ล้มเหลว = ไม่มีสิทธิ์)
-  if (row.is_active !== true || !roleRow) return { permissions: new Set(), profile };
-  // คีย์ที่ TS ยังไม่รู้จักถูกทิ้ง (`npm run check:permissions` เป็นตัวบอกว่าสองฝั่งไม่ตรงกัน)
+export function accessFromPayload(payload: AccessPayload | null | undefined): AccessFromRow {
+  // ไม่มีคำตอบ (ไม่ล็อกอิน · ไม่มีแถวใน app_users · อ่านไม่ได้) = ไม่มีสิทธิ์และไม่มีโปรไฟล์
+  if (!payload || typeof payload !== "object") return { permissions: new Set(), profile: null };
+
+  const p = payload.profile;
+  const profile =
+    p && typeof p.display_name === "string" && typeof p.role_key === "string"
+      ? { displayName: p.display_name, roleKey: p.role_key, roleLabel: p.role_label ?? null }
+      : null;
+
   const permissions = new Set<Permission>();
-  for (const rp of roleRow.role_permissions ?? []) if (isPermission(rp.permission_key)) permissions.add(rp.permission_key);
+  // ไม่มีแถวใน `app_users` (ยังไม่ถูกตั้งตำแหน่ง) = ไม่มีสิทธิ์ ไม่ว่า DB จะตอบอะไรมา
+  if (!profile) return { permissions, profile: null };
+  // บัญชีที่ถูกปิดใช้งาน: DB ตอบ false ให้ทุกตัวอยู่แล้ว (`fn_can` เช็ค `is_active`)
+  // ข้างล่างเป็นชั้นที่ **เอาสิทธิ์ออกได้เท่านั้น ไม่เคยเพิ่ม** จึงไม่ใช่เกณฑ์ที่สอง
+  // (ถ้าวันหนึ่ง DB พลาด ฝั่งนี้ยังปิดอยู่ — ผิดทางที่ปลอดภัย)
+  if (p?.is_active !== true) return { permissions, profile };
+
+  for (const [key, allowed] of Object.entries(payload.permissions ?? {})) {
+    // รับเฉพาะ `true` จริงๆ (string "true" / 1 / null ไม่ใช่การอนุญาต) และเฉพาะชื่อที่ฝั่งนี้รู้จัก
+    // (`npm run check:permissions` เป็นตัวบอกว่าสองฝั่งมีชื่อไม่ตรงกัน)
+    if (allowed === true && isPermission(key)) permissions.add(key);
+  }
   return { permissions, profile };
 }
