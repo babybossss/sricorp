@@ -114,9 +114,9 @@
   .svc h3 small{display:block;font-size:15px;color:var(--ink-600);font-weight:500;letter-spacing:0;margin-top:2px}
   .svc p{font-size:15px;color:var(--ink-600);margin:14px 0 22px}
   .svc ul{list-style:none;border-top:1px solid var(--line);margin-top:auto}
-  .svc li{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line);font-size:15px}
-  .svc li b{font-weight:600}
-  .svc li span{color:var(--ink-400);font-size:14px}
+  .svc li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--line);font-size:15px}
+  .svc li b{font-weight:600;white-space:nowrap}
+  .svc li span{color:var(--ink-400);font-size:14px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .svc .num{position:absolute;top:18px;right:22px;z-index:2;color:#fff;font-size:44px;font-weight:300;opacity:.9;line-height:1}
 
   /* WORK */
@@ -175,6 +175,10 @@
   .copy em{font-style:normal;color:var(--gold);letter-spacing:.12em}
 
   /* RESPONSIVE */
+  @media (max-width:1180px) and (min-width:961px), (max-width:380px){
+    .svc li{flex-direction:column;align-items:flex-start;gap:0}
+    .svc li span{text-align:left;white-space:normal}
+  }
   @media (max-width:960px){
     .menu{display:none}
     .menu.open{display:flex;position:absolute;top:80px;left:0;right:0;flex-direction:column;gap:0;background:var(--navy-900);padding:8px 24px 24px;align-items:stretch}
@@ -276,8 +280,8 @@
           <p data-en="Invest, manage and trade property — informed by real data from the portfolio we hold ourselves.">ลงทุน บริหาร และซื้อขายทรัพย์ ด้วยข้อมูลจริงจากพอร์ตที่เราถือเอง</p>
           <ul>
             <li><b>Investment</b><span data-en="Property investment">ลงทุนอสังหาฯ</span></li>
-            <li><b>Management</b><span data-en="Asset &amp; lease management">บริหารทรัพย์ · ปล่อยเช่า</span></li>
-            <li><b>Broker</b><span data-en="Sales &amp; leasing brokerage">นายหน้าซื้อ-ขาย-เช่า</span></li>
+            <li><b>Management</b><span data-en="Asset &amp; leasing">บริหารทรัพย์ · ปล่อยเช่า</span></li>
+            <li><b>Broker</b><span data-en="Sales &amp; rentals">นายหน้าซื้อ-ขาย-เช่า</span></li>
           </ul>
         </div>
       </article>
@@ -302,7 +306,7 @@
           <p data-en="Partnering with businesses built to grow, and investing in institutional-grade assets.">ร่วมลงทุนกับธุรกิจที่เติบโตได้จริง และลงทุนในสินทรัพย์ระดับสถาบัน</p>
           <ul>
             <li><b>SME Investing</b><span data-en="SME co-investment">ร่วมทุนธุรกิจ SME</span></li>
-            <li><b>Institutional Investing</b><span data-en="Institutional-grade assets">ลงทุนระดับสถาบัน</span></li>
+            <li><b>Institutional Investing</b><span data-en="Institutional assets">ลงทุนระดับสถาบัน</span></li>
           </ul>
         </div>
       </article>
