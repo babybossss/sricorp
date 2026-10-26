@@ -39,9 +39,9 @@ Unsplash License (ใช้เชิงพาณิชย์ได้ฟรี) 
 | Real Estate | Sua Truong | https://unsplash.com/photos/PHMabtedGwQ |
 | Financing | Dimitri Karastelev | https://unsplash.com/photos/ZH4FUYiaczY |
 | Investing | Vitaly Gariev | https://unsplash.com/photos/1nVQJc4YLKM |
-| ประชุมดีล | Felix Viray | https://unsplash.com/photos/WEKYnsgn0x8 |
-| ลงพื้นที่ | Ferdy Yudha Pradana | https://unsplash.com/photos/Z26xhCklph0 |
-| ตรวจเอกสาร | blue sky | https://unsplash.com/photos/dMUUUv5erIY |
-| ส่งมอบทรัพย์ | Jakub Żerdzicki | https://unsplash.com/photos/bqUZEAeWuok |
-| ปิดดีล | Van Tay Media | https://unsplash.com/photos/T5QgMRe-sCs |
+| ดูแลลูกค้า (รูปใหญ่) | litoon dev | https://unsplash.com/photos/PjGmtZedbO4 |
+| วิเคราะห์ดีล | TRAN NHU TUAN | https://unsplash.com/photos/x-QxTWZ4mE8 |
+| ห้องประชุม | Benjamin Child | https://unsplash.com/photos/0sT9YhNgSEs |
+| ทีมผู้เชี่ยวชาญ | Dalton Ngangi | https://unsplash.com/photos/QWS5ingwMh0 |
+| ปิดดีล | Luigi Estuye | https://unsplash.com/photos/uIH-y7kmaeE |
 | พื้นหลังฟอร์ม | Van Tay Media | https://unsplash.com/photos/HYDapQuENOM |
