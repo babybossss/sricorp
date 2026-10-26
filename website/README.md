@@ -28,8 +28,7 @@ Mockup v0.2 ของหน้า Homepage (TH / EN) · เปิด `index.html
 | รายการ | แก้ที่ |
 |---|---|
 | รูปอื่นๆ (Unsplash) | `IMAGES` ใน `index.html` → ใส่รูปจริงใน `assets/img/` |
-| ที่อยู่ / เบอร์โทร | footer ใน `index.html` |
-| ฟอร์มยังไม่ส่งจริง | `FORM_TO` (ตอนนี้ sricorpth@gmail.com) และ `FORM_ENDPOINT` |
+| ฟอร์มยังไม่ส่งจริง | `FORM_ENDPOINT` · ปลายทางตั้งแล้วใน `FORM_ROUTES`: Partner → sricorpth@gmail.com, admin@sricorporation.com · Staff Member → sricorpth@gmail.com, hr@sricorporation.com |
 
 ## เครดิตรูปตัวอย่าง
 Unsplash License (ใช้เชิงพาณิชย์ได้ฟรี) — จะเปลี่ยนเป็นรูปงานจริงของ SRI ก่อนขึ้นเว็บจริง
