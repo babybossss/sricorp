@@ -822,6 +822,9 @@ export const TX_TYPES: TxType[] = [
         cr: "1900",
         accrualCoa: "1220",
         requires: ["contact"],
+        caution:
+          "ถ้าได้เงินมา**มากกว่า**ยอดที่ลงบัญชีไว้ ส่วนเกินคือกำไร ต้องลงเป็นรายได้แยกบรรทัด " +
+          "ห้ามลงทั้งก้อนในหมวดนี้ ไม่งั้นกำไรจะหายไปจากงบกำไรขาดทุน",
       },
       {
         code: "inv.other_noncurrent_asset_back",
@@ -1093,6 +1096,9 @@ export const TX_TYPES: TxType[] = [
         cr: CASH,
         accrualCoa: "2100",
         requires: ["contact"],
+        caution:
+          "ถ้าจ่ายรวมดอกเบี้ยหรือค่าปรับมาด้วย **ต้องแยกลงเป็นค่าใช้จ่ายคนละบรรทัด** " +
+          "ลงรวมทั้งก้อนที่นี่จะทำให้หนี้ลดเกินจริงและค่าใช้จ่ายหายไปจากงบกำไรขาดทุน",
       },
       {
         code: "fin.other_noncurrent_liability_out",
