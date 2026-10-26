@@ -22,3 +22,6 @@ scratch/
 
 # สคริปต์ python ที่สร้างเทมเพลต Excel
 __pycache__/
+
+# สิทธิ์เฉพาะเครื่อง ไม่ใช่ของทีม
+.claude/settings.local.json
