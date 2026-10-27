@@ -49,11 +49,20 @@ const plNet = (lines: PostingLine[]) =>
  * คัดด้วยธงจากตารางกฎ ไม่ใช่รายชื่อรหัสหมวด — หมวดตีราคาตัวใหม่จึงไม่หลุดเข้ามาเอง
  */
 const ADJ = allowedSubs("adjust").filter((s) => !s.requires?.includes("revaluation"));
+
+/**
+ * หมวดย้ายวัตถุประสงค์อสังหาฯ (27/10) บังคับผูกทรัพย์ตามตารางกฎ — **ต้องรู้ว่า
+ * ย้ายทรัพย์ชิ้นไหน** ไม่งั้นต้นทุนรายชิ้นแยกออกจากกันไม่ได้หลังย้าย
+ * เติมให้จากธงในตารางกฎ ไม่ใช่ไล่รหัสหมวด → หมวดใหม่ที่บังคับผูกทรัพย์ไม่หลุด
+ */
+const withDimensions = (s: { requires?: readonly string[] }): Partial<PostingInput> =>
+  s.requires?.includes("asset") ? { assetId: "a1" } : {};
 const WRITEOFF = ["adj.writeoff_rent", "adj.writeoff_interest", "adj.writeoff_other"];
 
 describe("ลงรายการที่ไม่มีเงินเคลื่อนได้ โดยไม่ต้องส่งบัญชีธนาคาร", () => {
   it("ต้องมีหมวดให้ทดสอบ (กันเทสต์ผ่านเพราะลูปว่าง)", () => {
-    expect(ADJ.length).toBe(5);
+    // 5 หมวดค่าเผื่อ/ตัดหนี้สูญ + 2 หมวดย้ายวัตถุประสงค์อสังหาฯ (27/10)
+    expect(ADJ.length).toBe(7);
     expect(ADJ.every((s) => !movesCash(s))).toBe(true);
     // ทั้งประเภทต้องไม่มีเงินเคลื่อน รวมหมวดตีราคาที่ถูกคัดออกจากลูปนี้ด้วย
     expect(allowedSubs("adjust").every((s) => !movesCash(s))).toBe(true);
@@ -61,7 +70,7 @@ describe("ลงรายการที่ไม่มีเงินเคล�
 
   for (const s of ADJ) {
     it(`${s.code} — ไม่ส่งบัญชีเลยก็ผ่าน · สมดุล · ไม่มีบรรทัดเงินสด · ไม่เข้างบกระแสเงินสด`, () => {
-      const lines = allLines(buildPosting(adj(s.code)));
+      const lines = allLines(buildPosting(adj(s.code, withDimensions(s))));
       assertBalanced(lines);
       expect(lines).toHaveLength(2);
       expect(lines.some((l) => isCashAccount(l.coaCode)), "มีบรรทัดเงินสด").toBe(false);

@@ -25,11 +25,21 @@ const bad = (p: ParsedOpening, e: PrepareEnv = env()) => {
 const owner = (r: ReturnType<typeof ok>, id: string) => r.owners.find((o) => o.ownerId === id)!;
 
 describe("ตารางเทียบรหัสบัญชี → หมวดยอดยกมา (อ่านจากตารางกฎ)", () => {
-  it("ตรงกับตารางกฎ 27 รหัส (ทุกบัญชีงบดุลยกเว้นส่วนของเจ้าของ 3200/3300/3400/3410) — ไม่มีรหัสเพิ่มหรือขาด", () => {
+  it("ตรงกับตารางกฎ 28 รหัส (ทุกบัญชีงบดุลยกเว้นส่วนของเจ้าของ 3200/3300/3400/3410 และ 1520) — ไม่มีรหัสเพิ่มหรือขาด", () => {
     const expected: Record<string, string> = {
       "1100": "opn.cash", "1200": "opn.receivable_rent", "1210": "opn.receivable_interest", "1220": "opn.receivable_other",
       "1290": "opn.allowance", "1300": "opn.loan_principal", "1310": "opn.intercompany_receivable",
+      // เงินให้กู้ยืมมีหลักประกัน (ลูกพี่สั่ง 27/10) — แยกจาก 1300
+      "1320": "opn.loan_secured_principal",
       "1400": "opn.srr_principal", "1410": "opn.mortgage_principal", "1500": "opn.property", "1510": "opn.renovation",
+      /**
+       * **1520 อสังหาฯ เพื่อการขาย ไม่มีหมวดยอดยกมาโดยตั้งใจ** (27/10)
+       *
+       * ทรัพย์ทุกชิ้นนำเข้าที่ `opn.property` (1500) แล้วย้ายวัตถุประสงค์หนึ่งใบ
+       * ด้วย `adj.reclass_re_to_sale` ซึ่งย้ายด้วยต้นทุนเดิมและไม่กระทบงบใดเลย
+       * เปิดสองทางเข้าให้ทรัพย์ชิ้นเดียวกันแปลว่าคนนำเข้าเลือกได้ว่าจะลงบัญชีไหน
+       * แล้วยอดตั้งต้นของสองบัญชีจะขึ้นกับคนกรอก ไม่ใช่ขึ้นกับความจริง
+       */
       "1600": "opn.deposit_paid", "1700": "opn.securities", "1710": "opn.related_investment", "1720": "opn.gold_alt",
       "1800": "opn.wht_credit",
       // บัญชีรองรับ (ลูกพี่สั่ง 26/10) — ต้องมีหมวดยอดยกมาด้วย ไม่งั้นนำเข้ายอดตั้งต้นไม่ได้

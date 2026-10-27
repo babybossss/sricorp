@@ -46,6 +46,13 @@ const REVALUE_CODES = [
   "adj.revalue_commodity_down",
 ];
 
+/**
+ * หมวดย้ายวัตถุประสงค์อสังหาฯ เช่า↔ขาย (ลูกพี่สั่ง 27/10) — อยู่ใต้ `adjust` เหมือนกัน
+ * เพราะไม่มีเงินเคลื่อนเลย · กฎของมันอยู่ใน `secured-loan-and-property-purpose.test.ts`
+ * ที่นี่มีไว้ให้รายชื่อ "ไม่ขาดไม่เกิน" ของประเภท `adjust` ยังครบ
+ */
+const RECLASS_CODES = ["adj.reclass_re_to_sale", "adj.reclass_re_to_rental"];
+
 const WRITEOFF_CODES = ["adj.writeoff_rent", "adj.writeoff_interest", "adj.writeoff_other"];
 
 /* ================================================================== *
@@ -96,9 +103,9 @@ describe("ประเภทรายการ ปรับปรุงทาง
     expect(type!.cash).toBe("none");
   });
 
-  it("มีเก้าหมวดครบตามที่ตัดสินไว้ ไม่ขาดไม่เกิน (ค่าเผื่อ 5 + ตีราคา 4)", () => {
+  it("มีสิบเอ็ดหมวดครบตามที่ตัดสินไว้ ไม่ขาดไม่เกิน (ค่าเผื่อ 5 + ตีราคา 4 + ย้ายวัตถุประสงค์ 2)", () => {
     expect(allowedSubs("adjust").map((s) => s.code).sort()).toEqual(
-      [...ADJ_CODES, ...REVALUE_CODES].sort()
+      [...ADJ_CODES, ...REVALUE_CODES, ...RECLASS_CODES].sort()
     );
   });
 
