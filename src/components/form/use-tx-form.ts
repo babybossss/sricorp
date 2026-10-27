@@ -26,6 +26,8 @@ import { notWiredReason } from "@/lib/db/post-entry";
 import { loadFxContext } from "@/app/actions/fx-context";
 import { loadDisposalContext } from "@/app/actions/disposal-context";
 import { disposalFor, type DisposalContext } from "@/lib/db/disposal-context";
+import { loadBalanceMove } from "@/app/actions/balance-move";
+import { movesWholeBalance, type BalanceMove } from "@/lib/db/balance-move";
 import type { FxAccountContext } from "@/lib/db/fx-context";
 import { fxInputFor, fxKindOf } from "@/lib/db/fx-input";
 import { EMPTY_FX, fxChoiceOf, type FxDraft } from "./fx-value";
@@ -330,6 +332,52 @@ export function useTxForm() {
     [sellsAsset, disposalCtx, draft.disposal.salePrice, draft.disposal.sellingCosts]
   );
 
+  /**
+   * ย้ายวัตถุประสงค์ทรัพย์ (ธง `wholeBalanceMove`) — ยอดคงเหลือของทรัพย์ในบัญชีต้นทาง **อ่านจากสมุด** ผ่าน server action
+   * ผู้ใช้เลือกแค่ทรัพย์ ไม่มีช่องพิมพ์ยอด (D-115) · ตอนบันทึกจริง server อ่านซ้ำเองและทิ้งค่าที่ฟอร์มส่งมา
+   */
+  const movesBalance = movesWholeBalance(sub);
+  const moveKey = movesBalance && draft.holderId && draft.assetId ? `${draft.holderId}|${draft.assetId}|${draft.subCode}` : null;
+  const [moveState, setMoveState] = React.useState<{ key: string | null; loading: boolean; error: string | null; balanceMove: BalanceMove | null }>({
+    key: null,
+    loading: false,
+    error: null,
+    balanceMove: null,
+  });
+  React.useEffect(() => {
+    if (!moveKey) {
+      setMoveState({ key: null, loading: false, error: null, balanceMove: null });
+      return;
+    }
+    let live = true;
+    const [ownerId, assetId, subCode] = moveKey.split("|");
+    setMoveState({ key: moveKey, loading: true, error: null, balanceMove: null });
+    loadBalanceMove({ ownerId, assetId, subCode })
+      .then((r) => {
+        if (!live) return;
+        setMoveState(r.ok ? { key: moveKey, loading: false, error: null, balanceMove: r.balanceMove } : { key: moveKey, loading: false, error: r.message, balanceMove: null });
+      })
+      .catch(() => live && setMoveState({ key: moveKey, loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงอ่านยอดต้นทุนของทรัพย์จากสมุดไม่ได้", balanceMove: null }));
+    return () => {
+      live = false;
+    };
+  }, [moveKey]);
+  const balanceMove = moveState.key === moveKey ? moveState.balanceMove : null;
+  // ช่องจำนวนเงินตามยอดจากสมุดเสมอ (อ่านอย่างเดียว) · ไม่มียอด = ล้างช่อง ไม่ค้างยอดของทรัพย์ชิ้นก่อน
+  const moveAmount = balanceMove?.sourceBalance ?? null;
+  const prevMovesBalance = React.useRef(false);
+  React.useEffect(() => {
+    if (movesBalance) {
+      setDraft((d) => {
+        const next = moveAmount !== null ? moveAmount.toFixed(2) : "";
+        return d.amount === next ? d : { ...d, amount: next };
+      });
+    } else if (prevMovesBalance.current) {
+      setDraft((d) => (d.amount ? { ...d, amount: "" } : d));
+    }
+    prevMovesBalance.current = movesBalance;
+  }, [movesBalance, moveAmount]);
+
   const requires = React.useCallback((r: NonNullable<SubCategory["requires"]>[number]) => !!sub?.requires?.includes(r), [sub]);
 
   /**
@@ -378,6 +426,11 @@ export function useTxForm() {
       else if (!draft.disposal.salePrice.trim()) out.push("ราคาขาย");
       else if (disposalBuild && !disposalBuild.ok) out.push(disposalBuild.message);
     }
+    // ย้ายวัตถุประสงค์ทรัพย์: ต้องเลือกทรัพย์ (ช่อง "โปรเจค" ข้างบนแจ้งอยู่แล้ว) และอ่านยอดจากสมุดได้ — ข้อความบอกเหตุที่ตรงนี้
+    if (movesBalance && draft.assetId) {
+      if (moveState.key !== moveKey || moveState.loading) out.push("ยอดต้นทุนของทรัพย์จากสมุด (กำลังโหลด)");
+      else if (!balanceMove) out.push(moveState.error ?? "ยอดต้นทุนของทรัพย์จากสมุด");
+    }
     // Backlog ข้อ 5: ถ้าไม่มีตารางงวดอ้างอิง ต้องระบุเงินต้น/ดอกเบี้ยเอง ระบบไม่เดาให้
     if (
       requires("principalInterestSplit") &&
@@ -388,7 +441,7 @@ export function useTxForm() {
       out.push("เงินต้นและดอกเบี้ย");
     }
     return out;
-  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxAccountId, fxState, fxCtx, fxResult, disposalState, disposalCtx, disposalBuild]);
+  }, [draft, requires, isCrossOwner, moneyMoved, whtOn, fxKind, fxAccountId, fxState, fxCtx, fxResult, disposalState, disposalCtx, disposalBuild, movesBalance, moveState, moveKey, balanceMove]);
 
   const reset = React.useCallback(() => {
     setDraft(freshDraft());
@@ -451,7 +504,13 @@ export function useTxForm() {
       typeKey: draft.typeKey,
       subCode: draft.subCode,
       // ขายทรัพย์: ยอดของรายการคือเงินสุทธิเสมอ ไม่ใช่สิ่งที่พิมพ์ในช่อง
-      amount: needsDisposal && disposal ? disposal.netProceeds : fxResult?.ok ? fxResult.amount : parseAmount(draft.amount),
+      amount: needsDisposal && disposal
+        ? disposal.netProceeds
+        : fxResult?.ok
+          ? fxResult.amount
+          : balanceMove
+            ? balanceMove.sourceBalance // ย้ายทั้งก้อน: ยอดคือยอดจากสมุด ไม่ใช่สิ่งที่พิมพ์
+            : parseAmount(draft.amount),
       ownerId: draft.holderId,
       bankAccountId: draft.bankId,
       assetId: draft.assetId || undefined,
@@ -469,6 +528,8 @@ export function useTxForm() {
       intercompanyNature: draft.intercompanyNature || undefined,
       // ข้อมูลเงินตราที่อ่านจากสมุด + อัตราที่เลือก (ใช้พรีวิวและกั้นปุ่ม · server ประกอบเองใหม่ตอนบันทึก)
       ...(fxResult?.ok ? fxResult.patch : {}),
+      // ยอดคงเหลือที่อ่านจากสมุด (ใช้พรีวิวและกั้นปุ่ม · server อ่านซ้ำเองตอนบันทึก)
+      balanceMove: movesBalance && balanceMove ? balanceMove : undefined,
       // ส่งเมื่อติ๊กว่าถูกหักและหมวดนี้หักได้เท่านั้น — ค่าที่ค้างจากหมวดอื่นไม่หลุดไปกับรายการ
       wht: whtOn
         ? {
@@ -478,7 +539,7 @@ export function useTxForm() {
           }
         : undefined,
     };
-  }, [draft, sub, canAccrue, disposal, disposalBuild, repayment.split, whtOn, fxResult]);
+  }, [draft, sub, canAccrue, disposal, disposalBuild, repayment.split, whtOn, fxResult, movesBalance, balanceMove]);
 
   /**
    * รายการนี้ลดลูกหนี้/เจ้าหนี้ไหม — ถาม engine (ร่าง) แล้วอ่านบรรทัดที่ได้ ไม่ใช่เดาจากรหัสหมวด
@@ -638,6 +699,11 @@ export function useTxForm() {
     reset,
     disposal,
     disposalState: { loading: disposalState.loading && disposalState.key === disposalKey, error: disposalState.key === disposalKey ? disposalState.error : null, ctx: disposalCtx, buildError: disposalBuild && !disposalBuild.ok ? disposalBuild.message : null },
+    balanceMoveState: {
+      loading: moveState.loading && moveState.key === moveKey,
+      error: moveState.key === moveKey ? moveState.error : null,
+      balanceMove,
+    },
     repayment,
     transferToOwnerId,
     isCrossOwner,

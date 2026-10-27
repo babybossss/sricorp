@@ -120,6 +120,19 @@ const revaluationFor = (s: { requires?: readonly string[] }) =>
     ? { currency: "USD", rateToThb: 36.5, valueOriginal: 1_000, valueThb: 36_500 }
     : undefined;
 
+/**
+ * ยอดคงเหลือของบัญชีต้นทางสำหรับหมวด **ย้ายยอดทั้งก้อน** (27/10)
+ *
+ * engine ย้ายได้เฉพาะทั้งก้อน และ **ไม่เชื่อยอดที่พิมพ์** → ตอนไล่ทั้งตารางกฎ
+ * ต้องส่งยอดที่ "อ่านจากสมุด" เท่ากับ `amount` พอดี
+ * คัดด้วยธงจากตารางกฎ ไม่ใช่รหัสหมวด · เคสที่ **ไม่ส่ง** ข้อมูลนี้ (และเคสยอดไม่ตรง)
+ * อยู่ใน `reclass-whole-balance.test.ts` ครบทุกช่อง (บทเรียนข้อ 3)
+ */
+const balanceMoveFor = (s: SubCategory) =>
+  s.requires?.includes("wholeBalanceMove")
+    ? { sourceCoaCode: s.cr, sourceBalance: base.amount }
+    : undefined;
+
 describe("Money Invariant 1 — ทุกรายการต้องสมดุล", () => {
   it("ทุกหมวดย่อยในตารางกฎ สร้างบรรทัดที่สมดุลได้", () => {
     for (const t of TX_TYPES) {
@@ -145,6 +158,7 @@ describe("Money Invariant 1 — ทุกรายการต้องสมด
               ? "b4b"
               : undefined,
           revaluation: revaluationFor(s),
+          balanceMove: balanceMoveFor(s),
           fxTranslation: fxTranslationFor(s),
           fxConversion: fxConversionFor(s),
           fxAcquisition: fxAcquisitionFor(s),
@@ -177,6 +191,7 @@ describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
               ? "b4b"
               : undefined,
           revaluation: revaluationFor(s),
+          balanceMove: balanceMoveFor(s),
           fxTranslation: fxTranslationFor(s),
           fxConversion: fxConversionFor(s),
           fxAcquisition: fxAcquisitionFor(s),

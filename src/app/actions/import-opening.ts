@@ -17,7 +17,9 @@ import {
   type ParsedOpening,
   type PlanAction,
 } from "@/lib/db/import/opening";
-import { prepareOpeningPosting, type OpeningProblem, type OwnerEvidence } from "@/lib/db/import/opening-post";
+import { canRegisterDirect } from "@/components/assets/asset-drafts";
+import { assetCategoryOfCoa } from "@/lib/db/import/breakdown";
+import { isPendingAssetId, prepareOpeningPosting, type OpeningProblem, type OwnerEvidence } from "@/lib/db/import/opening-post";
 import { runOpeningImport, supabaseOpeningStore, type OpeningStore, type OwnerOutcome } from "@/lib/db/import/opening-run";
 import type { Reference } from "@/lib/db/reference-types";
 
@@ -33,6 +35,11 @@ import type { Reference } from "@/lib/db/reference-types";
  * กับที่ผู้ใช้เห็นในหน้าตัวอย่าง — ไฟล์หรือวันตัดยอดเปลี่ยนไประหว่างนั้น = ปฏิเสธ
  *
  * ผู้ถือและบัญชีธนาคารอ่านจาก DB ตาม session ของผู้ใช้ (RLS) — ไม่รับจากไฟล์หรือจากหน้าจอ
+ *
+ * **ชีท "แจกแจงทรัพย์"** (ทรัพย์รายชิ้น · ต้นทุนรายชิ้น) รับได้ทั้งในไฟล์ยอดตั้งต้นเอง หรือแนบเป็นไฟล์แยกในช่อง `breakdownFile`
+ * (ต้องมีทางใดทางหนึ่ง) · ทรัพย์ที่ยังไม่มีในทะเบียนจะถูกลงทะเบียนก่อน (ผ่าน `fn_apply_asset_draft` ทางเดียวกับหน้าทะเบียนทรัพย์)
+ * แต่ **หลังจากตรวจทุกอย่างผ่านหมดแล้วเท่านั้น** (ลองประกอบรายการด้วย `buildPosting()` ตัวจริงมาก่อน) — ปัญหาที่รู้ล่วงหน้า
+ * (ขาดหลักฐานนิติบุคคล · ยอดไม่ตรง ฯลฯ) จึงไม่ทิ้งทรัพย์เปล่าไว้ในทะเบียน
  */
 
 export type PreviewJournalLine = { code: string; name: string; bank: string | null; debit: number; credit: number };
@@ -60,6 +67,20 @@ export type PreviewLot = {
   /** ทรัพย์ที่ล็อตนี้จะผูก — null = ยังหาไม่เจอ (ดู blockers) */
   assetLabel: string | null;
 };
+export type PreviewAsset = {
+  ownerName: string;
+  name: string;
+  coaCode: string;
+  coaName: string;
+  cost: number;
+  renovation: number;
+  /** ทรัพย์ในทะเบียนที่จะผูก (รหัส · ชื่อ) · null = จะลงทะเบียนใหม่ */
+  existing: string | null;
+  /** "รหัสทรัพย์" ที่กรอกไว้แต่ไม่พบในทะเบียน (ระบบออกรหัสให้เอง ไม่ใช้รหัสที่พิมพ์) */
+  typedCode: string | null;
+  /** true = บัญชีนี้ไม่ใช่การลงทุน (เช่น เงินมัดจำจ่าย) ไม่ลงทะเบียนทรัพย์ — ลงเป็นบรรทัดรวมต่อบัญชี ชื่อรายการอยู่ใน memo */
+  noAsset: boolean;
+};
 export type PreviewPlanItem = { ownerId: string; ownerName: string; action: PlanAction; note?: string };
 export type PreviewEvidenceOwner = { id: string; name: string };
 
@@ -72,6 +93,8 @@ export type OpeningPreview =
       fingerprint: string;
       owners: PreviewOwner[];
       lots: PreviewLot[];
+      /** ทรัพย์รายชิ้นจากชีทแจกแจง — แต่ละชิ้นจะได้บรรทัดบัญชีของตัวเองพร้อม asset_id */
+      assets: PreviewAsset[];
       warnings: string[];
       /** สิ่งที่ทำให้ยังกดยืนยันไม่ได้ (ผู้ถือ + ข้อความ) · ว่าง = พร้อมลงสมุด */
       blockers: OpeningProblem[];
@@ -111,6 +134,14 @@ async function readInput(formData: FormData): Promise<Read> {
   if (!/\.xlsx$/i.test(file.name)) return bad("รับเฉพาะไฟล์ .xlsx (ไฟล์ที่บันทึกจาก Excel) — ไฟล์ .xls / .csv ยังไม่รองรับ");
   if (file.size > MAX_XLSX_BYTES) return bad(`ไฟล์ใหญ่เกินไป (เกิน ${MAX_XLSX_BYTES / 1024 / 1024} MB) — ไฟล์ยอดตั้งต้นจริงเล็กกว่านี้มาก`);
 
+  // ไฟล์แจกแจงทรัพย์ที่แนบแยก (ไม่บังคับ — ถ้าชีท "แจกแจงทรัพย์" อยู่ในไฟล์ยอดตั้งต้นแล้วไม่ต้องแนบ)
+  const bfile = formData.get("breakdownFile");
+  const hasBreakdownFile = bfile instanceof File && bfile.size > 0;
+  if (hasBreakdownFile) {
+    if (!/\.xlsx$/i.test(bfile.name)) return bad("ไฟล์แจกแจงทรัพย์รับเฉพาะ .xlsx (ไฟล์ที่บันทึกจาก Excel)");
+    if (bfile.size > MAX_XLSX_BYTES) return bad(`ไฟล์แจกแจงทรัพย์ใหญ่เกินไป (เกิน ${MAX_XLSX_BYTES / 1024 / 1024} MB)`);
+  }
+
   const ref = await loadReference();
   if (!ref.ok) return bad(`โหลดรายชื่อผู้ถือ/บัญชีธนาคารไม่ได้ (${ref.error}) — ตรวจไฟล์ไม่ได้ถ้าไม่รู้ว่าผู้ถือคือใคร`);
 
@@ -119,6 +150,15 @@ async function readInput(formData: FormData): Promise<Read> {
     wb = readWorkbook(new Uint8Array(await file.arrayBuffer()));
   } catch (e) {
     return bad(e instanceof XlsxError ? e.message : "เปิดไฟล์ไม่ได้ — ไฟล์อาจเสียหรือไม่ใช่ Excel");
+  }
+
+  let breakdownWb: Workbook | null = null;
+  if (hasBreakdownFile) {
+    try {
+      breakdownWb = readWorkbook(new Uint8Array(await bfile.arrayBuffer()));
+    } catch (e) {
+      return bad(e instanceof XlsxError ? `ไฟล์แจกแจงทรัพย์: ${e.message}` : "เปิดไฟล์แจกแจงทรัพย์ไม่ได้ — ไฟล์อาจเสียหรือไม่ใช่ Excel");
+    }
   }
 
   // วันตัดยอด: ผู้ใช้ระบุ → ใช้ตามนั้น (ถ้าไม่ตรงกับในชีท parse จะปฏิเสธ) · เว้นว่าง → อ่านจากหัวชีท (ต้องตรงกันทุกชีท)
@@ -136,20 +176,24 @@ async function readInput(formData: FormData): Promise<Read> {
     cutoff = iso;
   }
 
-  const result = parseOpeningWorkbook(wb, {
-    owners: ref.ref.owners.map((o) => ({ id: o.id, name: o.name, status: o.status })),
-    banks: ref.ref.banks.map((b) => ({ id: b.id, ownerId: b.ownerId, name: b.name, isActive: b.isActive, currency: b.currency })),
-    cutoff,
-  });
+  const result = parseOpeningWorkbook(
+    wb,
+    {
+      owners: ref.ref.owners.map((o) => ({ id: o.id, name: o.name, status: o.status })),
+      banks: ref.ref.banks.map((b) => ({ id: b.id, ownerId: b.ownerId, name: b.name, isActive: b.isActive, currency: b.currency })),
+      cutoff,
+    },
+    breakdownWb
+  );
   if (!result.ok) {
     return bad(`ไฟล์นี้ยังนำเข้าไม่ได้ — พบปัญหา ${result.issues.length} จุด ไม่มีอะไรถูกบันทึก แก้ไฟล์แล้วอัปโหลดใหม่ทั้งไฟล์`, result.issues);
   }
   return { ok: true, ref: ref.ref, parsed: result.parsed, cutoffFromFile };
 }
 
-async function openStore(ref: Reference): Promise<{ ok: true; store: OpeningStore } | { ok: false; message: string }> {
+async function openStore(ref: Reference, userId: string): Promise<{ ok: true; store: OpeningStore } | { ok: false; message: string }> {
   try {
-    return { ok: true, store: supabaseOpeningStore(await createClient(), ref.coaCodeById) };
+    return { ok: true, store: supabaseOpeningStore(await createClient(), ref.coaCodeById, userId) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
@@ -166,7 +210,7 @@ export async function previewOpeningImport(formData: FormData): Promise<OpeningP
   if (!read.ok) return failPreview(read.message, read.issues);
   const { ref, parsed } = read;
 
-  const opened = await openStore(ref);
+  const opened = await openStore(ref, access.user.id);
   if (!opened.ok) return failPreview(opened.message);
   const store = opened.store;
 
@@ -177,8 +221,19 @@ export async function previewOpeningImport(formData: FormData): Promise<OpeningP
   if (!lookups.ok) {
     blockers.push({ message: `อ่านข้อมูลทรัพย์/อัตราแลกเปลี่ยนไม่ได้ (${lookups.error}) — ยังประกอบรายการลงสมุดไม่ได้` });
   } else {
-    prepared = prepareOpeningPosting(parsed, { ref, assets: lookups.assets, fxRates: lookups.fxRates, mode: "preview" });
+    // createMissing: ทรัพย์ที่ยังไม่มีในทะเบียนไม่ใช่ปัญหาตอนดูตัวอย่าง (จะลงทะเบียนให้ตอนยืนยัน) แต่ต้องบอกผู้ใช้ให้ชัด
+    prepared = prepareOpeningPosting(parsed, { ref, assets: lookups.assets, fxRates: lookups.fxRates, mode: "preview", createMissing: true });
     if (!prepared.ok) blockers.push(...prepared.problems);
+    if (prepared.toCreate.length) {
+      const names = prepared.toCreate.map((t) => t.item.name);
+      if (!canRegisterDirect(access.permissions)) {
+        blockers.push({
+          message:
+            `ต้องลงทะเบียนทรัพย์ใหม่ ${names.length} ชิ้นก่อนลงยอดตั้งต้น แต่บัญชีนี้ลงทะเบียนทรัพย์ตรงไม่ได้ (ต้องมีสิทธิ์จัดการทรัพย์และดูพอร์ตทั้งหมด) — ` +
+            "ให้ผู้มีสิทธิ์ลงทะเบียนทรัพย์เหล่านี้ที่หน้าทะเบียนทรัพย์ก่อน หรือให้ผู้มีสิทธิ์เป็นคนนำเข้า",
+        });
+      }
+    }
   }
 
   // เทียบกับยอดตั้งต้นที่อยู่ในสมุดตอนนี้ — ไว้บอกผู้ใช้ว่า "ใหม่ / ไม่เปลี่ยน / จะแทนที่ / จะถอน" (ประตูของ DB เป็นผู้ตัดสินจริง)
@@ -224,6 +279,22 @@ export async function previewOpeningImport(formData: FormData): Promise<OpeningP
         credit: l.credit,
       })),
     })),
+    assets: parsed.assetItems.map((i) => {
+      const a = prepared?.itemAssets.get(i);
+      const noAsset = assetCategoryOfCoa(i.coaCode) === null;
+      const isNew = !noAsset && (!a || isPendingAssetId(a.id));
+      return {
+        ownerName: i.ownerName,
+        name: i.name,
+        coaCode: i.coaCode,
+        coaName: coa(i.coaCode).nameTh,
+        cost: i.cost,
+        renovation: i.renovation,
+        existing: a && !isNew ? `${a.code} · ${a.name}` : null,
+        typedCode: isNew ? i.assetCode : null,
+        noAsset,
+      };
+    }),
     lots: parsed.lots.map((l) => {
       const a = assetOfLot?.get(l);
       return {
@@ -299,7 +370,7 @@ export async function confirmOpeningImport(formData: FormData): Promise<OpeningC
   const ev = readEvidence(formData.get("evidence"), ref);
   if (!ev.ok) return failConfirm(ev.message);
 
-  const opened = await openStore(ref);
+  const opened = await openStore(ref, access.user.id);
   if (!opened.ok) return failConfirm(`${opened.message} · ยังไม่ได้บันทึกอะไร`);
   const store = opened.store;
 
@@ -307,9 +378,49 @@ export async function confirmOpeningImport(formData: FormData): Promise<OpeningC
   if (!lookups.ok) return failConfirm(`อ่านข้อมูลทรัพย์/อัตราแลกเปลี่ยนไม่ได้ (${lookups.error}) · ยังไม่ได้บันทึกอะไร`);
 
   // engine ตัวจริง (buildPosting) — บังคับเอกสารนิติบุคคลครบ · ปัญหาใดๆ = ไม่เขียนอะไรเลยทั้งไฟล์
-  const prepared = prepareOpeningPosting(parsed, { ref, assets: lookups.assets, fxRates: lookups.fxRates, evidence: ev.evidence, mode: "post" });
+  // รอบแรกเป็น "ซ้อม": ทรัพย์ที่ยังไม่มีในทะเบียนใช้ตัวชั่วคราว เพื่อให้ทุกด่านของ buildPosting ทำงานก่อนที่จะเขียนอะไรลง DB
+  const dry = prepareOpeningPosting(parsed, { ref, assets: lookups.assets, fxRates: lookups.fxRates, evidence: ev.evidence, mode: "post", createMissing: true });
+  if (!dry.ok) {
+    return failConfirm(`ลงสมุดไม่ได้ — พบปัญหา ${dry.problems.length} จุด ไม่มีอะไรถูกบันทึก แก้แล้วลองใหม่`, { problems: dry.problems });
+  }
+
+  // ลงทะเบียนทรัพย์ที่ยังไม่มี (ถ้ามี) แล้วอ่านทะเบียนใหม่ — รอบจริงต้องหาทรัพย์ครบทุกชิ้นจากทะเบียน ไม่ใช้ตัวชั่วคราว
+  let assets = lookups.assets;
+  if (dry.toCreate.length) {
+    if (!canRegisterDirect(access.permissions)) {
+      return failConfirm(
+        `ต้องลงทะเบียนทรัพย์ใหม่ ${dry.toCreate.length} ชิ้นก่อนลงยอดตั้งต้น แต่บัญชีนี้ลงทะเบียนทรัพย์ตรงไม่ได้ (ต้องมีสิทธิ์จัดการทรัพย์และดูพอร์ตทั้งหมด) · ยังไม่ได้บันทึกอะไร`
+      );
+    }
+    const requests = [];
+    for (const t of dry.toCreate) {
+      const cat = lookups.categories.find((c) => c.code === t.categoryCode);
+      if (!cat) {
+        return failConfirm(`ไม่พบหมวดทรัพย์ "${t.categoryCode}" ในฐานข้อมูล จึงลงทะเบียนทรัพย์ "${t.item.name}" ไม่ได้ · ยังไม่ได้บันทึกอะไร`);
+      }
+      requests.push({ ownerId: t.item.ownerId, name: t.item.name, categoryId: cat.id, classId: cat.classId });
+    }
+    const made = await store.createAssets(requests);
+    if (!made.ok) {
+      revalidatePath("/assets");
+      return failConfirm(
+        `${made.error} · ลงทะเบียนทรัพย์ไปแล้ว ${made.created.length} จาก ${requests.length} ชิ้น (ทรัพย์ที่ลงแล้วไม่มีต้นทุน ไม่กระทบงบ) — ยังไม่ได้ลงสมุดบัญชี · ` +
+          "แก้เหตุแล้วอัปโหลดไฟล์เดิมซ้ำได้ ระบบจะใช้ทรัพย์ที่ลงทะเบียนไว้แล้วโดยจับคู่ด้วยชื่อ ไม่สร้างซ้ำ"
+      );
+    }
+    revalidatePath("/assets");
+    const again = await store.loadLookups(ref.owners.map((o) => o.id));
+    if (!again.ok) {
+      return failConfirm(`ลงทะเบียนทรัพย์แล้ว ${made.created.length} ชิ้น แต่อ่านทะเบียนใหม่ไม่ได้ (${again.error}) — ยังไม่ได้ลงสมุดบัญชี · อัปโหลดไฟล์เดิมซ้ำได้`);
+    }
+    assets = again.assets;
+  }
+  const prepared = prepareOpeningPosting(parsed, { ref, assets, fxRates: lookups.fxRates, evidence: ev.evidence, mode: "post" });
   if (!prepared.ok) {
-    return failConfirm(`ลงสมุดไม่ได้ — พบปัญหา ${prepared.problems.length} จุด ไม่มีอะไรถูกบันทึก แก้แล้วลองใหม่`, { problems: prepared.problems });
+    return failConfirm(
+      `ลงสมุดไม่ได้ — พบปัญหา ${prepared.problems.length} จุด ไม่มีอะไรถูกบันทึกในสมุดบัญชี${dry.toCreate.length ? " (ทรัพย์ที่ลงทะเบียนไปแล้วอยู่ในทะเบียน ไม่มีต้นทุน ไม่กระทบงบ)" : ""} แก้แล้วลองใหม่`,
+      { problems: prepared.problems }
+    );
   }
 
   // ผู้ถือต้องใช้งานอยู่ (อ่านสดจาก DB ตอนนี้) — เช็คทุกใบที่จะส่ง

@@ -86,7 +86,8 @@ describe.skipIf(!pgAvailable)("ยอดตั้งต้นลงสมุด�
   beforeAll(() => {
     db = createTestDb();
     h.uid = UID;
-    h.perms = new Set(["settings.manage", "ledger.approve"]);
+    // asset.manage + portfolio.view_all = ลงทะเบียนทรัพย์ตรงได้ (ทรัพย์รายชิ้นของชีทแจกแจงถูกลงทะเบียนให้ตอนยืนยัน ผ่านทางเดียวกับหน้าทะเบียนทรัพย์)
+    h.perms = new Set(["settings.manage", "ledger.approve", "asset.manage", "portfolio.view_all"]);
     h.client = pgClient(db, UID);
     db.su(`
       insert into auth.users(id) values ('${UID}');
@@ -218,7 +219,7 @@ describe.skipIf(!pgAvailable)("ยอดตั้งต้นลงสมุด�
     expect(db.rows("select * from sri_os.fn_asset_lot_mismatch()")).toEqual([]);
     const per = db.rows<{ code: string; units: number; lot_cost: number; ledger: number }>(
       `select a.code, sri_os.fn_asset_units(a.id) units, sri_os.fn_asset_lot_cost(a.id) lot_cost, sri_os.fn_asset_cost_basis(a.id) ledger
-         from sri_os.assets a order by a.code`
+         from sri_os.assets a where a.code in ('K-FIXED', 'PTT', 'SET50') order by a.code`
     );
     expect(per).toEqual([
       { code: "K-FIXED", units: 1299, lot_cost: 130_000, ledger: 130_000 },

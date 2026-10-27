@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ctx, resetCtx } from "./ctx";
 import { ASSET, BANK, CONTACT, OWNER, referenceFixture } from "./fake-db";
 import { confirmOpeningImport, previewOpeningImport } from "../import-opening";
-import { FIXTURE, loadFixture, setCell } from "@/lib/db/import/__tests__/helpers";
-import { postableWorkbook, setByCode } from "@/lib/db/import/__tests__/post-helpers";
+import { FIXTURE, loadFixture, setCell, syncBreakdown } from "@/lib/db/import/__tests__/helpers";
+import { itemName, postableWorkbook, setByCode } from "@/lib/db/import/__tests__/post-helpers";
 import { BLOCKED_BY_REFERENCES_MARKER } from "@/lib/db/import/opening-run";
 import { fingerprintOf, parseOpeningWorkbook } from "@/lib/db/import/opening";
 import type { Workbook } from "@/lib/db/import/xlsx";
@@ -44,6 +44,26 @@ function reference() {
 function seedAssets() {
   const row = (id: string, code: string, name: string) => ({ id, code, name, owner_id: OWNER.tk, status: "active", currency: "THB" });
   ctx.db.tables.assets.push(row(ASSET, "PTT", "หุ้น ปตท."), row("a-set50", "SET50", "SET50"), row("a-kfixed", "K-FIXED", "กองทุน K-FIXED"));
+  seedItemAssets();
+}
+
+/** หมวดทรัพย์ในทะเบียน (id จำลอง) + ทรัพย์รายชิ้นของชีทแจกแจงที่ลงทะเบียนไว้แล้ว */
+function seedCategories() {
+  ctx.db.tables.asset_categories.push(
+    { id: "cat-rental", class_id: "cls-re", code: "RE_RENTAL" },
+    { id: "cat-srr", class_id: "cls-re", code: "RE_SRR" },
+  );
+}
+function seedItemAssets() {
+  const item = (id: string, code: string, owner: string, ownerName: string, line: string, category: string) => ({
+    id, code, name: itemName(line, ownerName), owner_id: owner, status: "active", currency: "THB",
+    category_id: category, class_id: "cls-re",
+  });
+  ctx.db.tables.assets.push(
+    item("a-sri-1400", "RE-0001", OWNER.corp, "SRI Corporation", "1400", "cat-srr"),
+    item("a-sri-1500", "RE-0002", OWNER.corp, "SRI Corporation", "1500", "cat-rental"),
+    item("a-tk-1500", "RE-0003", OWNER.tk, "ธนากร", "1500", "cat-rental"),
+  );
 }
 
 const bytes = () => new Uint8Array(readFileSync(FIXTURE));
@@ -73,6 +93,7 @@ beforeEach(() => {
   ctx.reference = reference();
   ctx.access.permissions = new Set(["settings.manage", "ledger.approve"]) as never;
   state.wb = postableWorkbook();
+  seedCategories();
   seedAssets();
 });
 
@@ -328,7 +349,145 @@ describe("previewOpeningImport · วันตัดยอดจากไฟล�
     for (const code of ["1100", "1200", "1500", "1700", "2410", "3100", "3300"]) setByCode(state.wb!, "BS-ธนากร", code, null);
     for (const r of [38, 39]) setCell(state.wb!, "BS-ธนากร", r, "E", null);
     for (const r of [6, 7, 8]) for (const c of "ABCDEFGI") setCell(state.wb!, "พอร์ตลงทุน (รายล็อต)", r, c, null);
+    syncBreakdown(state.wb!); // ไม่มียอด 1500 แล้ว → ทรัพย์รายชิ้นของธนากรก็ต้องหมดด้วย ไม่งั้นกระทบยอดไม่ผ่าน
     const retract = await preview("");
     expect(retract.ok && retract.plan!.find((p) => p.ownerId === OWNER.tk)!.action).toBe("retract");
+  });
+});
+
+/* ---------------------------------------------------------------- ทรัพย์รายชิ้นจากชีทแจกแจง */
+
+describe("confirmOpeningImport · ทรัพย์รายชิ้นจากชีทแจกแจง", () => {
+  const CAN_REGISTER = ["settings.manage", "ledger.approve", "asset.manage", "portfolio.view_all"];
+  const preview = (cutoff = "") => armed(() => previewOpeningImport(form({}, cutoff)));
+  /** ทะเบียนมีแต่ทรัพย์ของล็อตหุ้น — ทรัพย์รายชิ้น 3 ชิ้น (SRI 2 · ธนากร 1) ยังไม่ได้ลงทะเบียน */
+  const unregisterItems = () => {
+    ctx.db.tables.assets.splice(0, ctx.db.tables.assets.length, ...ctx.db.tables.assets.filter((a) => !String(a.id).startsWith("a-sri-") && a.id !== "a-tk-1500"));
+  };
+  const linesOf = (ownerId: string) =>
+    ctx.db.reimportCalls.find((c) => c.p_owner === ownerId)!.p_payload.entries.flatMap((e) => (e.transactions as { lines: Record<string, unknown>[] }[]).flatMap((t) => t.lines));
+
+  it("ทรัพย์ในทะเบียนครบ: ส่งเข้าประตูเป็นหนึ่งบรรทัดต่อชิ้น ผูก asset_id · ไม่ลงทะเบียนทรัพย์ซ้ำ · ไม่มีบรรทัด 1500 ที่ไม่ผูกทรัพย์", async () => {
+    const r = await confirm();
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(ctx.db.applyDraftCalls).toEqual([]);
+    expect(ctx.db.writes).toEqual([]);
+    const l1500 = linesOf(OWNER.tk).filter((l) => l.coa_code === "1500");
+    expect(l1500).toHaveLength(1);
+    expect(l1500[0]).toMatchObject({ asset_id: "a-tk-1500", debit: 3_000_000 });
+    expect(linesOf(OWNER.corp).filter((l) => ["1400", "1500"].includes(String(l.coa_code))).every((l) => l.asset_id)).toBe(true);
+  });
+
+  it("ทรัพย์ยังไม่ลงทะเบียน + มีสิทธิ์ลงทะเบียนตรง → ลงทะเบียน 3 ชิ้นก่อน (ร่าง + fn_apply_asset_draft) แล้วส่งบรรทัดผูกรหัสทรัพย์ที่เพิ่งออก · ไม่มี delete", async () => {
+    ctx.access.permissions = new Set(CAN_REGISTER) as never;
+    unregisterItems();
+    const before = ctx.db.tables.assets.length;
+    const r = await confirm();
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(ctx.db.applyDraftCalls).toHaveLength(3);
+    expect(ctx.db.tables.assets).toHaveLength(before + 3);
+    expect(ctx.db.writes.map((w) => `${w.table}:${w.op}`)).toEqual([...Array(3).fill("asset_drafts:insert")]);
+    // ร่างแต่ละใบเป็นชนิด create ของผู้ถือถูกคน หมวดถูก และสร้างโดยผู้ใช้ที่ยืนยัน
+    const drafts = ctx.db.tables.asset_drafts;
+    expect(drafts.map((d) => [d.kind, d.owner_id, d.category_id]).sort()).toEqual(
+      [["create", OWNER.corp, "cat-rental"], ["create", OWNER.corp, "cat-srr"], ["create", OWNER.tk, "cat-rental"]].sort()
+    );
+    expect(drafts.every((d) => d.created_by === ctx.access.user!.id && d.class_id === "cls-re")).toBe(true);
+    // บรรทัดในสมุดผูกรหัสทรัพย์ที่เพิ่งออก (ไม่ใช่รหัสชั่วคราว) ทุกบรรทัด
+    const created = new Set(ctx.db.tables.assets.slice(before).map((a) => a.id));
+    const l1500 = linesOf(OWNER.tk).filter((l) => l.coa_code === "1500");
+    expect(l1500).toHaveLength(1);
+    expect(created.has(String(l1500[0].asset_id))).toBe(true);
+    expect(JSON.stringify(ctx.db.reimportCalls)).not.toContain("pending-asset:");
+  });
+
+  it("อัปโหลดซ้ำหลังลงทะเบียนแล้ว → จับคู่ด้วยชื่อ ไม่สร้างทรัพย์ซ้ำ", async () => {
+    ctx.access.permissions = new Set(CAN_REGISTER) as never;
+    unregisterItems();
+    await confirm();
+    const after = ctx.db.tables.assets.length;
+    ctx.db.reimportCalls.length = 0;
+    const again = await confirm();
+    expect(again.ok).toBe(true);
+    expect(ctx.db.tables.assets).toHaveLength(after);
+    expect(ctx.db.applyDraftCalls).toHaveLength(3); // ครั้งแรกเท่านั้น
+  });
+
+  it("ไม่มีสิทธิ์ลงทะเบียนทรัพย์ตรง (มีแค่ settings.manage + ledger.approve) → ปฏิเสธก่อนเขียนอะไร · ไม่เรียกประตู", async () => {
+    unregisterItems();
+    const r = await confirm();
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/ลงทะเบียนทรัพย์ตรงไม่ได้/);
+    expect(ctx.db.writes).toEqual([]);
+    expect(ctx.db.applyDraftCalls).toEqual([]);
+    expect(ctx.db.reimportCalls).toHaveLength(0);
+  });
+
+  it("ปัญหาที่รู้ล่วงหน้า (นิติบุคคลไม่ส่งหลักฐาน) → ไม่ลงทะเบียนทรัพย์เลย (ไม่ทิ้งทรัพย์เปล่าไว้ในทะเบียน)", async () => {
+    ctx.access.permissions = new Set(CAN_REGISTER) as never;
+    unregisterItems();
+    const r = await confirm({ evidence: "" });
+    expect(r.ok).toBe(false);
+    expect(ctx.db.writes).toEqual([]);
+    expect(ctx.db.applyDraftCalls).toEqual([]);
+    expect(ctx.db.reimportCalls).toHaveLength(0);
+  });
+
+  it("fn_apply_asset_draft ล้ม → ไม่ลงสมุด · ร่างที่สร้างถูกยกเลิก (ไม่ค้าง pending) · บอกจำนวนที่ลงทะเบียนไปแล้ว · อัปโหลดซ้ำได้", async () => {
+    ctx.access.permissions = new Set(CAN_REGISTER) as never;
+    unregisterItems();
+    ctx.db.control.applyDraftError = { message: "permission denied for table assets" };
+    const r = await confirm();
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.message).toMatch(/ลงทะเบียนทรัพย์ไปแล้ว 0 จาก 3 ชิ้น/);
+      expect(r.message).toMatch(/ยังไม่ได้ลงสมุดบัญชี/);
+      expect(r.message).toMatch(/ไม่สร้างซ้ำ/);
+    }
+    expect(ctx.db.reimportCalls).toHaveLength(0);
+    expect(ctx.db.tables.asset_drafts.every((d) => d.status === "cancelled")).toBe(true);
+    expect(ctx.db.writes.some((w) => w.op === "delete")).toBe(false);
+  });
+
+  it("ไฟล์ไม่มีชีทแจกแจง → ขั้นยืนยันปฏิเสธ ไม่เขียนอะไร (ไม่ตกไปลงบรรทัดรวม)", async () => {
+    state.wb!.sheets = state.wb!.sheets.filter((s) => s.name !== "แจกแจงทรัพย์");
+    const r = await armed(() => confirmOpeningImport(form({ fingerprint: "x", evidence: JSON.stringify(EVIDENCE) })));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.issues?.some((i) => /ไม่พบชีท "แจกแจงทรัพย์"/.test(i.message))).toBe(true);
+    expect(ctx.db.reimportCalls).toHaveLength(0);
+    expect(ctx.db.writes).toEqual([]);
+  });
+
+  it("ยอดไม่กระทบ → ตัวอย่างปฏิเสธพร้อมช่องและผลต่าง · ไม่ถึงขั้นประกอบรายการ", async () => {
+    setByCode(state.wb!, "BS-ธนากร", "1500", 3_000_001);
+    setByCode(state.wb!, "BS-ธนากร", "3300", 1_820_001);
+    const r = await preview("");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const i = r.issues.find((x) => x.sheet === "BS-ธนากร" && /1500/.test(x.message))!;
+      expect(i.message).toMatch(/3,000,001/);
+      expect(i.message).toMatch(/ต่างกัน 1/);
+    }
+    expect(ctx.db.reimportCalls).toHaveLength(0);
+  });
+
+  it("ตัวอย่าง: รายการทรัพย์รายชิ้น บอกว่าชิ้นไหนผูกทรัพย์เดิม ชิ้นไหนจะลงทะเบียนใหม่ · ไม่สิทธิ์ลงทะเบียน = blocker · ไม่เขียนอะไร", async () => {
+    const ok1 = await preview("");
+    expect(ok1.ok && ok1.assets.every((a) => a.existing !== null)).toBe(true);
+    expect(ok1.ok && ok1.blockers).toEqual([]);
+
+    unregisterItems();
+    const noPerm = await preview("");
+    expect(noPerm.ok).toBe(true);
+    if (noPerm.ok) {
+      expect(noPerm.assets).toHaveLength(3);
+      expect(noPerm.assets.every((a) => a.existing === null)).toBe(true);
+      expect(noPerm.blockers.some((b) => /ลงทะเบียนทรัพย์ตรงไม่ได้/.test(b.message))).toBe(true);
+    }
+    ctx.access.permissions = new Set(CAN_REGISTER) as never;
+    const withPerm = await preview("");
+    expect(withPerm.ok && withPerm.blockers).toEqual([]);
+    expect(ctx.db.writes).toEqual([]);
+    expect(ctx.db.applyDraftCalls).toEqual([]);
   });
 });

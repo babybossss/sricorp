@@ -112,16 +112,28 @@ begin
   return ((v -> 'transaction_ids') ->> 0)::uuid;
 end $fn$;
 
-/** ใบขายหลักทรัพย์ — ตัดทรัพย์ตามต้นทุน + รับรู้กำไร/ขาดทุน */
+/**
+ * ใบขายหลักทรัพย์/ทองคำ — ตัดทรัพย์ตามต้นทุน + รับรู้กำไร/ขาดทุน
+ *
+ * **หมวดกับบัญชีที่ตัดต้องเป็นของทรัพย์ชิ้นนั้นจริง** (`p_type`/`p_coa`)
+ * เดิมฟังก์ชันนี้เครดิต `1700` ตายตัวและใช้หมวด `inv.sell_securities` กับ
+ * **ทองคำ (1720)** ใน L6 ด้วย → ยอดรายบัญชีของทรัพย์นั้นกลายเป็น
+ * 1700 = −50,000 / 1720 = +400,000 ทั้งที่ **ต้นทุนรวมหักกันแล้วยังถูก**
+ * (350,000) จึงไม่มีด่านตัวใดฟ้อง — ฉากเดียวกับช่องของใบย้ายวัตถุประสงค์
+ * ที่ `fn_assert_asset_account_balance_nonneg` (20261027161500) ปิด
+ * ด่านนั้นจับ fixture ตัวนี้ได้ จึงแก้ให้ขายออกจากบัญชีของทรัพย์เอง
+ */
 create or replace function pg_temp.sell(p_asset uuid, p_cost numeric, p_proceeds numeric,
-                                        p_memo text, p_date date default '2026-04-01') returns uuid
+                                        p_memo text, p_date date default '2026-04-01',
+                                        p_type text default 'inv.sell_securities',
+                                        p_coa text default '1700') returns uuid
 language plpgsql as $fn$
 declare v jsonb; v_gain numeric := round(p_proceeds - p_cost, 2); v_lines jsonb;
 begin
   v_lines := jsonb_build_array(
     jsonb_build_object('coa_code', '1100', 'bank_account_id', '00000000-0000-0000-0000-0000000ab001',
                        'debit', p_proceeds, 'credit', 0, 'cf_category', 'investing'),
-    jsonb_build_object('coa_code', '1700', 'debit', 0, 'credit', p_cost,
+    jsonb_build_object('coa_code', p_coa, 'debit', 0, 'credit', p_cost,
                        'cf_category', 'investing', 'asset_id', p_asset));
   if v_gain > 0 then
     v_lines := v_lines || jsonb_build_array(jsonb_build_object(
@@ -134,7 +146,7 @@ begin
   end if;
 
   v := sri_os.fn_post_entry(jsonb_build_object(
-    'txn_type_code', 'inv.sell_securities',
+    'txn_type_code', p_type,
     'doc_date', p_date::text,
     'cash_date', p_date::text,
     'memo', p_memo,
@@ -459,7 +471,9 @@ begin
 
   -- ยอดยกมาของทองคำ (ผูกทรัพย์) 400,000 แล้วขาย 5 หน่วย
   perform pg_temp.open_asset(v_asset, 'opn.gold_alt', 400000, 'L6 ยอดยกมาทองคำ 400,000');
-  v_txn := pg_temp.sell(v_asset, 50000, 260000, 'L6 ขายทอง 5 หน่วย (mutation)');
+  -- **ขายทองต้องตัดออกจากบัญชีของทองเอง (1720) ด้วยหมวดของมัน** ไม่ใช่ 1700
+  v_txn := pg_temp.sell(v_asset, 50000, 260000, 'L6 ขายทอง 5 หน่วย (mutation)',
+                        '2026-04-01', 'inv.sell_commodity', '1720');
 
   -- ตัดต้นทุนแค่ 50,000 ทั้งที่ถัวเฉลี่ยคือ 400,000 × 5/10 = 200,000
   insert into sri_os.asset_lot_consumptions(lot_id, txn_id, quantity, cost_thb)

@@ -60,6 +60,8 @@ export function OpeningImport() {
     const fd = new FormData();
     const file = sent.current.get("file");
     if (file) fd.set("file", file);
+    const breakdownFile = sent.current.get("breakdownFile");
+    if (breakdownFile instanceof File && breakdownFile.size > 0) fd.set("breakdownFile", breakdownFile);
     fd.set("cutoff", isoToDmy(result.cutoff));
     fd.set("fingerprint", result.fingerprint);
     fd.set("evidence", JSON.stringify(evidence));
@@ -93,6 +95,12 @@ export function OpeningImport() {
         </Field>
         <Field label="ไฟล์ Excel ยอดตั้งต้น (.xlsx)" hint="ไฟล์ที่กรอกจากเทมเพลต “ยอดตั้งต้นงบดุล” ขนาดไม่เกิน 10 MB" required>
           <Input name="file" type="file" accept=".xlsx" required className="py-3" />
+        </Field>
+        <Field
+          label="ไฟล์แจกแจงทรัพย์สิน (.xlsx) — แนบเมื่อแยกเป็นอีกไฟล์"
+          hint="ทรัพย์ทีละชิ้นพร้อมต้นทุนของแต่ละชิ้น (เทมเพลต “แจกแจงทรัพย์สิน”) · ถ้าใส่ชีท “แจกแจงทรัพย์” ไว้ในไฟล์ยอดตั้งต้นแล้วให้เว้นว่างช่องนี้ · ต้องมีชีทนี้ทางใดทางหนึ่งเสมอ และห้ามมีทั้งสองทาง"
+        >
+          <Input name="breakdownFile" type="file" accept=".xlsx" className="py-3" />
         </Field>
         <div>
           <Button type="submit" disabled={pending} className="w-full sm:w-auto max-sm:min-h-control-mobile">
@@ -241,6 +249,57 @@ function Preview({
           </div>
         </Section>
       ))}
+
+      <Section title={`ทรัพย์รายชิ้น (${result.assets.length} ชิ้น) — ต้นทุนของแต่ละชิ้นแยกกัน ไม่เฉลี่ยข้ามชิ้น`}>
+        {result.assets.length ? (
+          <>
+            <TableShell className="my-3">
+              <Table minWidth={760}>
+                <thead>
+                  <tr>
+                    <Th>ถือในชื่อ</Th>
+                    <Th>ทรัพย์</Th>
+                    <Th>ผูกกับทะเบียน</Th>
+                    <Th>ลงบัญชี</Th>
+                    <Th align="right">ต้นทุน (บาท)</Th>
+                    <Th align="right">ค่ารีโนเวท → 1510 (บาท)</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.assets.map((a, k) => (
+                    <tr key={k}>
+                      <Td>{a.ownerName}</Td>
+                      <Td>{a.name}</Td>
+                      <Td>
+                        {a.noAsset ? (
+                          <span className="text-ink-600">ไม่ลงทะเบียนทรัพย์ (ไม่ใช่การลงทุน) — ลงเป็นยอดรวมของบัญชี ชื่อรายการเก็บไว้ในบันทึกช่วยจำ</span>
+                        ) : (
+                          a.existing ?? <span className="text-warn-fg">ลงทะเบียนทรัพย์ใหม่ (ระบบออกรหัสให้)</span>
+                        )}
+                        {a.typedCode && !a.existing ? <div className="text-sm text-ink-600">รหัสที่กรอก “{a.typedCode}” ไม่พบในทะเบียน จึงไม่ถูกใช้</div> : null}
+                      </Td>
+                      <Td>
+                        {a.coaCode} {a.coaName}
+                      </Td>
+                      <Td align="right">
+                        <Amount value={a.cost} />
+                      </Td>
+                      <Td align="right">{a.renovation ? <Amount value={a.renovation} /> : "—"}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </TableShell>
+            <div className="pb-3 text-base leading-7">
+              ระบบจะบันทึกให้ดังนี้: ทรัพย์ 1 ชิ้นต่อ 1 บรรทัดบัญชี ผูกรหัสทรัพย์ทุกบรรทัด (ค่ารีโนเวทลงบัญชี 1510 แต่ผูกทรัพย์ชิ้นเดิม · เงินมัดจำจ่ายไม่ใช่ทรัพย์ลงทุน ลงเป็นยอดรวมของบัญชี) ·
+              ยอดรวมต่อบรรทัดงบดุลตรงกับชีทงบดุลของแต่ละผู้ถือแล้วทุกสตางค์
+              {result.assets.some((a) => !a.existing && !a.noAsset) ? " · ทรัพย์ที่ยังไม่มีในทะเบียนจะถูกลงทะเบียนให้ก่อน (ยังไม่มีต้นทุนจนกว่าจะลงสมุด)" : ""}
+            </div>
+          </>
+        ) : (
+          <div className="py-3 text-base">ไม่มีทรัพย์ที่ต้องแจกแจงในไฟล์นี้ (ชีทแจกแจงทรัพย์ว่าง และงบดุลไม่มียอดในบรรทัดที่ต้องแจกแจง)</div>
+        )}
+      </Section>
 
       {result.lots.length ? (
         <Section title={`หลักทรัพย์รายล็อต (${result.lots.length} ล็อต)`}>

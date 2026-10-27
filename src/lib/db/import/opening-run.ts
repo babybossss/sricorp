@@ -18,13 +18,24 @@ import { TX_TYPES } from "@/lib/rules/tx-rules";
 import { humanizeDbError } from "@/lib/db/post-entry";
 import { fetchAllPages } from "@/lib/db/paged";
 import type { ExistingOpeningEntry, JournalLine } from "./opening";
-import type { FxRateRow, OpeningAsset, OwnerPosting } from "./opening-post";
+import { isPendingAssetId, type AssetCategoryRef, type FxRateRow, type OpeningAsset, type OwnerPosting } from "./opening-post";
 
 type DbErrorLike = { message?: string; code?: string; details?: string | null; hint?: string | null };
 
+/** ทรัพย์ใหม่ที่ขอลงทะเบียน (หมวดแปลงเป็น id แล้ว) — ชื่อ + ผู้ถือ + หมวด เท่านั้น ต้นทุนไม่ได้อยู่ที่ทะเบียน แต่มาจากสมุด */
+export type NewAssetInsert = { ownerId: string; name: string; categoryId: string; classId: string };
+export type CreatedAsset = { ownerId: string; name: string; id: string };
+
 export type OpeningStore = {
-  /** ทรัพย์ของผู้ถือเหล่านี้ + ตารางอัตราแลกเปลี่ยน — อ่านสดจาก DB */
-  loadLookups(ownerIds: string[]): Promise<{ ok: true; assets: OpeningAsset[]; fxRates: FxRateRow[] } | { ok: false; error: string }>;
+  /** ทรัพย์ของผู้ถือเหล่านี้ + ตารางอัตราแลกเปลี่ยน + หมวดทรัพย์ — อ่านสดจาก DB */
+  loadLookups(
+    ownerIds: string[]
+  ): Promise<{ ok: true; assets: OpeningAsset[]; fxRates: FxRateRow[]; categories: AssetCategoryRef[] } | { ok: false; error: string }>;
+  /**
+   * ลงทะเบียนทรัพย์ใหม่ทีละชิ้น (ร่าง + `fn_apply_asset_draft` ทางเดียวกับหน้าทะเบียนทรัพย์ — ฟังก์ชันเดียวที่ออกรหัสทรัพย์)
+   * ล้มกลางทาง = คืนที่สร้างสำเร็จแล้วพร้อมเหตุ (ไม่ลบ · อัปโหลดซ้ำจะจับคู่ด้วยชื่อ ไม่สร้างซ้ำ) · **ไม่แตะสมุดบัญชี**
+   */
+  createAssets(requests: NewAssetInsert[]): Promise<{ ok: true; created: CreatedAsset[] } | { ok: false; error: string; created: CreatedAsset[] }>;
   /** ใบยอดตั้งต้นที่ยังมีผลอยู่ในสมุด (ยังไม่ถูกกลับรายการ) — ไว้แสดงว่าครั้งนี้จะ "ใหม่ / ไม่เปลี่ยน / แทนที่" */
   loadExisting(): Promise<{ ok: true; entries: ExistingOpeningEntry[] } | { ok: false; error: string }>;
   /** เรียก `fn_reimport_opening(p_owner, p_payload)` */
@@ -49,29 +60,35 @@ type ViewRow = {
   reverses_id: string | null;
 };
 
-export function supabaseOpeningStore(db: Db, coaCodeById: Record<string, string>): OpeningStore {
+export function supabaseOpeningStore(db: Db, coaCodeById: Record<string, string>, userId?: string): OpeningStore {
   return {
     async loadLookups(ownerIds) {
-      let assets, rates;
+      let assets, rates, cats;
       try {
-        [assets, rates] = await Promise.all([
-          db.from("assets").select("id, code, name, owner_id, status, currency").in("owner_id", ownerIds),
+        [assets, rates, cats] = await Promise.all([
+          db.from("assets").select("id, code, name, owner_id, status, currency, category_id").in("owner_id", ownerIds),
           db.from("fx_rates").select("currency, rate_date, thb_per_unit"),
+          db.from("asset_categories").select("id, class_id, code"),
         ]);
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
       if (assets.error) return { ok: false, error: `อ่านทรัพย์ไม่สำเร็จ (${assets.error.message})` };
       if (rates.error) return { ok: false, error: `อ่านตารางอัตราแลกเปลี่ยนไม่สำเร็จ (${rates.error.message})` };
+      if (cats.error) return { ok: false, error: `อ่านหมวดทรัพย์ไม่สำเร็จ (${cats.error.message})` };
+      const categories: AssetCategoryRef[] = ((cats.data ?? []) as { id: string; class_id: string; code: string }[]).map((c) => ({ id: c.id, classId: c.class_id, code: c.code }));
+      const catCode = new Map(categories.map((c) => [c.id, c.code]));
       return {
         ok: true,
-        assets: ((assets.data ?? []) as { id: string; code: string; name: string; owner_id: string; status: string; currency: string }[]).map((a) => ({
+        categories,
+        assets: ((assets.data ?? []) as { id: string; code: string; name: string; owner_id: string; status: string; currency: string; category_id: string | null }[]).map((a) => ({
           id: a.id,
           code: a.code,
           name: a.name,
           ownerId: a.owner_id,
           status: a.status,
           currency: a.currency,
+          categoryCode: (a.category_id ? catCode.get(a.category_id) : undefined) ?? undefined,
         })),
         fxRates: ((rates.data ?? []) as { currency: string; rate_date: string; thb_per_unit: number | string }[]).map((r) => ({
           currency: r.currency,
@@ -79,6 +96,46 @@ export function supabaseOpeningStore(db: Db, coaCodeById: Record<string, string>
           thbPerUnit: Number(r.thb_per_unit),
         })),
       };
+    },
+
+    async createAssets(requests) {
+      const created: CreatedAsset[] = [];
+      if (!userId) return { ok: false, error: "ไม่ทราบผู้ใช้ที่ลงทะเบียนทรัพย์ (ต้องเข้าสู่ระบบ)", created };
+      for (const r of requests) {
+        const label = `"${r.name}"`;
+        let draftId: string | null = null;
+        try {
+          const ins = await db
+            .from("asset_drafts")
+            .insert({
+              kind: "create",
+              owner_id: r.ownerId,
+              name: r.name,
+              class_id: r.classId,
+              category_id: r.categoryId,
+              patch: {},
+              note: "ลงทะเบียนอัตโนมัติจากการนำเข้ายอดตั้งต้น (ชีทแจกแจงทรัพย์)",
+              created_by: userId,
+            })
+            .select("id")
+            .single();
+          if (ins.error || !ins.data) return { ok: false, error: `ลงทะเบียนทรัพย์ ${label} ไม่สำเร็จ: ${humanizeDbError(ins.error)}`, created };
+          draftId = (ins.data as { id: string }).id;
+          const applied = await db.rpc("fn_apply_asset_draft", { p_draft: draftId });
+          if (applied.error || !applied.data) {
+            await db
+              .from("asset_drafts")
+              .update({ status: "cancelled", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+              .eq("id", draftId)
+              .eq("status", "pending");
+            return { ok: false, error: `ลงทะเบียนทรัพย์ ${label} ไม่สำเร็จ: ${humanizeDbError(applied.error)}`, created };
+          }
+          created.push({ ownerId: r.ownerId, name: r.name, id: applied.data as string });
+        } catch (e) {
+          return { ok: false, error: `ลงทะเบียนทรัพย์ ${label} ไม่สำเร็จ: ${e instanceof Error ? e.message : String(e)}`, created };
+        }
+      }
+      return { ok: true, created };
     },
 
     async loadExisting() {
@@ -154,9 +211,35 @@ export type OpeningRunResult = { results: OwnerOutcome[]; allOk: boolean };
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
 
+/** รหัสทรัพย์ชั่วคราว (ยังไม่ได้ลงทะเบียน) ที่หลุดมาใน payload — ส่งเข้า DB ไม่ได้ (FK ล้ม หรือแย่กว่านั้น: ผูกผิดชิ้น) */
+function pendingAssetIn(o: OwnerPosting): boolean {
+  return o.payload.entries.some(
+    (e) => isPendingAssetId(e.asset_id) || e.transactions.some((t) => t.lines.some((l) => isPendingAssetId(l.asset_id))) 
+  ) || o.payload.lots.some((l) => isPendingAssetId(l.asset_id));
+}
+
 export async function runOpeningImport(owners: OwnerPosting[], store: OpeningStore): Promise<OpeningRunResult> {
   const results: OwnerOutcome[] = [];
   let stopped = false;
+  // ด่านสุดท้ายก่อนเขียน: payload ที่ยังมีทรัพย์ชั่วคราว = ผู้เรียกลืมลงทะเบียนทรัพย์ก่อน → ไม่เขียนอะไรเลยทั้งชุด
+  const leaked = owners.find(pendingAssetIn);
+  if (leaked) {
+    return {
+      allOk: false,
+      results: owners.map((o) => ({
+        ownerId: o.ownerId,
+        ownerName: o.ownerName,
+        reversed: 0,
+        posted: 0,
+        lots: 0,
+        status: o === leaked ? ("failed" as const) : ("skipped" as const),
+        message:
+          o === leaked
+            ? `${o.ownerName}: รายการยังอ้างทรัพย์ที่ไม่ได้ลงทะเบียน — ไม่ส่งเข้าฐานข้อมูล · ยังไม่ได้เปลี่ยนอะไร`
+            : "ยังไม่ได้ทำ — หยุดไว้ก่อนเขียนอะไรเลย",
+      })),
+    };
+  }
   for (const o of owners) {
     const base = { ownerId: o.ownerId, ownerName: o.ownerName, reversed: 0, posted: 0, lots: 0 };
     if (stopped) {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseOpeningWorkbook, type ParsedOpening } from "../opening";
-import { openingSubByAccount, prepareOpeningPosting, type OpeningAsset, type PrepareEnv } from "../opening-post";
-import { CUTOFF, ctxOf, loadFixture, setCell } from "./helpers";
-import { ASSET_IDS, assetsOf, noRates, postableWorkbook, refOf, setByCode } from "./post-helpers";
+import { isPendingAssetId, openingSubByAccount, prepareOpeningPosting, type OpeningAsset, type PrepareEnv } from "../opening-post";
+import { runOpeningImport } from "../opening-run";
+import { CUTOFF, ctxOf, loadFixture, setBreakdown, breakdownRowsFromBs, setCell } from "./helpers";
+import { ASSET_IDS, ITEM_ASSET_IDS, assetsOf, itemAssetsOf, itemName, noRates, postableWorkbook, refOf, setByCode } from "./post-helpers";
 import type { Workbook } from "../xlsx";
 
 const LOTS = "พอร์ตลงทุน (รายล็อต)";
@@ -157,7 +158,7 @@ describe("ทรัพย์ของล็อต: อ่านจากระ�
   it("ไม่ส่งทรัพย์มาเลย → ปฏิเสธทุกล็อตพร้อมบอกวิธีแก้ (ไม่ลงเป็นก้อนรวมที่ไม่ผูกทรัพย์)", () => {
     const problems = bad(parse(), env({ assets: [] }));
     expect(problems.filter((p) => /ไม่พบทรัพย์/.test(p.message))).toHaveLength(3);
-    expect(problems[0].message).toMatch(/ต้องสร้างทรัพย์ก่อน/);
+    expect(problems.find((p) => /ไม่พบทรัพย์/.test(p.message))!.message).toMatch(/ต้องสร้างทรัพย์ก่อน/);
   });
 
   it("จับคู่ด้วยรหัสก่อนชื่อ · ไม่สนตัวพิมพ์ · ทรัพย์ของผู้ถือคนอื่นไม่นับ", () => {
@@ -257,7 +258,9 @@ describe("นิติบุคคล (corporate_strict): บังคับเ�
   const file = (owner: string) => `${owner}/${UID}/22222222-2222-4222-8222-222222222222.pdf`;
   const run = (mode: "preview" | "post", evidence?: PrepareEnv["evidence"]) => {
     const { parsed, ref } = withUuidSri();
-    return prepareOpeningPosting(parsed, env({ ref, mode, evidence }));
+    // ทรัพย์รายชิ้นของ SRI ที่ลงทะเบียนไว้ต้องตามไปอยู่ภายใต้รหัสผู้ถือ (uuid) ใหม่ด้วย
+    const assets = assetsOf().map((a) => (a.ownerId === "o-sri" ? { ...a, ownerId: SRI } : a));
+    return prepareOpeningPosting(parsed, env({ ref, mode, evidence, assets }));
   };
 
   it("พรีวิว: ยังไม่บังคับเอกสาร แต่บอกว่าผู้ถือรายนี้ต้องแนบหลักฐาน", () => {
@@ -311,5 +314,203 @@ describe("นิติบุคคล (corporate_strict): บังคับเ�
     const r = run("post", { [SRI]: { attachments: [file(SRI)], contactId: "c-auditor" }, "o-thanakorn": { attachments: [file("o-thanakorn")], contactId: "c-auditor" } });
     expect(r.ok).toBe(true);
     if (r.ok) expect(owner(r, "o-thanakorn").payload.entries.every((e) => e.attachments === undefined && e.contact_id === undefined)).toBe(true);
+  });
+});
+
+/* ---------------------------------------------------------------- ทรัพย์รายชิ้นจากชีทแจกแจง */
+
+describe("ทรัพย์รายชิ้น (แจกแจงทรัพย์): หนึ่งบรรทัดต่อหนึ่งชิ้น พร้อม asset_id", () => {
+  const TK = "o-thanakorn";
+  const lines = (r: ReturnType<typeof ok>, ownerId: string) => owner(r, ownerId).payload.entries.flatMap((e) => e.transactions.flatMap((t) => t.lines.map((l) => ({ ...l, entry: e }))));
+
+  it("ทุกบรรทัดของบัญชีที่ต้องแจกแจง (1400/1500/1510) ผูก asset_id · ไม่มีบรรทัดรวมที่ไม่ผูกทรัพย์เหลืออยู่", () => {
+    const r = ok(parse());
+    for (const id of ["o-sri", TK]) {
+      const rows = lines(r, id).filter((l) => ["1400", "1500", "1510"].includes(l.coa_code));
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((l) => !!l.asset_id)).toBe(true);
+      expect(rows.every((l) => l.entry.asset_id === l.asset_id)).toBe(true); // หัวรายการผูกทรัพย์เดียวกับบรรทัด
+    }
+    // ธนากร: คอนโดชิ้นเดียว 3,000,000 ผูกทรัพย์ที่ลงทะเบียนไว้
+    const condo = lines(r, TK).filter((l) => l.coa_code === "1500");
+    expect(condo).toHaveLength(1);
+    expect(condo[0]).toMatchObject({ asset_id: ITEM_ASSET_IDS.tkRental, debit: 3_000_000 });
+    // ขา 3300 ที่ engine เติมไม่ผูกทรัพย์ (ต้นทุนทรัพย์นับจากบรรทัดสินทรัพย์เท่านั้น)
+    expect(lines(r, TK).filter((l) => l.coa_code === "3300").every((l) => !l.asset_id)).toBe(true);
+  });
+
+  it("คอนโดสองห้อง 3,000,000 + 5,000,000 (+รีโนเวท 500,000) → สองทรัพย์ สองใบ 1500 · ค่ารีโนเวทลง 1510 ผูกห้องที่สอง", () => {
+    const wb = postableWorkbook();
+    // ธนากร: 1500 = 8,000,000 · 1510 = 500,000 (ดุลด้วยกำไรสะสม 3300)
+    setByCode(wb, "BS-ธนากร", "1500", 8_000_000);
+    setByCode(wb, "BS-ธนากร", "1510", 500_000);
+    setByCode(wb, "BS-ธนากร", "3300", 1_820_000 + 5_000_000 + 500_000);
+    setBreakdown(wb, [
+      ...breakdownRowsFromBs(wb).filter((x) => x.owner !== "ธนากร"),
+      { owner: "ธนากร", name: "คอนโด ห้อง 1203", line: "1500", cost: 3_000_000 },
+      { owner: "ธนากร", name: "คอนโด ห้อง 1507", line: "1500", cost: 5_000_000, reno: 500_000 },
+    ]);
+    const assets: OpeningAsset[] = [
+      ...assetsOf().filter((a) => a.id !== ITEM_ASSET_IDS.tkRental),
+      { id: "a-1203", code: "RE-1203", name: "คอนโด ห้อง 1203", ownerId: TK, status: "active", currency: "THB", categoryCode: "RE_RENTAL" },
+      { id: "a-1507", code: "RE-1507", name: "คอนโด ห้อง 1507", ownerId: TK, status: "active", currency: "THB", categoryCode: "RE_RENTAL" },
+    ];
+    const r = ok(parse(wb), env({ assets }));
+    const rows = lines(r, TK);
+    const net = (asset: string, coaCode: string) => rows.filter((l) => l.asset_id === asset && l.coa_code === coaCode).reduce((t, l) => t + l.debit - l.credit, 0);
+    expect(net("a-1203", "1500")).toBe(3_000_000);
+    expect(net("a-1507", "1500")).toBe(5_000_000);
+    expect(net("a-1507", "1510")).toBe(500_000); // รีโนเวทผูกทรัพย์ชิ้นเดิม ไม่ผูกห้องอื่น
+    expect(net("a-1203", "1510")).toBe(0);
+    // บัญชี 1510 เป็นบัญชีร่วมของผู้ถือ แต่ทุกบาทมีเจ้าของเป็นรายชิ้น
+    expect(rows.filter((l) => l.coa_code === "1510").every((l) => !!l.asset_id)).toBe(true);
+    expect(rows.filter((l) => l.coa_code === "1500" || l.coa_code === "1510").reduce((t, l) => t + l.debit - l.credit, 0)).toBe(8_500_000);
+    // ยอดต่อทรัพย์ในสมุด (นับแบบเดียวกับ fn_asset_cost_basis: บรรทัดสินทรัพย์ที่ผูก asset_id) แยกกัน ไม่เฉลี่ย
+    expect(r.itemAssets.size).toBe(parse(wb).assetItems.length);
+  });
+
+  it("ค่ารีโนเวทของบรรทัดที่เลือก 1510 เอง รวมกับต้นทุนเป็นบรรทัดเดียวของชิ้นนั้น (ไม่ลง 1510 ซ้ำสองใบ)", () => {
+    const wb = postableWorkbook();
+    setByCode(wb, "BS-ธนากร", "1510", 150_000);
+    setByCode(wb, "BS-ธนากร", "3300", 1_820_000 + 150_000);
+    setBreakdown(wb, [...breakdownRowsFromBs(wb).filter((x) => !(x.owner === "ธนากร" && x.line === "1510")), { owner: "ธนากร", name: "ห้องรีโนเวทเก่า", line: "1510", cost: 100_000, reno: 50_000 }]);
+    const assets = [...assetsOf(), { id: "a-old", code: "RE-OLD", name: "ห้องรีโนเวทเก่า", ownerId: TK, status: "active", currency: "THB", categoryCode: "RE_RENTAL" }];
+    const r = ok(parse(wb), env({ assets }));
+    const reno = lines(r, TK).filter((l) => l.coa_code === "1510");
+    expect(reno).toHaveLength(1);
+    expect(reno[0]).toMatchObject({ asset_id: "a-old", debit: 150_000 });
+  });
+
+  it("ทรัพย์ยังไม่อยู่ในทะเบียน + ไม่ได้สั่งสร้าง → ปฏิเสธ ไม่ลงเป็นยอดรวมแทน (บอกว่าชิ้นไหน แถวไหน)", () => {
+    const problems = bad(parse(), env({ assets: assetsOf().filter((a) => a.id !== ITEM_ASSET_IDS.tkRental) }));
+    const p = problems.find((x) => x.ownerName === "ธนากร" && /ยังไม่มีทรัพย์ชิ้นนี้ในทะเบียน/.test(x.message))!;
+    expect(p).toBeDefined();
+    expect(p.message).toMatch(/แถว \d+ ของชีทแจกแจงทรัพย์/);
+    expect(p.message).toMatch(/ไม่ลงเป็นยอดรวมแทน/);
+  });
+
+  it("ทรัพย์ยังไม่อยู่ในทะเบียน + createMissing → ผ่านการตรวจเต็มด้วยทรัพย์ชั่วคราว · รายงานว่าต้องสร้างอะไร หมวดอะไร · รหัสชั่วคราวชัดเจน", () => {
+    const r = ok(parse(), env({ createMissing: true, assets: assetsOf().filter((a) => !Object.values(ITEM_ASSET_IDS).includes(a.id)) }));
+    expect(r.toCreate.map((t) => [t.item.ownerName, t.item.coaCode, t.categoryCode]).sort()).toEqual(
+      [
+        ["SRI Corporation", "1400", "RE_SRR"],
+        ["SRI Corporation", "1500", "RE_RENTAL"],
+        ["ธนากร", "1500", "RE_RENTAL"],
+      ].sort()
+    );
+    const pendings = [...r.itemAssets.values()].filter((a) => isPendingAssetId(a.id));
+    expect(pendings).toHaveLength(3);
+    expect(new Set(pendings.map((a) => a.id)).size).toBe(3);
+  });
+
+  it("ทรัพย์ในทะเบียนอยู่ผิดหมวด (คอนโดที่เป็นหมวดเงินให้กู้) → ปฏิเสธ ไม่ลงต้นทุนเข้าทรัพย์ผิดหมวด", () => {
+    const assets = assetsOf().map((a) => (a.id === ITEM_ASSET_IDS.tkRental ? { ...a, categoryCode: "PAPER_LOAN" } : a));
+    const p = bad(parse(), env({ assets })).find((x) => /ผิดหมวด|ต้องเป็นหมวด/.test(x.message))!;
+    expect(p.message).toMatch(/PAPER_LOAN/);
+    expect(p.message).toMatch(/RE_RENTAL/);
+  });
+
+  it("ไม่ทราบหมวดของทรัพย์ที่มีอยู่ (อ่านหมวดไม่ได้) → ปฏิเสธ ไม่เดาว่าตรง", () => {
+    const assets = assetsOf().map((a) => (a.id === ITEM_ASSET_IDS.tkRental ? { ...a, categoryCode: undefined } : a));
+    expect(bad(parse(), env({ assets })).some((x) => /ไม่ทราบ/.test(x.message))).toBe(true);
+  });
+
+  it.each([
+    ["ทรัพย์ที่จำหน่ายแล้ว", { status: "sold" }, /สถานะ "sold"/],
+    ["ทรัพย์สกุลต่างประเทศ", { currency: "USD" }, /สกุล USD/],
+  ])("%s → ปฏิเสธ", (_n, patch, re) => {
+    const assets = assetsOf().map((a) => (a.id === ITEM_ASSET_IDS.tkRental ? { ...a, ...patch } : a));
+    expect(bad(parse(), env({ assets })).some((x) => re.test(x.message))).toBe(true);
+  });
+
+  it("ชื่อทรัพย์ตรงกับในทะเบียนสองรายการ → ปฏิเสธ ไม่เลือกให้ (เลือกผิดแปลว่าต้นทุนไปอยู่ผิดชิ้น)", () => {
+    const dup: OpeningAsset = { ...itemAssetsOf().find((a) => a.id === ITEM_ASSET_IDS.tkRental)!, id: "a-dup", code: "RE-DUP" };
+    expect(bad(parse(), env({ assets: [...assetsOf(), dup] })).some((x) => /ตรงกัน \(.*RE-0003.*RE-DUP|RE-DUP.*RE-0003/.test(x.message))).toBe(true);
+  });
+
+  it("สองแถวของชีทแจกแจงชี้ทรัพย์ในทะเบียนชิ้นเดียวกัน (ด้วยรหัสทรัพย์) → ปฏิเสธ ต้นทุนจะซ้อนกัน", () => {
+    const wb = postableWorkbook();
+    setByCode(wb, "BS-ธนากร", "1500", 6_000_000);
+    setByCode(wb, "BS-ธนากร", "3300", 1_820_000 + 3_000_000);
+    setBreakdown(wb, [
+      ...breakdownRowsFromBs(wb).filter((x) => !(x.owner === "ธนากร" && x.line === "1500")),
+      { owner: "ธนากร", code: "RE-0003", name: "ห้อง ก", line: "1500", cost: 3_000_000 },
+      { owner: "ธนากร", code: "RE-0003", name: "ห้อง ข", line: "1500", cost: 3_000_000 },
+    ]);
+    // ตัวอ่านกันรหัสซ้ำตั้งแต่แรก → ไม่ถึงขั้นประกอบรายการ
+    const r = parseOpeningWorkbook(wb, ctxOf());
+    expect(r.ok).toBe(false);
+    // ถ้าเป็นคนละรหัสที่จับคู่ทรัพย์เดียวกัน (รหัสหนึ่ง ชื่ออีกอัน) → ด่านฝั่งประกอบรายการจับ
+    setBreakdown(wb, [
+      ...breakdownRowsFromBs(wb).filter((x) => !(x.owner === "ธนากร" && x.line === "1500")),
+      { owner: "ธนากร", code: "RE-0003", name: "ห้อง ก", line: "1500", cost: 3_000_000 },
+      { owner: "ธนากร", name: itemName("1500", "ธนากร"), line: "1500", cost: 3_000_000 },
+    ]);
+    const p = bad(parse(wb));
+    expect(p.some((x) => /ถูกอ้างโดยสองแถว/.test(x.message))).toBe(true);
+  });
+
+  it("1600 เงินมัดจำจ่าย (ไม่มีหมวดทรัพย์) → ลงบรรทัดรวมต่อบัญชี ไม่มี asset_id · ไม่ขอสร้างทรัพย์ · ชื่อรายการต่อใน memo", () => {
+    const wb = postableWorkbook();
+    setByCode(wb, "BS-ธนากร", "1600", 50_000);
+    setByCode(wb, "BS-ธนากร", "3300", 1_820_000 + 50_000);
+    setBreakdown(wb, [
+      ...breakdownRowsFromBs(wb).filter((x) => !(x.owner === "ธนากร" && x.line === "1600")),
+      { owner: "ธนากร", name: "ค่ามัดจำสำนักงาน", line: "1600", cost: 30_000 },
+      { owner: "ธนากร", name: "ค่ามัดจำไฟฟ้า", line: "1600", cost: 20_000 },
+    ]);
+    const r = ok(parse(wb), env({ createMissing: true }));
+    expect(r.toCreate).toEqual([]);
+    const entries = owner(r, TK).payload.entries.filter((e) => e.transactions.some((t) => t.lines.some((l) => l.coa_code === "1600")));
+    expect(entries).toHaveLength(1);
+    const l1600 = entries[0].transactions.flatMap((t) => t.lines).filter((l) => l.coa_code === "1600");
+    expect(l1600).toHaveLength(1);
+    expect(l1600[0]).toMatchObject({ debit: 50_000 });
+    expect(l1600[0].asset_id).toBeUndefined();
+    expect(entries[0].asset_id).toBeUndefined();
+    expect(entries[0].memo).toContain("ค่ามัดจำสำนักงาน 30,000");
+    expect(entries[0].memo).toContain("ค่ามัดจำไฟฟ้า 20,000");
+  });
+
+  it("1600 หลายรายการจน memo ยาวเกิน → ตัดแล้วบอกจำนวนที่เหลือ · ยอดรวมยังครบ", () => {
+    const wb = postableWorkbook();
+    setByCode(wb, "BS-ธนากร", "1600", 1_000);
+    setByCode(wb, "BS-ธนากร", "3300", 1_820_000 + 1_000);
+    const rows = Array.from({ length: 100 }, (_, k) => ({ owner: "ธนากร", name: `เงินมัดจำรายการที่ ${k + 1} ของสัญญาเช่า`, line: "1600", cost: 10 }));
+    setBreakdown(wb, [...breakdownRowsFromBs(wb).filter((x) => !(x.owner === "ธนากร" && x.line === "1600")), ...rows]);
+    const r = ok(parse(wb), env());
+    const e = owner(r, TK).payload.entries.find((x) => x.transactions.some((t) => t.lines.some((l) => l.coa_code === "1600")))!;
+    expect(e.memo!.length).toBeLessThan(560);
+    expect(e.memo).toMatch(/และอีก \d+ รายการ/);
+    expect(e.transactions.flatMap((t) => t.lines).find((l) => l.coa_code === "1600")!.debit).toBe(1_000);
+  });
+
+  it("ผู้ถือไม่มียอดงบดุลเลยแต่ชีทแจกแจงมีทรัพย์ของเขา → ปฏิเสธ (ยอดจะหายเงียบๆ) แม้ผ่านตัวอ่านมาแล้ว", () => {
+    const parsed = parse();
+    parsed.assetItems.push({ ownerId: "o-benjaporn", ownerName: "เบ็ญจพร", assetCode: null, name: "ห้องลอย", coaCode: "1500", cost: 1_000_000, renovation: 0, note: "", row: 99 });
+    expect(bad(parsed, env({ createMissing: true })).some((x) => x.ownerName === "เบ็ญจพร" && /ไม่มียอดในงบดุล/.test(x.message))).toBe(true);
+  });
+
+  it("ยอดที่ผูกทรัพย์ในรายการที่ประกอบได้ ต้องเท่าชีทแจกแจงทุกชิ้น (ด่านท้ายสุดกันบรรทัดหลุด asset_id)", () => {
+    const r = ok(parse());
+    for (const [item, asset] of r.itemAssets) {
+      const net = lines(r, item.ownerId)
+        .filter((l) => l.asset_id === asset.id && ["1400", "1500", "1510"].includes(l.coa_code))
+        .reduce((t, l) => t + l.debit - l.credit, 0);
+      expect(net).toBe(item.cost + item.renovation);
+    }
+  });
+});
+
+describe("runOpeningImport · ไม่ส่งทรัพย์ชั่วคราวเข้า DB", () => {
+  it("payload ที่ยังมีรหัสทรัพย์ pending-asset: → ไม่เรียกประตูกับใครเลย · ผู้ถือที่มีปัญหา failed ที่เหลือ skipped", async () => {
+    const r = ok(parse(), { ...env({ createMissing: true }), assets: assetsOf().filter((a) => a.id !== ITEM_ASSET_IDS.tkRental) });
+    let called = 0;
+    const store = { reimport: async () => ((called += 1), { data: { changed: true }, error: null }) } as unknown as Parameters<typeof runOpeningImport>[1];
+    const run = await runOpeningImport(r.owners, store);
+    expect(called).toBe(0);
+    expect(run.allOk).toBe(false);
+    expect(run.results.filter((x) => x.status === "failed").map((x) => x.ownerName)).toEqual(["ธนากร"]);
+    expect(run.results.filter((x) => x.status === "skipped").length).toBe(run.results.length - 1);
   });
 });

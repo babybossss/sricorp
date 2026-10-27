@@ -19,6 +19,9 @@
  *  - ยอดทุกช่องมาจากช่องที่คน **กรอก** เท่านั้น — ช่องที่เป็นสูตรไม่ถูกเชื่อ (ระบบรวมยอดเองใหม่ทุกครั้ง)
  *  - ขาคู่ของยอดตั้งต้นคือส่วนของเจ้าของ (3100 ทุน · 3300 กำไรสะสม) ที่ **ผู้ใช้กรอกมาเอง** ระบบไม่เติมให้:
  *    ถ้าสินทรัพย์ − หนี้สิน − ส่วนของเจ้าของ ≠ 0 = ปฏิเสธ (ไม่ดัดตัวเลขอื่นให้ตรง · คู่มือข้อ "ผลต่างรอกระทบยอด")
+ *  - **ทรัพย์ที่ต้องมีต้นทุนรายชิ้น** (อสังหาฯ · เงินให้กู้ · ขายฝาก ฯลฯ) ต้องแจกแจงในชีท "แจกแจงทรัพย์" (`breakdown.ts`) —
+ *    ผลบวกต่อ (ผู้ถือ × รหัสบัญชี) ต้องเท่ายอดในชีท BS-* ทุกสตางค์ ไม่เท่า/ไม่มีชีท = ปฏิเสธทั้งไฟล์
+ *    (ไม่ลงเป็นบรรทัดรวม เพราะทรัพย์จะไม่มีต้นทุนรายชิ้นและขายไม่ออกตลอดไป) · ชีทนี้อยู่ในไฟล์เดียวกันหรือแนบเป็นไฟล์แยกก็ได้
  *  - เงินสดทุกบาทต้องผูกบัญชีธนาคารจริงของผู้ถือนั้น และบัญชีต้องยังเปิดอยู่ (Money Invariant 2 · D-092)
  *  - **ล็อตสกุลต่างประเทศต้องมี "อัตรา ณ วันซื้อ"** — ไม่มี = ปฏิเสธทั้งไฟล์ ไม่เดาอัตรา (เดาแล้วต้นทุนผิดและกำไรตอนขายผิดทั้งก้อน)
  *    ต้นทุนบาท = ปัด 2 ตำแหน่ง(ยอดสกุลเดิม × อัตรา) ด้วยเลขจำนวนเต็ม ไม่ใช้ทศนิยมลอยตัว
@@ -28,10 +31,11 @@
 import { createHash } from "node:crypto";
 import { COA, coa } from "@/lib/rules/coa";
 import { BS_LAYOUT } from "@/lib/rules/statements";
-import { parseAmountOrNull } from "@/lib/format";
 import { unrealisedEquityCodes } from "../statements";
 import { CURRENCIES } from "@/lib/rules/currency";
 import { cellAt, type Cell, type Sheet, type Workbook } from "./xlsx";
+import { amountFrom, cents, round2, text } from "./cells";
+import { BREAKDOWN_SHEET, readBreakdown, reconcileBreakdown, type AssetItem } from "./breakdown";
 
 /* ---------------------------------------------------------------- ชนิด */
 
@@ -95,6 +99,11 @@ export type ParsedOpening = {
   cutoff: string;
   journals: OwnerJournal[];
   lots: Lot[];
+  /**
+   * ทรัพย์รายชิ้นจากชีท "แจกแจงทรัพย์" — ผลรวมต่อ (ผู้ถือ × รหัสบัญชี) กระทบกับชีท BS-* แล้วทุกสตางค์
+   * (ไม่กระทบ = ไม่มีผลลัพธ์นี้ เพราะทั้งไฟล์ถูกปฏิเสธ)
+   */
+  assetItems: AssetItem[];
   warnings: string[];
 };
 
@@ -105,7 +114,7 @@ export type ParseResult = { ok: true; parsed: ParsedOpening } | { ok: false; iss
 const SHEET_PREFIX = "BS-";
 const LOTS_SHEET = "พอร์ตลงทุน (รายล็อต)";
 /** ชีทที่รู้จักแต่ไม่ใช่ข้อมูลนำเข้า */
-const IGNORED_SHEETS = new Set(["อ่านก่อน", "รวมทุกผู้ถือ"]);
+const IGNORED_SHEETS = new Set(["อ่านก่อน", "รวมทุกผู้ถือ", BREAKDOWN_SHEET]);
 /** ชนิดล็อตที่รวมเข้า 1720 — ที่เหลือ (หุ้น ETF กองทุน พันธบัตร) รวมเข้า 1700 ตามคู่มือ */
 const COMMODITY_KINDS = new Set(["ทองคำ", "Crypto"]);
 const LOT_KINDS = new Set(["หุ้นไทย", "หุ้น US", "ETF", "กองทุน", "Crypto", "ทองคำ", "พันธบัตร"]);
@@ -124,10 +133,6 @@ function forbiddenCodes(): Map<string, string> {
 const bsCodeSet = (): Set<string> => new Set(BS_LAYOUT.flatMap((g) => g.lines.flatMap((l) => l.codes)));
 
 /* ---------------------------------------------------------------- ตัวช่วยอ่านช่อง */
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
-const cents = (n: number) => Math.round(n * 100);
-const text = (c: Cell | null): string => (c && c.value !== null ? String(c.value).trim() : "");
 
 function dateFromText(s: string): string | null {
   const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s) ?? null;
@@ -150,34 +155,6 @@ function dateFromCell(c: Cell | null): string | null {
   const s = String(c.value).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return dateFromText(`${s.slice(8)}/${s.slice(5, 7)}/${s.slice(0, 4)}`);
   return dateFromText(s);
-}
-
-/** จำนวนเงินจากช่องที่คนกรอก — สูตร = ไม่เชื่อ · อ่านไม่ออก = ปัญหา · ว่าง = ไม่มียอด */
-function amountFrom(
-  c: Cell | null,
-  where: { sheet: string; row: number; label: string },
-  issues: ImportIssue[],
-  decimals = 2
-): number | null {
-  if (!c || c.value === null || (typeof c.value === "string" && c.value.trim() === "")) return null;
-  if (c.formula) {
-    issues.push({ ...where, message: `${where.label}: ช่องนี้เป็นสูตร — ยอดนำเข้าต้องเป็นตัวเลขที่กรอกเอง (ระบบรวมยอดเองใหม่ทุกครั้ง ไม่เชื่อผลคำนวณของ Excel)` });
-    return null;
-  }
-  let n: number | null;
-  if (typeof c.value === "number") n = c.value;
-  else if (typeof c.value === "boolean") n = null;
-  else n = parseAmountOrNull(c.value);
-  if (n === null || !Number.isFinite(n)) {
-    issues.push({ ...where, message: `${where.label}: อ่านเป็นตัวเลขไม่ได้ ("${String(c.value).slice(0, 30)}")` });
-    return null;
-  }
-  const scale = 10 ** decimals;
-  if (Math.abs(n * scale - Math.round(n * scale)) > 1e-6) {
-    issues.push({ ...where, message: `${where.label}: มีทศนิยมเกิน ${decimals} ตำแหน่ง (${n})` });
-    return null;
-  }
-  return Math.round(n * scale) / scale;
 }
 
 /* ---------------------------------------------------------------- วันตัดยอดจากในชีท */
@@ -548,7 +525,14 @@ function readLots(sheet: Sheet, ownersByName: Map<string, OwnerRef>, ctx: ParseC
 
 /* ---------------------------------------------------------------- ตัวหลัก */
 
-export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext): ParseResult {
+/** ชื่อที่ใช้บอกผู้ใช้เมื่อชีทแจกแจงมาจากไฟล์แยก (ปัญหาต้องชี้ถูกไฟล์) */
+const SEPARATE_BREAKDOWN_LABEL = `${BREAKDOWN_SHEET} (ไฟล์แจกแจงทรัพย์ที่แนบแยก)`;
+
+/**
+ * `breakdownWb` = ไฟล์แจกแจงทรัพย์ที่แนบ **แยก** (เทมเพลต SRI_OS_3) · ไม่แนบ = ต้องมีชีท "แจกแจงทรัพย์" อยู่ในไฟล์ยอดตั้งต้นเอง
+ * รับได้ทั้งสองแบบ แต่ **ต้องมีทางใดทางหนึ่งเสมอ และห้ามมีทั้งสองทาง** (สองชุดเนื้อหาไม่เหมือนกันได้ ระบบไม่เลือกข้างให้)
+ */
+export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext, breakdownWb?: Workbook | null): ParseResult {
   const issues: ImportIssue[] = [];
   const warnings: string[] = [];
   const ownersByName = new Map(ctx.owners.map((o) => [o.name.trim(), o]));
@@ -582,12 +566,45 @@ export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext): ParseResu
     issues.push({ sheet: "(ทั้งไฟล์)", message: `ไม่พบชีท "${LOTS_SHEET}" — ต้องมีชีทนี้เสมอ (ไม่มีหลักทรัพย์ก็ปล่อยว่าง)` });
   }
 
+  // ---- ชีทแจกแจงทรัพย์: ในไฟล์เดียวกัน หรือไฟล์แยก (ต้องมีทางใดทางหนึ่ง ห้ามทั้งสอง) ----
+  const inMain = wb.sheets.find((s) => s.name === BREAKDOWN_SHEET);
+  const inSeparate = breakdownWb ? breakdownWb.sheets.find((s) => s.name === BREAKDOWN_SHEET) : undefined;
+  let breakdownSheet: Sheet | undefined;
+  let breakdownLabel = BREAKDOWN_SHEET;
+  if (breakdownWb && !inSeparate) {
+    issues.push({ sheet: SEPARATE_BREAKDOWN_LABEL, message: `ไฟล์แจกแจงทรัพย์ที่แนบไม่มีชีท "${BREAKDOWN_SHEET}" — ใช้ไฟล์ SRI_OS_3_แจกแจงทรัพย์สิน.xlsx` });
+  } else if (inMain && inSeparate) {
+    issues.push({
+      sheet: "(ทั้งไฟล์)",
+      message:
+        `พบชีท "${BREAKDOWN_SHEET}" ทั้งในไฟล์ยอดตั้งต้นและในไฟล์แจกแจงที่แนบแยก — สองชุดอาจไม่เหมือนกัน ระบบไม่เลือกข้างให้ · ` +
+        "ใช้ทางเดียว: ลบชีทออกจากไฟล์ใดไฟล์หนึ่ง หรือไม่แนบไฟล์แยก",
+    });
+  } else if (inSeparate) {
+    breakdownSheet = inSeparate;
+    breakdownLabel = SEPARATE_BREAKDOWN_LABEL;
+  } else if (inMain) {
+    breakdownSheet = inMain;
+  } else {
+    issues.push({
+      sheet: "(ทั้งไฟล์)",
+      message:
+        `ไม่พบชีท "${BREAKDOWN_SHEET}" — ต้องมีเสมอ (ไม่มีทรัพย์ที่ต้องแจกแจงก็ปล่อยชีทว่าง) · ใส่ชีทนี้ในไฟล์ยอดตั้งต้น หรือแนบไฟล์ SRI_OS_3_แจกแจงทรัพย์สิน.xlsx แยกต่างหาก · ` +
+        "อสังหาฯ / เงินให้กู้ / ขายฝากที่ลงเป็นยอดรวมจะไม่มีต้นทุนรายชิ้นและขายออกไม่ได้ ระบบจึงไม่ลงเป็นยอดรวมให้",
+    });
+  }
+
   const sheets: OwnerSheet[] = [];
   for (const o of ctx.owners) {
     const sh = sheetByOwner.get(o.id);
     if (sh) sheets.push(readOwnerSheet(sh, o, ctx, issues));
   }
   const lots = lotsSheet ? readLots(lotsSheet, ownersByName, ctx, issues) : [];
+  const assetItems = breakdownSheet ? readBreakdown(breakdownSheet, breakdownLabel, ownersByName, issues) : [];
+  // กระทบยอดเฉพาะเมื่ออ่านชีทได้ — ชีทหาย/อ่านไม่ได้ถูกรายงานแล้ว ไม่ต้องซ้ำด้วยยอดต่างกันทุกบรรทัด
+  if (breakdownSheet && !issues.some((i) => i.sheet === breakdownLabel)) {
+    reconcileBreakdown(assetItems, sheets.map((os) => ({ owner: os.owner, sheet: os.sheet, amounts: os.amounts })), breakdownLabel, issues);
+  }
 
   // ล็อตต้องรวมได้เท่า 1700 / 1720 ของแต่ละผู้ถือ
   for (const os of sheets) {
@@ -622,15 +639,15 @@ export function parseOpeningWorkbook(wb: Workbook, ctx: ParseContext): ParseResu
         "งบรวมตัดรายการระหว่างกันไม่ได้จนกว่าจะเท่ากัน (ตรวจว่าฝั่งตรงข้ามกรอกครบหรือไม่)"
     );
   }
-  return { ok: true, parsed: { cutoff: ctx.cutoff, journals, lots, warnings } };
+  return { ok: true, parsed: { cutoff: ctx.cutoff, journals, lots, assetItems, warnings } };
 }
 
 /* ---------------------------------------------------------------- ลายนิ้วมือ */
 
 /** ลายนิ้วมือของ "เนื้อหาที่จะนำเข้า" — ไม่ผูกกับตัวไฟล์ (บันทึกใหม่/จัดรูปใหม่แล้วเนื้อเหมือนเดิมต้องได้ค่าเดิม) */
-export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lots">): string {
+export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lots" | "assetItems">): string {
   const canon = {
-    v: 2,
+    v: 3,
     cutoff: p.cutoff,
     journals: [...p.journals]
       .sort((a, b) => a.ownerId.localeCompare(b.ownerId))
@@ -642,6 +659,11 @@ export function fingerprintOf(p: Pick<ParsedOpening, "cutoff" | "journals" | "lo
       })),
     lots: p.lots
       .map((l) => [l.ownerId, l.coaCode, l.kind, l.name, l.boughtOn, l.units, l.pricePerUnit, cents(l.fee), l.currency, l.fxRate ?? null, cents(l.cost)] as const)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    // ทรัพย์รายชิ้น: แบ่งต้นทุนคนละแบบ (3M+5M กับ 4M+4M) ยอดรวมเท่ากันแต่ต้องได้รหัสตรวจคนละค่า
+    // ไม่รวมเลขแถว/หมายเหตุ — จัดแถวใหม่หรือแก้หมายเหตุแล้วเนื้อเหมือนเดิมต้องได้รหัสเดิม
+    assets: p.assetItems
+      .map((a) => [a.ownerId, a.coaCode, a.assetCode ?? "", a.name, cents(a.cost), cents(a.renovation)] as const)
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
   };
   return createHash("sha256").update(JSON.stringify(canon)).digest("hex");

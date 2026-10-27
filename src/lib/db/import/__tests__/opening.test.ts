@@ -12,7 +12,7 @@ import {
   type JournalLine,
   type ParsedOpening,
 } from "../opening";
-import { BANKS, CUTOFF, OWNERS, ctxOf, loadFixture, setCell } from "./helpers";
+import { BANKS, CUTOFF, OWNERS, ctxOf, loadFixture, setCell, syncBreakdown } from "./helpers";
 import type { Workbook } from "../xlsx";
 
 const parseOk = (wb: Workbook = loadFixture(), ctx = ctxOf()): ParsedOpening => {
@@ -502,7 +502,7 @@ describe("อัปโหลดไฟล์ที่แก้แล้ว: ก�
     const wb = loadFixture();
     setCell(wb, TK, 13, "E", 3_100_000); // 1500 อสังหาฯ +100,000
     setCell(wb, TK, 26, "E", 2_020_000); // 3300 +100,000 ให้ดุล
-    return parseOk(wb);
+    return parseOk(syncBreakdown(wb)); // ทรัพย์รายชิ้นต้องกระทบกับยอดใหม่ (ชิ้นเดียว 3,100,000)
   };
 
   it("เฉพาะผู้ถือที่เปลี่ยนถูกแตะ · ใบเดิมถูกกลับ ใบใหม่ถูกลง · ยอดสุทธิ = ไฟล์ใหม่ · ไม่มี DELETE", () => {

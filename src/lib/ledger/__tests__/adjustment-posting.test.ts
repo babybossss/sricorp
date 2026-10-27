@@ -17,7 +17,7 @@ import { buildPosting as buildPostingWith, buildPostingDraft, allLines, assertBa
 import { previewPosting } from "../preview";
 import { PostingError, type PostingInput, type PostingLine } from "../types";
 import { isCashAccount } from "@/lib/rules/coa";
-import { allowedSubs, findSub, movesCash } from "@/lib/rules/tx-rules";
+import { allowedSubs, findSub, movesCash, type SubCategory } from "@/lib/rules/tx-rules";
 import { statementOf } from "@/lib/rules/statements";
 import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
@@ -55,8 +55,17 @@ const ADJ = allowedSubs("adjust").filter((s) => !s.requires?.includes("revaluati
  * ย้ายทรัพย์ชิ้นไหน** ไม่งั้นต้นทุนรายชิ้นแยกออกจากกันไม่ได้หลังย้าย
  * เติมให้จากธงในตารางกฎ ไม่ใช่ไล่รหัสหมวด → หมวดใหม่ที่บังคับผูกทรัพย์ไม่หลุด
  */
-const withDimensions = (s: { requires?: readonly string[] }): Partial<PostingInput> =>
-  s.requires?.includes("asset") ? { assetId: "a1" } : {};
+const withDimensions = (s: SubCategory): Partial<PostingInput> => ({
+  ...(s.requires?.includes("asset") ? { assetId: "a1" } : {}),
+  /**
+   * หมวดย้ายวัตถุประสงค์อสังหาฯ ย้ายได้เฉพาะ **ทั้งก้อน** และ engine ไม่เชื่อยอด
+   * ที่พิมพ์ (27/10) → ต้องส่งยอดคงเหลือ "ที่อ่านจากสมุด" เท่ากับยอดในใบพอดี
+   * เคสที่ไม่ส่ง / ยอดไม่ตรง อยู่ใน `reclass-whole-balance.test.ts` ครบทุกช่อง
+   */
+  ...(s.requires?.includes("wholeBalanceMove")
+    ? { balanceMove: { sourceCoaCode: s.cr, sourceBalance: 5_000 } }
+    : {}),
+});
 const WRITEOFF = ["adj.writeoff_rent", "adj.writeoff_interest", "adj.writeoff_other"];
 
 describe("ลงรายการที่ไม่มีเงินเคลื่อนได้ โดยไม่ต้องส่งบัญชีธนาคาร", () => {

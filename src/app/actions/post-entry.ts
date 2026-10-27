@@ -24,6 +24,8 @@ import { fxInputFor, fxKindOf, type FxChoice } from "@/lib/db/fx-input";
 import { readFxContext } from "@/lib/db/fx-context-server";
 import { disposalFor } from "@/lib/db/disposal-context";
 import { readDisposalContext } from "@/lib/db/disposal-context-server";
+import { movesWholeBalance } from "@/lib/db/balance-move";
+import { readBalanceMove } from "@/lib/db/balance-move-server";
 
 /**
  * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
@@ -129,7 +131,15 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   // และต้องมาจากเส้นทางกลับรายการที่ส่ง reverses_id ด้วย · browser ส่งธงนี้มาเองไม่ได้ จึงตัดทิ้งเสมอ
   // และข้อมูลเงินตราที่ต้องอ่านจากสมุด (`fxTranslation` / `fxConversion` / `fxAcquisition`) ก็ตัดทิ้งเสมอ — ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้
   // ค่าที่ใช้จริงถูกประกอบใหม่ด้านล่างจากสมุดที่ post แล้ว (เฉพาะหมวดที่ตารางกฎบอกว่าเกี่ยวกับอัตราแลกเปลี่ยน)
-  let input: PostingInput = { ...req.input, reversal: undefined, fxTranslation: undefined, fxConversion: undefined, fxAcquisition: undefined };
+  // `balanceMove` (ยอดคงเหลือของทรัพย์ที่จะย้ายวัตถุประสงค์) ก็ตัดทิ้งเสมอเช่นกัน — ประกอบใหม่จากสมุดด้านล่างเท่านั้น
+  let input: PostingInput = {
+    ...req.input,
+    reversal: undefined,
+    fxTranslation: undefined,
+    fxConversion: undefined,
+    fxAcquisition: undefined,
+    balanceMove: undefined,
+  };
 
   // ---- หมวดที่เส้นทางนี้ยังต่อไม่ครบ ต้องปฏิเสธ ไม่ใช่บันทึกครึ่งเดียว ----
   const blocked = notWiredReason(findSub(input.subCode)?.sub);
@@ -172,6 +182,26 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
     // แปลงค่า/แลก: `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับ) — สมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
     // ซื้อเงินตรา: ผู้ใช้ไม่มีช่องยอดบาท (ยอด = จำนวนเงินตรา × อัตรา) → server คิดเองและทับค่าที่ส่งมา
     input = { ...input, ...built.patch, ...(fxKind === "acquisition" ? { amount: built.amount } : {}) };
+  }
+
+  // ---- ย้ายวัตถุประสงค์ทรัพย์ (ธง wholeBalanceMove): ยอดคงเหลือของทรัพย์ในบัญชีต้นทางอ่านจากสมุดสด — ย้ายทั้งก้อนเท่านั้น ----
+  {
+    const moved = findSub(input.subCode)?.sub;
+    if (moved && movesWholeBalance(moved)) {
+      if (!input.assetId) {
+        return fail(`หมวด "${moved.label}" ต้องเลือกทรัพย์ที่จะย้าย — ระบบอ่านยอดคงเหลือของทรัพย์ชิ้นนั้นจากสมุดเอง ไม่รับยอดที่พิมพ์ · ยังไม่ได้บันทึกอะไร`);
+      }
+      let moveDb;
+      try {
+        moveDb = await createClient();
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : String(e));
+      }
+      const read = await readBalanceMove(moveDb, refState.ref, moved, { ownerId: input.ownerId, assetId: input.assetId });
+      if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+      // `amount` ใช้ตามที่ผู้ใช้เห็นในฟอร์ม (ไม่ทับ) — สมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
+      input = { ...input, balanceMove: read.balanceMove };
+    }
   }
 
   // ---- ขายทรัพย์: ต้นทุน · ค่ารีโนเวทสะสม · ส่วนเกินทุนที่ค้าง อ่านจากสมุดสด (ผู้ใช้กรอกได้แค่ราคาขายกับค่าใช้จ่ายในการขาย) ----

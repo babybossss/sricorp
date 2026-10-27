@@ -5,7 +5,8 @@
  * และ `fn_reimport_opening` ที่เรียกคือฟังก์ชันจริง ไม่ใช่สำเนาที่เขียนเอง · ทุกคำสั่งรันเป็น role `authenticated`
  * ของผู้ใช้ที่ระบุ (ธุรกรรมเดียวต่อคำสั่ง) — ไม่ใช่ superuser
  *
- * รองรับ: from(t).select(cols).eq/in/order/limit/range · rpc('fn_reimport_opening' · 'fn_post_entry' · 'fn_asset_cost_basis*')
+ * รองรับ: from(t).select(cols).eq/in/order/limit/range · from(t).insert(row).select(cols).single() · from(t).update(patch).eq()
+ *   · rpc('fn_reimport_opening' · 'fn_post_entry' · 'fn_apply_asset_draft' · 'fn_asset_cost_basis*')
  * อย่างอื่น = โยก error ทันที (ไม่เดา) เพื่อให้รู้ว่าโค้ดเริ่มใช้คำสั่งที่ตัวแทนนี้ยังไม่ได้พิสูจน์
  */
 
@@ -17,6 +18,7 @@ const lit = (v: unknown): string => {
   if (v === null || v === undefined) return "null";
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "object") return `$sri$${JSON.stringify(v)}$sri$::jsonb`;
   return `'${String(v).replace(/'/g, "''")}'`;
 };
 const ident = (s: string): string => {
@@ -31,8 +33,28 @@ export function pgClient(db: TestDb, uid: string) {
     const order: string[] = [];
     let limit: number | null = null;
     let offset = 0;
+    let mode: "select" | "insert" | "update" = "select";
+    let payload: Record<string, unknown> = {};
+
+    const write = async (): Promise<Result> => {
+      const keys = Object.keys(payload);
+      const returning = cols === "*" ? "*" : cols.split(",").map((c) => ident(c.trim())).join(", ");
+      const sql =
+        mode === "insert"
+          ? `with r as (insert into sri_os.${ident(table)} (${keys.map(ident).join(", ")}) values (${keys.map((k) => lit(payload[k])).join(", ")}) returning ${returning})
+             select coalesce(json_agg(r), '[]'::json) from r;`
+          : `with r as (update sri_os.${ident(table)} set ${keys.map((k) => `${ident(k)} = ${lit(payload[k])}`).join(", ")}${where.length ? ` where ${where.join(" and ")}` : ""} returning ${returning})
+             select coalesce(json_agg(r), '[]'::json) from r;`;
+      try {
+        return { data: JSON.parse(db.as(uid, sql) || "[]"), error: null };
+      } catch (e) {
+        if (e instanceof SqlError) return { data: null, error: { message: e.message, code: /row-level security/.test(e.message) ? "42501" : undefined } };
+        throw e;
+      }
+    };
 
     const run = async (): Promise<Result> => {
+      if (mode !== "select") return write();
       const select = cols === "*" ? "*" : cols.split(",").map((c) => ident(c.trim())).join(", ");
       const sql =
         `select coalesce(json_agg(t), '[]'::json) from (select ${select} from sri_os.${ident(table)}` +
@@ -51,6 +73,16 @@ export function pgClient(db: TestDb, uid: string) {
 
     const q = {
       select: (c?: string) => ((cols = c && c !== "*" ? c : "*"), q),
+      insert: (row: Record<string, unknown>) => ((mode = "insert"), (payload = row), q),
+      update: (patch: Record<string, unknown>) => ((mode = "update"), (payload = patch), q),
+      single: async (): Promise<Result> => {
+        const r = await run();
+        if (r.error) return r;
+        const rows = r.data as unknown[];
+        return rows.length === 1
+          ? { data: rows[0], error: null }
+          : { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } };
+      },
       eq: (c: string, v: unknown) => (where.push(`${ident(c)} = ${lit(v)}`), q),
       in: (c: string, vs: unknown[]) => (where.push(vs.length ? `${ident(c)} in (${vs.map(lit).join(", ")})` : "false"), q),
       order: (c: string, o?: { ascending?: boolean }) => (order.push(`${ident(c)} ${o?.ascending === false ? "desc" : "asc"}`), q),
@@ -70,6 +102,7 @@ export function pgClient(db: TestDb, uid: string) {
   const RPC: Record<string, (a: Record<string, unknown>) => string> = {
     fn_reimport_opening: (a) => `sri_os.fn_reimport_opening(${lit(a.p_owner)}::uuid, ${jsonb(a.p_payload)})`,
     fn_post_entry: (a) => `sri_os.fn_post_entry(${jsonb(a.p_payload)})`,
+    fn_apply_asset_draft: (a) => `to_json(sri_os.fn_apply_asset_draft(${lit(a.p_draft)}::uuid))`,
     // ฟังก์ชันอ่านต้นทุนของทรัพย์ (คืนค่าเดี่ยว: text/numeric) — ห่อ to_json ให้ parse เป็น JSON เหมือน PostgREST
     fn_asset_cost_basis_mode: (a) => `to_json(sri_os.fn_asset_cost_basis_mode(${lit(a.p_asset)}::uuid))`,
     fn_asset_cost_basis: (a) => `to_json(sri_os.fn_asset_cost_basis(${lit(a.p_asset)}::uuid))`,

@@ -301,9 +301,11 @@ end $$;
 --  ขยับได้ระหว่างคีย์กับอนุมัติ ประตูร่างสัญญาแทนไม่ได้)
 -- ============================================================
 create or replace function pg_temp.post_as_appA(p_code text, p_amount numeric,
-                                                p_accrued boolean)
+                                                p_accrued boolean,
+                                                p_asset uuid default null,
+                                                p_memo text default null)
 returns void language plpgsql as $fn$
-declare t record; v_dr text; v_cr text;
+declare t record; v_dr text; v_cr text; v_asset uuid;
 begin
   select * into t from sri_os.txn_types where code = p_code;
   -- ขาค้างรับ: แทนขาเงินสดด้วยบัญชีพักจากตารางกฎ (ไม่พิมพ์รหัสเองในเทสต์)
@@ -311,12 +313,14 @@ begin
                else t.dr_coa_code end;
   v_cr := case when p_accrued and t.cr_coa_code ~ '^11' then t.accrual_coa_code
                else t.cr_coa_code end;
+  -- ทรัพย์เฉพาะใบ (ใช้ตอนตั้งยอดคงเหลือของหมวดย้ายบัญชี) · ไม่ส่งมา = ทรัพย์ร่วมของไฟล์นี้
+  v_asset := coalesce(p_asset, pg_temp.ref('asset'));
   perform pg_temp.login('appA');
   perform sri_os.fn_post_entry(jsonb_build_object(
     'txn_type_code', p_code,
     'doc_date', '2026-01-05',
-    'memo', 'G4-fixture ' || p_code,
-    'asset_id', case when t.requires_asset then pg_temp.ref('asset') end,
+    'memo', coalesce(p_memo, 'G4-fixture ' || p_code),
+    'asset_id', case when t.requires_asset or p_asset is not null then v_asset end,
     'contact_id', case when t.requires_contact then pg_temp.ref('contact') end,
     'attachments', jsonb_build_array('หลักฐาน.pdf'),
     'transactions', jsonb_build_array(jsonb_build_object(
@@ -324,10 +328,10 @@ begin
       'lines', jsonb_build_array(
         jsonb_build_object('coa_code', v_dr, 'debit', p_amount, 'credit', 0,
                            'cf_category', t.cf_group::text,
-                           'asset_id', case when t.requires_asset then pg_temp.ref('asset') end),
+                           'asset_id', case when t.requires_asset or p_asset is not null then v_asset end),
         jsonb_build_object('coa_code', v_cr, 'debit', 0, 'credit', p_amount,
                            'cf_category', t.cf_group::text,
-                           'asset_id', case when t.requires_asset then pg_temp.ref('asset') end))))));
+                           'asset_id', case when t.requires_asset or p_asset is not null then v_asset end))))));
 end $fn$;
 
 do $$
@@ -356,6 +360,66 @@ exception when others then
   reset role; raise;
 end $$;
 
+/* ============================================================
+ * G4-fixture (2) · **หมวดย้ายยอดระหว่างบัญชีของทรัพย์ชิ้นเดียวกัน**
+ *
+ * หมวดพวกนี้ (ย้ายวัตถุประสงค์อสังหาฯ) ย้ายได้เฉพาะ **ทั้งก้อน** —
+ * ด่าน `fn_assert_asset_account_balance_nonneg` (20261027161500) ปฏิเสธการย้าย
+ * บางส่วนและการย้ายเกินยอดคงเหลือ · การไล่หมวดของ G4 ใช้ยอด 1,000 ทุกใบ
+ * จึงต้องให้ทรัพย์ของหมวดนั้นมียอดคงเหลือในบัญชีต้นทาง **1,000 พอดี**
+ * เหตุผลเดียวกับ fixture ชุดแรก: ด่านที่เทียบกับยอดคงเหลือไม่ใช่ความผิดของประตูร่าง
+ *
+ * คัดหมวดจาก **กฎ** (สองขาเป็นบัญชีถือครองทรัพย์ทั้งคู่ = ใบย้าย ไม่ใช่ซื้อ/ขาย)
+ * ไม่ใช่รายชื่อรหัสหมวด — หมวดย้ายตัวใหม่ในอนาคตได้ fixture เองทันที
+ * ฐานข้อมูลที่ยังไม่มีด่านนี้ (ฟังก์ชันไม่มีจริง) จะไม่สร้างอะไรเลย = พฤติกรรมเดิม
+ * ============================================================ */
+do $$
+declare r record; v_asset uuid; v_open text;
+begin
+  if to_regprocedure('sri_os.fn_asset_cost_coa(text)') is null then
+    raise notice 'ข้าม G4-fixture (2) · ยังไม่มี fn_asset_cost_coa (migration 20261027161500 ไม่ถูก apply)';
+    return;
+  end if;
+
+  for r in execute $q$
+    select t.code, t.cr_coa_code
+      from sri_os.txn_types t
+     where sri_os.fn_asset_cost_coa(t.dr_coa_code)
+       and sri_os.fn_asset_cost_coa(t.cr_coa_code)
+     order by t.code
+  $q$ loop
+    -- ยอดยกมาที่เดบิตบัญชีต้นทางของหมวดนั้น (หาจากตารางกฎ ไม่พิมพ์รหัสเอง)
+    select o.code into v_open
+      from sri_os.txn_types o
+     where o.group_code = 'opening' and o.dr_coa_code = r.cr_coa_code
+     order by o.code limit 1;
+    if v_open is null then
+      -- ไม่มีทางตั้งยอดต้นทาง → ปล่อยให้ G4 รายงานว่าหมวดนี้อนุมัติไม่ได้
+      -- (นั่นคือความจริงที่ต้องเห็น ไม่ใช่สิ่งที่ fixture ควรกลบ)
+      continue;
+    end if;
+
+    v_asset := gen_random_uuid();
+    insert into sri_os.assets(id, code, name, class_id, category_id, owner_id)
+    select v_asset, 'DG-MV-' || upper(right(r.code, 12)), 'ทรัพย์ของหมวดย้าย ' || r.code,
+           k.class_id, k.id, o.id
+      from (select class_id, id from sri_os.asset_categories order by code limit 1) k,
+           sri_os.owners o
+     where o.code = 'THANAKORN';
+    insert into g_ref(label, id) values ('move:' || r.code, v_asset);
+
+    set local role authenticated;
+    perform pg_temp.post_as_appA(v_open, 1000, false, v_asset,
+                                 'G4-fixture ยอดต้นทางของหมวดย้าย ' || r.code);
+    reset role;
+
+    raise notice 'ok G4-fixture (2) · % ได้ทรัพย์ของตัวเองที่มียอด 1,000 ในบัญชี % (ย้ายทั้งก้อนได้พอดี)',
+      r.code, r.cr_coa_code;
+  end loop;
+exception when others then
+  reset role; raise;
+end $$;
+
 -- ============================================================
 -- G4 · **ร่างที่สร้างได้แต่อนุมัติไม่ได้ ต้องไม่มี**
 --
@@ -366,10 +430,13 @@ end $$;
 create or replace function pg_temp.try_type(p_code text) returns text
 language plpgsql as $fn$
 declare
-  t record; v_draft uuid; v_cash date; v_bank uuid; v_cf text; v_owner uuid;
+  t record; v_draft uuid; v_cash date; v_bank uuid; v_cf text; v_owner uuid; v_asset uuid;
 begin
   select * into t from sri_os.txn_types where code = p_code;
   v_owner := pg_temp.own('THANAKORN');
+  -- หมวดย้ายยอดมีทรัพย์ของตัวเอง (ยอดต้นทาง 1,000 พอดี · ดู G4-fixture (2))
+  -- หมวดอื่นใช้ทรัพย์ร่วมของไฟล์นี้เหมือนเดิม
+  v_asset := coalesce((select id from g_ref where label = 'move:' || p_code), pg_temp.ref('asset'));
   v_cf := t.cf_group::text;
   if t.cash_direction = 'none' then
     v_cash := null; v_bank := null;
@@ -385,7 +452,7 @@ begin
     'cash_date', v_cash,
     'bank_account_id', v_bank,
     'amount', 1000,
-    'asset_id', case when t.requires_asset then pg_temp.ref('asset') end,
+    'asset_id', case when t.requires_asset then v_asset end,
     'contact_id', case when t.requires_contact then pg_temp.ref('contact') end,
     'memo', 'G4 ' || p_code,
     'attachments', jsonb_build_array('หลักฐาน.pdf'))) ->> 'draft_id')::uuid;
@@ -396,7 +463,7 @@ begin
     'doc_date', '2026-03-01',
     'cash_date', v_cash,
     'memo', 'G4 อนุมัติ ' || p_code,
-    'asset_id', case when t.requires_asset then pg_temp.ref('asset') end,
+    'asset_id', case when t.requires_asset then v_asset end,
     'contact_id', case when t.requires_contact then pg_temp.ref('contact') end,
     'attachments', jsonb_build_array('หลักฐาน.pdf'),
     'transactions', jsonb_build_array(jsonb_build_object(
@@ -405,11 +472,11 @@ begin
         jsonb_build_object('coa_code', t.dr_coa_code, 'debit', 1000, 'credit', 0,
                            'cf_category', v_cf,
                            'bank_account_id', case when t.dr_coa_code ~ '^11' then v_bank end,
-                           'asset_id', case when t.requires_asset then pg_temp.ref('asset') end),
+                           'asset_id', case when t.requires_asset then v_asset end),
         jsonb_build_object('coa_code', t.cr_coa_code, 'debit', 0, 'credit', 1000,
                            'cf_category', v_cf,
                            'bank_account_id', case when t.cr_coa_code ~ '^11' then v_bank end,
-                           'asset_id', case when t.requires_asset then pg_temp.ref('asset') end))))));
+                           'asset_id', case when t.requires_asset then v_asset end))))));
   return null;
 exception when others then
   return left(sqlerrm, 150);

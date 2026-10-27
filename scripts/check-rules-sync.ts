@@ -4,6 +4,7 @@
  *
  *   src/lib/rules/coa.ts          ↔ chart_of_accounts
  *   src/lib/rules/intercompany.ts ↔ fn_intercompany_pairs()
+ *   PROPERTY_COA (coa.ts)         ↔ fn_property_coas()
  *
  * ทำไมต้องมี: `sync:rules` **generate** ไฟล์ migration ให้ แต่ไม่มีอะไรบังคับว่า
  * คนจะรันมันจริง · เคยเกิดแล้วคือผังบัญชีใน DB ขาด 3 รหัส (1310/2310/1710)
@@ -19,17 +20,21 @@
  */
 import { execFileSync } from "node:child_process";
 
-import { COA } from "../src/lib/rules/coa";
+import { COA, PROPERTY_COA } from "../src/lib/rules/coa";
 import { INTERCOMPANY_RULES } from "../src/lib/rules/intercompany";
 import {
   coaOk,
   describeCoaDiff,
   describeIntercompanyDiff,
+  describePropertyCoaDiff,
   diffCoa,
   diffIntercompany,
+  diffPropertyCoas,
   effectiveCoa,
   effectiveIntercompanyPairs,
+  effectivePropertyCoas,
   intercompanyOk,
+  propertyCoasOk,
   readMigrations,
   type CoaRow,
   type PairRow,
@@ -46,7 +51,7 @@ function psql(url: string, sql: string): string[][] {
     .map((l) => l.split("\t"));
 }
 
-function fromDb(url: string): { coa: Map<string, CoaRow>; pairs: PairRow[] } {
+function fromDb(url: string): { coa: Map<string, CoaRow>; pairs: PairRow[]; property: string[] } {
   const coa = new Map<string, CoaRow>();
   for (const [code, nameTh, nameEn, type] of psql(
     url,
@@ -57,7 +62,8 @@ function fromDb(url: string): { coa: Map<string, CoaRow>; pairs: PairRow[] } {
     url,
     "select nature, payer_coa, receiver_coa from sri_os.fn_intercompany_pairs() order by nature"
   ).map(([nature, payerCoa, receiverCoa]) => ({ nature, payerCoa, receiverCoa }));
-  return { coa, pairs };
+  const property = psql(url, "select unnest(sri_os.fn_property_coas()) order by 1").map(([code]) => code);
+  return { coa, pairs, property };
 }
 
 function main(): void {
@@ -70,30 +76,38 @@ function main(): void {
 
   let coa: Map<string, CoaRow>;
   let pairs: PairRow[];
+  let property: string[];
   let source: string;
   if (useMigrations) {
     const files = readMigrations();
     coa = effectiveCoa(files).rows;
     const p = effectiveIntercompanyPairs(files);
     pairs = p.pairs;
-    source = `migration ในรีโป (คู่บัญชีระหว่างกันจาก ${p.source})`;
+    const pc = effectivePropertyCoas(files);
+    property = pc.codes;
+    source = `migration ในรีโป (คู่บัญชีระหว่างกันจาก ${p.source} · ชุดบัญชีอสังหาฯ จาก ${pc.source})`;
   } else {
     const r = fromDb(dbUrl as string);
     coa = r.coa;
     pairs = r.pairs;
-    source = "DB (chart_of_accounts · fn_intercompany_pairs)";
+    property = r.property;
+    source = "DB (chart_of_accounts · fn_intercompany_pairs · fn_property_coas)";
   }
 
   const cd = diffCoa(COA, coa);
   const pd = diffIntercompany(INTERCOMPANY_RULES, pairs);
-  const msg = [describeCoaDiff(cd), describeIntercompanyDiff(pd)].filter(Boolean).join("\n");
+  const rd = diffPropertyCoas([...PROPERTY_COA], property);
+  const msg = [describeCoaDiff(cd), describeIntercompanyDiff(pd), describePropertyCoaDiff(rd)]
+    .filter(Boolean)
+    .join("\n");
 
-  if (!coaOk(cd) || !intercompanyOk(pd))
+  if (!coaOk(cd) || !intercompanyOk(pd) || !propertyCoasOk(rd))
     throw new Error(`ตารางกฎไม่ตรงกับ ${source}\n${msg}\n\nแก้ด้วย: npm run sync:rules แล้ว apply migration ที่ได้`);
 
   if (msg) process.stderr.write(`${msg}\n`);
   process.stdout.write(
-    `ตรงกัน: ผังบัญชี ${COA.length} รหัส · คู่บัญชีระหว่างกัน ${Object.keys(INTERCOMPANY_RULES).length} ลักษณะ (TypeScript = ${source})\n`
+    `ตรงกัน: ผังบัญชี ${COA.length} รหัส · คู่บัญชีระหว่างกัน ${Object.keys(INTERCOMPANY_RULES).length} ลักษณะ · ` +
+      `ชุดบัญชีอสังหาฯ ${PROPERTY_COA.length} รหัส (TypeScript = ${source})\n`
   );
 }
 

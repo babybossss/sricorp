@@ -1,12 +1,23 @@
 import "./mocks";
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ctx, resetCtx } from "./ctx";
 import { BANK, OWNER, referenceFixture } from "./fake-db";
 import { previewOpeningImport } from "../import-opening";
-import { FIXTURE } from "@/lib/db/import/__tests__/helpers";
+import { FIXTURE, syncBreakdown } from "@/lib/db/import/__tests__/helpers";
+import type { Workbook } from "@/lib/db/import/xlsx";
 import { ROUTE_ACCESS, canOpen } from "@/lib/auth/routes";
 import type { Permission } from "@/lib/auth/permissions";
+
+/**
+ * ไฟล์ตัวอย่างดิบ (.xlsx) ยังไม่มีชีท "แจกแจงทรัพย์" ซึ่งตอนนี้บังคับ — ตัวอ่านที่ถูกแทนที่นี้เติมให้จากยอดในชีท BS-*
+ * เหมือน `loadFixture()` (ไฟล์ที่ไม่ใช่ Excel ยังพังที่ตัวอ่านจริงก่อนถึงขั้นเติม) · ใส่ hook ตอนรันเทสต์ ไม่ใช่ตอนโหลดโมดูล (กัน import วน)
+ */
+const hook = vi.hoisted(() => ({ patch: null as null | ((wb: Workbook) => Workbook) }));
+vi.mock("@/lib/db/import/xlsx", async (orig) => {
+  const real = await orig<typeof import("@/lib/db/import/xlsx")>();
+  return { ...real, readWorkbook: (b: Uint8Array) => { const wb = real.readWorkbook(b); return hook.patch ? hook.patch(wb) : wb; } };
+});
 
 /** ผู้ถือ/บัญชีของไฟล์ตัวอย่าง: ใช้ชุดเดียวกับ fake-db แล้วเติมสามคนที่ไฟล์มีชีทให้ */
 function referenceForFixture() {
@@ -26,6 +37,7 @@ const form = (file: Uint8Array | null, cutoff: string, name = "opening.xlsx") =>
 const fixture = () => new Uint8Array(readFileSync(FIXTURE));
 
 beforeEach(() => {
+  hook.patch = syncBreakdown;
   resetCtx();
   ctx.reference = referenceForFixture();
   ctx.access.permissions = new Set(["settings.manage"]) as never;

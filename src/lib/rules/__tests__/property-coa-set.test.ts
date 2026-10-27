@@ -18,6 +18,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { propertyCoasFromSql } from "../../../../scripts/rules-db-sync";
 import { PROPERTY_COA, RENOVATION_COA, coa, isPropertyAccount } from "../coa";
 import { TX_TYPES, findSub, type SubCategory } from "../tx-rules";
 
@@ -113,23 +114,49 @@ describe("3 · หมวดขาย 1520 ขนานกับ inv.sell_re ท�
 
 const MIGRATION_DIR = join(process.cwd(), "supabase", "migrations");
 
-function propertySetMigration(): string {
-  const names = readdirSync(MIGRATION_DIR).filter((n) => n.includes("property_coa_set"));
-  // อ่านไม่ออก = พัง ไม่ยอมผ่านด้วยชุดว่าง (กฎเดียวกับ check:rules-sync)
-  expect(names, "ไม่พบ migration ของชุดบัญชีอสังหาฯ — เทสต์นี้จะไม่ได้ตรวจอะไร").toHaveLength(1);
-  return readFileSync(join(MIGRATION_DIR, names[0]), "utf8");
+/**
+ * migration ที่ **นิยามฟังก์ชันนั้นอยู่ล่าสุด** — ไม่ใช่ไฟล์แรกที่ชื่อเข้าเค้า
+ *
+ * เดิมหาจาก **ชื่อไฟล์** ที่มีคำว่า `property_coa_set` แล้วบังคับว่าต้องมีไฟล์เดียว
+ * วันที่เพิ่มบัญชีอสังหาฯ ตัวที่สาม (migration ใหม่ที่ `create or replace` ทับ)
+ * เทสต์จะแดงด้วยเหตุผลผิด — และถ้าใครแก้ให้เป็น `names[0]` มันจะไป**ตรวจไฟล์เก่า
+ * ที่ถูกเขียนทับไปแล้ว** คือบอกว่าผ่านทั้งที่ของจริงใน DB เป็นอีกชุด
+ *
+ * จึงไล่จาก **เนื้อไฟล์** (ใครนิยามฟังก์ชันนี้) แล้วเอาไฟล์ท้ายสุดตามลำดับชื่อ
+ * ซึ่งเป็นกฎเดียวกับที่ `effectivePropertyCoas()` ใช้ตอน `check:rules-sync`
+ * ไม่พบเลย = พัง ไม่ยอมผ่านด้วยชุดว่าง
+ */
+function latestMigrationDefining(fnName: string): string {
+  const names = readdirSync(MIGRATION_DIR)
+    .filter((n) => n.endsWith(".sql"))
+    .sort()
+    .filter((n) =>
+      new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+(?:sri_os\\.)?${fnName}\\s*\\(`, "i").test(
+        readFileSync(join(MIGRATION_DIR, n), "utf8")
+      )
+    );
+  expect(
+    names.length,
+    `ไม่พบ migration ที่นิยาม ${fnName}() เลย — เทสต์นี้จะไม่ได้ตรวจอะไร`
+  ).toBeGreaterThan(0);
+  return readFileSync(join(MIGRATION_DIR, names[names.length - 1]), "utf8");
 }
 
-/** ดึงรายชื่อรหัสที่ `fn_property_coas()` คืน ออกมาจาก SQL จริง */
+/** ไฟล์ที่ถือ "ชุดบัญชีอสังหาฯ" ฝั่ง DB อยู่ตอนนี้ */
+const propertySetMigration = (): string => latestMigrationDefining("fn_property_coas");
+
+/** ไฟล์ที่ถือ "ด่านคู่บัญชีต้องตรงตารางกฎ" อยู่ตอนนี้ — อาจเป็นไฟล์เดียวกันหรือไม่ก็ได้ */
+const lineCoaGuardMigration = (): string => latestMigrationDefining("fn_assert_line_coa_in_rules");
+
+/**
+ * ดึงรายชื่อรหัสที่ `fn_property_coas()` คืน — ใช้ตัวอ่าน**ตัวเดียวกับ**
+ * `check:rules-sync` (บทเรียนข้อ 5: กฎเดียวกันห้ามเขียนสองที่ · เดิมไฟล์นี้
+ * มี regex ของตัวเองอีกชุด ซึ่งแยกกันเดินจากตัวที่ใช้เทียบกับ DB จริงได้)
+ */
 function dbPropertyCoas(): string[] {
-  const sql = propertySetMigration();
-  const m = /create or replace function fn_property_coas\(\)[\s\S]*?select\s+array\[([^\]]*)\]/.exec(sql);
-  expect(m, "อ่าน fn_property_coas() จาก migration ไม่ออก").toBeTruthy();
-  return m![1]
-    .split(",")
-    .map((raw) => raw.replace(/--.*$/gm, "").trim().replace(/^'|'$/g, ""))
-    .filter(Boolean)
-    .sort();
+  const codes = propertyCoasFromSql(propertySetMigration());
+  expect(codes, "อ่าน fn_property_coas() จาก migration ไม่ออก").toBeTruthy();
+  return codes!;
 }
 
 describe("4 · fn_property_coas() ฝั่ง DB = PROPERTY_COA ฝั่งโค้ด", () => {
@@ -140,7 +167,7 @@ describe("4 · fn_property_coas() ฝั่ง DB = PROPERTY_COA ฝั่งโ
   it("ด่านอ่านจากฟังก์ชัน **ไม่ใช่เทียบรหัสเดียว** — ห้ามมี cr_coa_code = '1500' กลับมา", () => {
     // ตัดคอมเมนต์ออกก่อน — หัวไฟล์ **ต้อง** พูดถึงเงื่อนไขเดิมเพื่ออธิบายที่มา
     // สิ่งที่ห้ามคือโค้ดที่รันจริง ไม่ใช่คำอธิบาย
-    const code = propertySetMigration()
+    const code = lineCoaGuardMigration()
       .split("\n")
       .filter((l) => !/^\s*(--|\*|\/\*)/.test(l))
       .join("\n");
@@ -151,8 +178,7 @@ describe("4 · fn_property_coas() ฝั่ง DB = PROPERTY_COA ฝั่งโ
   });
 
   it("เขียนทับ fn_assert_line_coa_in_rules() ตัวเดิม ไม่สร้างด่านตัวที่สอง", () => {
-    const sql = propertySetMigration();
-    expect(sql).toMatch(/create or replace function fn_assert_line_coa_in_rules\(\)/);
+    expect(lineCoaGuardMigration()).toMatch(/create or replace function fn_assert_line_coa_in_rules\(\)/);
   });
 
   it("ไฟล์ 0011 เดิมไม่ถูกแก้ (ลงไป DB จริงแล้ว) — ยังเทียบรหัสเดียวอยู่เหมือนเดิม", () => {

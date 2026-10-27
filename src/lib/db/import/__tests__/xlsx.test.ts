@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { deflateRawSync } from "node:zlib";
 import { MAX_XLSX_BYTES, readWorkbook, XlsxError, cellAt } from "../xlsx";
-import { FIXTURE, loadFixture, sheetOf } from "./helpers";
+import { FIXTURE, loadRawFixture as loadFixture, sheetOf } from "./helpers";
 
 describe("อ่าน xlsx", () => {
   it("อ่านไฟล์เทมเพลตจริง: ครบ 9 ชีท ตามลำดับ", () => {

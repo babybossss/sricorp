@@ -162,18 +162,24 @@ export function createFakeDb() {
     rpcData: unknown | "default";
     /** ตอบแทนประตูอัปโหลดยอดตั้งต้นใหม่ — ไม่ตั้ง = ตอบว่าลงครบตามที่ส่ง */
     reimport: ((call: { p_owner: string; p_payload: { entries: Payload[]; lots: Record<string, unknown>[] } }) => { data: unknown; error: { message: string; code?: string } | null }) | null;
+    /** ทำให้ `fn_apply_asset_draft` ล้มทุกครั้ง */
+    applyDraftError: { message: string; code?: string } | null;
     /** ตารางที่ RLS ปฏิเสธการเขียน — INSERT = error 42501 · UPDATE/DELETE = ไม่มีแถวถูกแก้ (ตรงกับ PostgREST จริง) */
     denyWrites: Set<string>;
   } = {
     rpcError: null,
     rpcData: "default",
     reimport: null,
+    applyDraftError: null,
     denyWrites: new Set(),
   };
   /** ตารางทั่วไป (ไม่ใช่สมุด) — เท่าที่ action ตั้งค่า/ข้อมูลอ้างอิงใช้ */
   const tables: Record<string, Record<string, unknown>[]> = {
     owners: [], bank_accounts: [], assets: [], contacts: [], chart_of_accounts: [], fx_rates: [],
+    asset_categories: [], asset_drafts: [],
   };
+  /** การเรียก `fn_apply_asset_draft` — จำลองเท่าที่ import ใช้: ร่าง `create` ที่ pending → สร้างทรัพย์ใหม่ แล้วตั้งร่างเป็น approved */
+  const applyDraftCalls: string[] = [];
   /** การเขียนที่ action ยิงมา — ไว้ตรวจว่าส่งอะไรไป (และต้องไม่มี delete) */
   const writes: { table: string; op: "insert" | "update" | "delete"; payload: unknown; denied: boolean }[] = [];
   const BANK_CCY = new Set(["THB", "USD", "JPY", "CNY"]);
@@ -308,7 +314,7 @@ export function createFakeDb() {
       writes.push({ table, op: mode, payload, denied });
       if (mode === "insert") {
         if (denied) return { data: null, error: { code: "42501", message: `new row violates row-level security policy for table "${table}"` } };
-        const row: TRow = { id: newId(), is_active: true, sort_order: 0, currency: "THB", opening_balance: 0, ...(payload as TRow) };
+        const row: TRow = { id: newId(), is_active: true, sort_order: 0, currency: "THB", opening_balance: 0, ...(table === "asset_drafts" ? { status: "pending" } : {}), ...(payload as TRow) };
         if (table === "bank_accounts") {
           for (const c of ["owner_id", "bank", "account_name", "display_name"]) {
             if (row[c] == null) return { data: null, error: { code: "23502", message: `null value in column "${c}" violates not-null constraint` } };
@@ -392,6 +398,17 @@ export function createFakeDb() {
         if (control.reimport) return control.reimport(call);
         return { data: { changed: true, reversed: 0, posted: call.p_payload.entries.length, lots: call.p_payload.lots.length }, error: null };
       }
+      if (fn === "fn_apply_asset_draft") {
+        const id = (args as unknown as { p_draft: string }).p_draft;
+        applyDraftCalls.push(id);
+        if (control.applyDraftError) return { data: null, error: control.applyDraftError };
+        const d = tables.asset_drafts.find((x) => x.id === id);
+        if (!d || d.status !== "pending") return { data: null, error: { message: `ไม่พบร่าง ${id} หรืออนุมัติไปแล้ว` } };
+        const asset = { id: newId(), code: `RE-9${String(tables.assets.length + 1).padStart(3, "0")}`, name: d.name, owner_id: d.owner_id, status: "active", currency: "THB", class_id: d.class_id, category_id: d.category_id };
+        tables.assets.push(asset);
+        d.status = "approved";
+        return { data: asset.id, error: null };
+      }
       if (fn !== "fn_post_entry") throw new Error(`ไม่รู้จัก rpc ${fn}`);
       rpcCalls.push(args.p_payload);
       if (control.rpcError) return { data: null, error: control.rpcError };
@@ -412,7 +429,7 @@ export function createFakeDb() {
         .reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0) * 100
     ) / 100;
 
-  return { client, rows, rpcCalls, reimportCalls, control, balance, fake, tables, writes };
+  return { client, rows, rpcCalls, reimportCalls, applyDraftCalls, control, balance, fake, tables, writes };
 }
 
 export type FakeDb = ReturnType<typeof createFakeDb>;

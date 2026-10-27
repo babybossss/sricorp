@@ -17,6 +17,7 @@ import { ContactPicker } from "./contact-picker";
 import { bankChoices, bankDirectionLabel, showsBankField } from "./bank-field";
 import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
+import { BalanceMovePanel } from "./balance-move-panel";
 import { FxPanel } from "./fx-panel";
 import { JournalPreview } from "./journal-preview";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
@@ -139,7 +140,8 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
   const needsAsset = requires("asset");
   // ขายทรัพย์: ยอดเงินมาจาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงด้านล่าง ไม่ให้พิมพ์ทับ
   // แปลงค่า/แลกเงินตรา: ยอดบาทมาจากอัตราที่เลือกในแผงด้านล่าง ไม่ให้พิมพ์ทับ (engine ปฏิเสธยอดที่ไม่ตรงอัตราแม้สตางค์เดียว)
-  const amountDerived = requires("capitalGain") || !!api.fxKind;
+  // ย้ายวัตถุประสงค์ทรัพย์: ยอดคือยอดต้นทุนทั้งก้อนที่อ่านจากสมุด ไม่ให้พิมพ์ (ย้ายทั้งก้อนเท่านั้น)
+  const amountDerived = requires("capitalGain") || !!api.fxKind || requires("wholeBalanceMove");
 
   return (
     <div className="flex flex-col gap-4">
@@ -149,7 +151,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         hint={
           api.fxKind
             ? "ตั้งให้จากอัตราที่เลือกในแผงด้านล่าง"
-            : amountDerived
+            : requires("wholeBalanceMove")
+              ? "ย้ายทั้งก้อนเท่านั้น — ระบบอ่านยอดต้นทุนของทรัพย์จากสมุดให้ในแผงด้านล่าง ไม่ต้องพิมพ์"
+              : amountDerived
               ? "คำนวณให้จาก ราคาขาย − ค่าใช้จ่ายในการขาย ในแผงคำนวณกำไร/ขาดทุน"
               : undefined
         }
@@ -344,6 +348,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
           state={api.disposalState}
         />
       ) : null}
+
+      {/* ย้ายวัตถุประสงค์ทรัพย์ — ยอดทั้งก้อนอ่านจากสมุด */}
+      {requires("wholeBalanceMove") ? <BalanceMovePanel api={api} /> : null}
 
       {/* Backlog ข้อ 5 — แยกเงินต้น/ดอกเบี้ย */}
       {requires("principalInterestSplit") ? (

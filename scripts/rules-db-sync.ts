@@ -7,6 +7,7 @@
  *
  *   1. `src/lib/rules/coa.ts`          → ตาราง `chart_of_accounts`
  *   2. `src/lib/rules/intercompany.ts` → ฟังก์ชัน `fn_intercompany_pairs()`
+ *   3. `PROPERTY_COA` ใน `coa.ts`      → ฟังก์ชัน `fn_property_coas()`
  *
  * ปรัชญาเดียวกับ `src/lib/assets/draft-whitelist.ts`:
  *   **อ่านไม่ออก = พัง** ห้ามคืนชุดว่าง เพราะชุดว่างทำให้การเทียบ "ผ่าน"
@@ -400,6 +401,104 @@ export function describeIntercompanyDiff(d: PairDiff): string {
       `ERROR: คู่บัญชีระหว่างกันไม่ตรงกัน: ${d.mismatched
         .map((m) => `${m.nature} (โค้ด=${m.ts} · migration=${m.db})`)
         .join(", ")} → งบรวมตัดรายการระหว่างกันไม่ลง`
+    );
+  return out.join("\n");
+}
+
+// ============================================================
+// 3 · ชุดบัญชีอสังหาฯ เพื่อการลงทุน — PROPERTY_COA ↔ fn_property_coas()
+//
+// ทำไมต้องเทียบ: ด่าน `fn_assert_line_coa_in_rules()` ตัดสินว่า "ใบนี้ตัด
+// ค่ารีโนเวท (1510) ได้ไหม" จาก `cr_coa_code = any(fn_property_coas())`
+// ถ้าสำเนาฝั่ง DB ขาดรหัสใดไป **ทรัพย์ในบัญชีนั้นขายไม่ออก** โดยที่โค้ดฝั่ง
+// TypeScript ดูถูกทุกอย่าง — รูปเดียวกับที่ผังบัญชีเคยขาด 3 รหัสแล้วรายการ
+// ข้ามผู้ถือถูกปฏิเสธตอนผู้ใช้กดบันทึก
+// ============================================================
+
+const PROPERTY_FN = "fn_property_coas";
+
+/**
+ * อ่าน `array['1500', '1520']` จาก body ของ `fn_property_coas()`
+ * `null` = ไฟล์นี้ไม่ได้ define ฟังก์ชัน · define แต่อ่านไม่ออก = พัง
+ */
+export function propertyCoasFromSql(sql: string): string[] | null {
+  const def = new RegExp(
+    `create\\s+(?:or\\s+replace\\s+)?function\\s+(?:sri_os\\.)?${PROPERTY_FN}\\s*\\(\\s*\\)[\\s\\S]*?(\\$(\\w*)\\$)([\\s\\S]*?)\\$\\2\\$`,
+    "i"
+  ).exec(sql);
+  if (!def) {
+    if (new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+(?:sri_os\\.)?${PROPERTY_FN}\\b`, "i").test(sql))
+      throw new RuleSyncParseError(
+        `พบการ define ${PROPERTY_FN}() แต่อ่านรูปแบบไม่ออก (ต้องเป็น $tag$ … $tag$) — แก้ตัวอ่านที่ scripts/rules-db-sync.ts`
+      );
+    return null;
+  }
+  // ตัดคอมเมนต์ก่อน — body ของฟังก์ชันนี้อธิบายว่าทำไม 1510 ไม่อยู่ในชุด
+  // ถ้าไม่ตัด เลข 1510 ในคำอธิบายจะถูกอ่านเป็นสมาชิกของชุด
+  const body = stripSqlComments(def[3]);
+  const arr = /\barray\s*\[([^\]]*)\]/i.exec(body);
+  if (!arr)
+    throw new RuleSyncParseError(
+      `${PROPERTY_FN}() ไม่มี array[…] ให้อ่าน — รูปแบบเปลี่ยน ต้องแก้ตัวอ่าน (ห้ามคืนชุดว่างแล้วให้การเทียบผ่าน)`
+    );
+  const codes = arr[1]
+    .split(",")
+    .map((raw) => raw.trim().replace(/::\s*text(\[\])?$/i, "").trim().replace(/^'|'$/g, ""))
+    .filter(Boolean);
+  if (codes.length === 0)
+    throw new RuleSyncParseError(`${PROPERTY_FN}() อ่านได้ 0 รหัส — ชุดว่างทำให้ทรัพย์อสังหาฯ ขายไม่ออกทุกบัญชี`);
+  for (const c of codes)
+    if (!/^[0-9]{4}$/.test(c)) throw new RuleSyncParseError(`${PROPERTY_FN}() มีค่าที่ไม่ใช่รหัสบัญชี: "${c}"`);
+  return [...codes].sort();
+}
+
+/** ไฟล์ท้ายสุดที่ define ฟังก์ชันชนะ (create or replace) · ไม่มีเลย = พัง */
+export function effectivePropertyCoas(files: readonly MigrationFile[]): { codes: string[]; source: string } {
+  let found: { codes: string[]; source: string } | null = null;
+  for (const f of [...files].sort((a, b) => a.name.localeCompare(b.name))) {
+    let codes: string[] | null;
+    try {
+      codes = propertyCoasFromSql(f.sql);
+    } catch (e) {
+      throw new RuleSyncParseError(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (codes) found = { codes, source: f.name };
+  }
+  if (!found)
+    throw new RuleSyncParseError(`ไม่พบ migration ที่ define ${PROPERTY_FN}() เลย (ค้นจาก ${files.length} ไฟล์)`);
+  return found;
+}
+
+export type PropertyCoaDiff = {
+  /** รหัสที่โค้ดมีแต่ DB ไม่มี → **ทรัพย์ในบัญชีนั้นขายไม่ออก** (ด่านไม่ยอมให้ตัด 1510) */
+  missingInDb: string[];
+  /** รหัสที่ DB มีแต่โค้ดไม่มี → ด่านยอมให้ตัด 1510 จากบัญชีที่ไม่ใช่อสังหาฯ */
+  extraInDb: string[];
+};
+
+export function diffPropertyCoas(ts: readonly string[], db: readonly string[]): PropertyCoaDiff {
+  if (db.length === 0) throw new RuleSyncParseError(`${PROPERTY_FN}() ว่าง — ปฏิเสธการเทียบ`);
+  const dbSet = new Set(db);
+  const tsSet = new Set(ts);
+  return {
+    missingInDb: [...tsSet].filter((c) => !dbSet.has(c)).sort(),
+    extraInDb: [...dbSet].filter((c) => !tsSet.has(c)).sort(),
+  };
+}
+
+export const propertyCoasOk = (d: PropertyCoaDiff) => d.missingInDb.length === 0 && d.extraInDb.length === 0;
+
+export function describePropertyCoaDiff(d: PropertyCoaDiff): string {
+  const out: string[] = [];
+  if (d.missingInDb.length)
+    out.push(
+      `ERROR: PROPERTY_COA มีรหัสที่ ${PROPERTY_FN}() ยังไม่มี: ${d.missingInDb.join(", ")} → ` +
+        "ทรัพย์ในบัญชีนั้น **ขายไม่ออก** เพราะด่านไม่ยอมให้ใบขายตัดค่ารีโนเวท (1510) ออกพร้อมทรัพย์"
+    );
+  if (d.extraInDb.length)
+    out.push(
+      `ERROR: ${PROPERTY_FN}() มีรหัสที่ PROPERTY_COA ไม่มี: ${d.extraInDb.join(", ")} → ` +
+        "ด่านยอมให้ใบที่เครดิตบัญชีนั้นตัด 1510 ได้ ทั้งที่โค้ดไม่ถือว่าเป็นบัญชีอสังหาฯ"
     );
   return out.join("\n");
 }

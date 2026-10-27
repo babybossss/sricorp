@@ -12,7 +12,10 @@
  * หลักที่ยึด (บทเรียนข้อ 1, 3, 7):
  *  - รหัสบัญชีที่ตารางกฎยังไม่มีหมวด "ยอดยกมา" ให้ = **ปฏิเสธทั้งไฟล์** ไม่ข้าม ไม่ปัดเข้าบัญชีอื่น
  *    (ข้ามแล้วงบดุลของผู้ถือนั้นยังดุลเพราะกำไรสะสมถูกเติมน้อยลงตาม — **ยอดหายแล้วไม่มีใครรู้**)
- *  - ทรัพย์อ่านจากฐานข้อมูล (ผู้ถือ + รหัส/ชื่อ) ไม่เดา ไม่สร้างให้ ซ้ำกัน/ไม่พบ/สกุลไม่ตรง = ปฏิเสธ
+ *  - ทรัพย์ของหุ้น/ทอง (ล็อต) อ่านจากฐานข้อมูล (ผู้ถือ + รหัส/ชื่อ) ไม่เดา ไม่สร้างให้ ซ้ำกัน/ไม่พบ/สกุลไม่ตรง = ปฏิเสธ
+ *  - ทรัพย์รายชิ้นจากชีทแจกแจง (อสังหาฯ · เงินให้กู้ · ขายฝาก ฯลฯ) **ลงหนึ่งบรรทัดต่อหนึ่งชิ้น พร้อม `asset_id`**
+ *    ไม่ลงเป็นยอดรวมต่อรหัสบัญชี (ไม่งั้นทรัพย์ไม่มีต้นทุนรายชิ้นและขายไม่ออก) · ที่ยังไม่มีในทะเบียนจะถูกขอให้ลงทะเบียนก่อน
+ *    (`toCreate`) แต่ **ไฟล์นี้ไม่เขียน DB** — ผู้เรียกเป็นคนสร้างแล้วเรียกซ้ำด้วย `createMissing: false`
  *  - อัตราแลกเปลี่ยนของล็อตต้องมีอยู่จริงในตารางอัตราและเท่ากับที่ประกาศ (DB ตรวจซ้ำที่ trigger)
  */
 
@@ -24,11 +27,30 @@ import { PayloadError, toPostEntryPayload, type PostEntryPayload } from "@/lib/d
 import { makeResolver } from "@/lib/db/resolver";
 import type { Reference } from "@/lib/db/reference-types";
 import type { Lot, ParsedOpening } from "./opening";
+import { RENOVATION_COA, assetCategoryOfCoa, isBreakdownCode, type AssetItem } from "./breakdown";
 
 /* ---------------------------------------------------------------- ชนิด */
 
 /** ทรัพย์จาก `sri_os.assets` (คอลัมน์ที่เปิดให้อ่าน: ไม่มี ticker/units) */
-export type OpeningAsset = { id: string; code: string; name: string; ownerId: string; status: string; currency: string };
+export type OpeningAsset = {
+  id: string;
+  code: string;
+  name: string;
+  ownerId: string;
+  status: string;
+  currency: string;
+  /** รหัสหมวดย่อยของทรัพย์ (`asset_categories.code`) — ทรัพย์รายชิ้นต้องอยู่หมวดที่ตรงกับบัญชีที่ลง · ไม่ทราบ = ปฏิเสธ */
+  categoryCode?: string;
+};
+/** หมวดย่อยของทรัพย์จาก `sri_os.asset_categories` — ไว้แปลงรหัสหมวดเป็น id ตอนลงทะเบียนทรัพย์ใหม่ */
+export type AssetCategoryRef = { id: string; classId: string; code: string };
+
+/** รหัสชั่วคราวของทรัพย์ที่ยังไม่ได้ลงทะเบียน — **ห้ามถึง DB** (ใช้แค่ตรวจ/พรีวิวก่อนสร้างทรัพย์จริง) */
+export const PENDING_ASSET_PREFIX = "pending-asset:";
+export const isPendingAssetId = (id: string | null | undefined): boolean => typeof id === "string" && id.startsWith(PENDING_ASSET_PREFIX);
+
+/** ทรัพย์ที่ต้องลงทะเบียนก่อนลงสมุด (ยังไม่มีในทะเบียนของผู้ถือ) */
+export type NewAssetRequest = { item: AssetItem; categoryCode: string };
 /** อัตราจาก `sri_os.fx_rates` · บาทต่อหนึ่งหน่วย */
 export type FxRateRow = { currency: string; rateDate: string; thbPerUnit: number };
 /** หลักฐาน + ผู้ติดต่อของผู้ถือที่เป็นนิติบุคคล (กติกาเอกสาร `corporate_strict`) */
@@ -66,15 +88,29 @@ export type PrepareEnv = {
   /** ownerId → หลักฐาน/ผู้ติดต่อ · ใช้เมื่อ `mode = post` กับผู้ถือที่เป็นนิติบุคคล */
   evidence?: Record<string, OwnerEvidence | undefined>;
   /**
+   * `true` = ทรัพย์รายชิ้นที่ยังไม่มีในทะเบียนไม่ใช่ปัญหา — ใช้ทรัพย์ชั่วคราว (`pending-asset:…`) แทนเพื่อตรวจ/พรีวิวให้ครบ
+   * แล้วรายงานใน `toCreate` · **payload ที่ได้ห้ามส่งเข้า DB** (`runOpeningImport` ปฏิเสธรหัสชั่วคราว)
+   * `false`/ไม่ระบุ = ทรัพย์ที่ไม่พบเป็นปัญหา (ทางลงสมุดจริง ต้องสร้างทรัพย์ให้ครบก่อนเรียก)
+   */
+  createMissing?: boolean;
+  /**
    * `preview` = `buildPostingDraft()` (ยังไม่บังคับเอกสารนิติบุคคล — ผู้ใช้เห็นบรรทัดก่อนไปหาไฟล์)
    * `post`    = `buildPosting()` ตัวจริง — **ทางเดียวที่ใช้ตอนบันทึก**
    */
   mode: "preview" | "post";
 };
 
+type PrepareCommon = {
+  evidenceOwners: { id: string; name: string }[];
+  lotAssets: Map<Lot, OpeningAsset>;
+  /** ทรัพย์รายชิ้นแต่ละบรรทัดของชีทแจกแจง → ทรัพย์ที่จะผูก (รหัส `pending-asset:` = ยังไม่ลงทะเบียน) */
+  itemAssets: Map<AssetItem, OpeningAsset>;
+  /** ทรัพย์ที่ต้องลงทะเบียนก่อน (ว่างเสมอเมื่อ `createMissing` เป็น false) */
+  toCreate: NewAssetRequest[];
+};
 export type PrepareResult =
-  | { ok: true; owners: OwnerPosting[]; evidenceOwners: { id: string; name: string }[]; lotAssets: Map<Lot, OpeningAsset> }
-  | { ok: false; problems: OpeningProblem[]; evidenceOwners: { id: string; name: string }[]; lotAssets: Map<Lot, OpeningAsset> };
+  | ({ ok: true; owners: OwnerPosting[] } & PrepareCommon)
+  | ({ ok: false; problems: OpeningProblem[] } & PrepareCommon);
 
 /* ---------------------------------------------------------------- ตารางเทียบ (อ่านจากตารางกฎ) */
 
@@ -97,7 +133,27 @@ export function openingSubByAccount(): Map<string, SubCategory> {
 
 /* ---------------------------------------------------------------- ตัวช่วย */
 
+/** เพดานความยาว memo ของบรรทัดรวม (ตารางไม่มีเพดาน — ตั้งไว้ไม่ให้ memo ยาวจนอ่านไม่ได้) */
+const MEMO_MAX = 500;
+
+/** memo ของบรรทัดรวมที่ไม่ผูกทรัพย์: ชื่อรายการ + ยอด · ยาวเกิน = ตัดแล้วบอกจำนวนที่เหลือ (ข้อมูลรายชิ้นยังอยู่ในไฟล์ต้นทาง) */
+function unclassifiedMemo(prefix: string, code: string, group: AssetItem[]): string {
+  const parts = group.map((i) => `${i.name} ${(i.cost + i.renovation).toLocaleString("en-US")}`);
+  const head = `${prefix} · ${coa(code).nameTh}: `;
+  let out = head;
+  let used = 0;
+  for (const part of parts) {
+    const next = out + (used ? " · " : "") + part;
+    if (next.length > MEMO_MAX) break;
+    out = next;
+    used += 1;
+  }
+  if (used === 0) out = head.slice(0, MEMO_MAX - 20);
+  return used < parts.length ? `${out} · และอีก ${parts.length - used} รายการ` : out;
+}
+
 const cents = (n: number) => Math.round(n * 100);
+const round2 = (n: number) => Math.round(n * 100) / 100;
 const norm = (s: string) => s.normalize("NFC").trim().toLowerCase();
 const rateKey = (n: number) => n.toFixed(8);
 
@@ -137,6 +193,63 @@ function resolveAsset(lot: Lot, assets: OpeningAsset[]): Resolved {
   return { ok: true, asset };
 }
 
+type ItemResolved = { ok: true; asset: OpeningAsset } | { ok: false; message: string };
+
+/**
+ * ทรัพย์ของบรรทัดแจกแจง: ผู้ถือเดียวกัน → "รหัสทรัพย์" ที่กรอก (ถ้ามีและพบ) → ไม่งั้นชื่อทรัพย์ตรงทุกตัวอักษร
+ * ไม่พบ = ต้องลงทะเบียนใหม่ (`toCreate`) · พบแล้วต้องใช้ได้จริง: ถืออยู่ · สกุลบาท · หมวดตรงกับบัญชีที่ลง
+ * ซ้ำกันหลายตัว = ปฏิเสธ (เลือกให้ไม่ได้ — เลือกผิดแปลว่าต้นทุนไปอยู่ผิดชิ้น)
+ */
+function resolveItemAsset(item: AssetItem, assets: OpeningAsset[], createMissing: boolean): ItemResolved & { isNew?: boolean } {
+  const where = `ทรัพย์ "${item.name}" ของ ${item.ownerName} (แถว ${item.row} ของชีทแจกแจงทรัพย์)`;
+  const category = assetCategoryOfCoa(item.coaCode);
+  if (!category) {
+    return {
+      ok: false,
+      message:
+        `${where}: บัญชี ${item.coaCode} ${coa(item.coaCode).nameTh} ยังไม่มีหมวดทรัพย์ในตารางหมวดทรัพย์ จึงลงทะเบียนทรัพย์รายชิ้นให้ไม่ได้ ` +
+        "(ระบบไม่เดาหมวดให้ และไม่ลงเป็นยอดรวมแทน) · ให้ผู้ดูแลเพิ่มหมวดทรัพย์ของบัญชีนี้ก่อน",
+    };
+  }
+  const key = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+  const mine = assets.filter((a) => a.ownerId === item.ownerId && !isPendingAssetId(a.id));
+  let hits = item.assetCode ? mine.filter((a) => key(a.code) === key(item.assetCode!)) : [];
+  if (hits.length === 0) hits = mine.filter((a) => key(a.name) === key(item.name));
+  if (hits.length > 1) {
+    return { ok: false, message: `${where}: มีทรัพย์ ${hits.length} รายการที่ตรงกัน (${hits.map((h) => h.code).join(", ")}) — เลือกให้ไม่ได้ ให้แก้ชื่อ/รหัสทรัพย์ในทะเบียนไม่ให้ซ้ำก่อน` };
+  }
+  if (hits.length === 0) {
+    if (!createMissing) {
+      return { ok: false, message: `${where}: ยังไม่มีทรัพย์ชิ้นนี้ในทะเบียน — ต้องลงทะเบียนก่อนลงยอดตั้งต้น (ระบบไม่ลงเป็นยอดรวมแทน)` };
+    }
+    return {
+      ok: true,
+      isNew: true,
+      asset: {
+        id: `${PENDING_ASSET_PREFIX}${item.ownerId}:${item.row}`,
+        code: "(ลงทะเบียนใหม่)",
+        name: item.name,
+        ownerId: item.ownerId,
+        status: "active",
+        currency: "THB",
+        categoryCode: category,
+      },
+    };
+  }
+  const asset = hits[0];
+  if (asset.status !== "active") return { ok: false, message: `${where}: ทรัพย์ ${asset.code} สถานะ "${asset.status}" ไม่ใช่ที่ถืออยู่ — ลงยอดตั้งต้นเข้าทรัพย์ที่จำหน่ายแล้วไม่ได้` };
+  if (asset.currency !== "THB") return { ok: false, message: `${where}: ทรัพย์ ${asset.code} เป็นสกุล ${asset.currency} — ต้นทุนในชีทแจกแจงเป็นบาท ลงเข้าทรัพย์สกุลอื่นไม่ได้` };
+  if (asset.categoryCode !== category) {
+    return {
+      ok: false,
+      message:
+        `${where}: ทรัพย์ ${asset.code} อยู่หมวด "${asset.categoryCode ?? "ไม่ทราบ"}" แต่บัญชี ${item.coaCode} ${coa(item.coaCode).nameTh} ต้องเป็นหมวด "${category}" — ` +
+        "ไม่ลงต้นทุนเข้าทรัพย์ผิดหมวด (แก้หมวดของทรัพย์ในทะเบียน หรือแก้บรรทัดในงบดุลของแถวนี้)",
+    };
+  }
+  return { ok: true, asset };
+}
+
 /**
  * วันของอัตราที่ล็อตสกุลต่างประเทศใช้ — ต้องเป็นแถวที่มีอยู่จริงใน `fx_rates` (DB บังคับด้วย foreign key)
  * และอัตราที่ผู้ใช้กรอกต้องเท่ากับอัตราที่ประกาศของวันนั้นพอดี
@@ -170,6 +283,10 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
   const owners: OwnerPosting[] = [];
   const evidenceOwners: { id: string; name: string }[] = [];
   const lotAssets = new Map<Lot, OpeningAsset>();
+  const itemAssets = new Map<AssetItem, OpeningAsset>();
+  const toCreate: NewAssetRequest[] = [];
+  /** ทรัพย์ที่มีอยู่แล้วที่มีบรรทัดแจกแจงอ้างถึงแล้ว — สองบรรทัดอ้างทรัพย์ชิ้นเดียวกันไม่ได้ (ต้นทุนจะซ้อนกัน) */
+  const claimed = new Map<string, AssetItem>();
   const resolver = makeResolver(env.ref);
   const subByAccount = openingSubByAccount();
   const build = env.mode === "post" ? buildPosting : buildPostingDraft;
@@ -179,6 +296,10 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
   for (const owner of env.ref.owners.filter((o) => o.status === "active")) {
     const journal = parsed.journals.find((j) => j.ownerId === owner.id);
     const fail = (message: string) => problems.push({ ownerName: owner.name, message });
+    const items = parsed.assetItems.filter((i) => i.ownerId === owner.id);
+    if (!journal && items.length) {
+      fail(`มีทรัพย์ ${items.length} ชิ้นในชีทแจกแจงทรัพย์ แต่ไม่มียอดในงบดุลของผู้ถือนี้เลย — ยอดนี้จะหายเงียบๆ จึงไม่ลงสมุด`);
+    }
     if (!journal) {
       owners.push({ ownerId: owner.id, ownerName: owner.name, payload: { entries: [], lots: [] }, lineCount: 0 });
       continue;
@@ -204,6 +325,7 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
       const amount = Math.max(l.debit, l.credit);
       if (l.coaCode === RETAINED_EARNINGS_COA) continue; // ขาคู่ — engine เติมให้จากทุกหมวด แล้วเทียบกลับด้านล่าง
       if (l.coaCode === "1700" || l.coaCode === "1720") continue; // ลงต่อทรัพย์จากชีทรายล็อต ด้านล่าง
+      if (isBreakdownCode(l.coaCode)) continue; // ลงทีละชิ้นจากชีทแจกแจงทรัพย์ ด้านล่าง (ไม่ลงเป็นบรรทัดรวม) · เทียบกลับกับไฟล์ท้ายลูป
       const sub = subByAccount.get(l.coaCode);
       if (!sub) {
         fail(
@@ -249,6 +371,65 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
       }
       const amount = g.lots.reduce((t, l) => t + cents(l.cost), 0) / 100;
       planned.push({ input: { ...base(sub.code, amount), assetId: g.asset.id }, cashDate: null });
+    }
+
+    // ---- ทรัพย์รายชิ้น (แจกแจง): หนึ่งบรรทัดต่อทรัพย์หนึ่งชิ้น ผูก asset_id ทุกบรรทัด ----
+    // ค่ารีโนเวทไหลไปบัญชี 1510 (บัญชีร่วม) แต่ผูกกับทรัพย์ชิ้นเดิม · บรรทัดที่เลือก 1510 เองรวมค่ารีโนเวทเป็นบรรทัดเดียว
+    const itemExpect = new Map<string, { item: AssetItem; cents: number }>();
+    // บัญชีที่ผังหมวดทรัพย์ตั้งใจไม่จัดหมวด (เช่น 1600 เงินมัดจำจ่าย · UNCLASSIFIED_ASSET_COA) ไม่ใช่การลงทุน ไม่มีต้นทุนรายชิ้นให้คิด:
+    // กระทบยอดตามปกติ (ที่ตัวอ่าน) แต่ลงเป็นบรรทัดรวมต่อรหัสบัญชีโดยไม่สร้างทรัพย์ · ชื่อรายการที่กรอกไว้ไปต่อใน memo ไม่ให้หาย
+    const unclassified = new Map<string, AssetItem[]>();
+    for (const item of items) {
+      if (assetCategoryOfCoa(item.coaCode) === null) {
+        unclassified.set(item.coaCode, [...(unclassified.get(item.coaCode) ?? []), item]);
+      }
+    }
+    for (const [code, group] of unclassified) {
+      const sub = subByAccount.get(code);
+      if (!sub) {
+        fail(`บัญชี ${code} ${coa(code).nameTh} ยังไม่มีหมวด "ยอดยกมา" ในตารางกฎ`);
+        continue;
+      }
+      const total = group.reduce((t, i) => t + cents(i.cost) + cents(i.renovation), 0) / 100;
+      const input = base(sub.code, total);
+      input.memo = unclassifiedMemo(input.memo ?? memo, code, group);
+      planned.push({ input, cashDate: null });
+    }
+    for (const item of items) {
+      if (assetCategoryOfCoa(item.coaCode) === null) continue; // ลงเป็นบรรทัดรวมข้างบนแล้ว
+      const r = resolveItemAsset(item, env.assets, env.createMissing === true);
+      if (!r.ok) {
+        fail(r.message);
+        continue;
+      }
+      const asset = r.asset;
+      if (!isPendingAssetId(asset.id)) {
+        const other = claimed.get(asset.id);
+        if (other) {
+          fail(`ทรัพย์ ${asset.code} ถูกอ้างโดยสองแถวของชีทแจกแจง (แถว ${other.row} กับแถว ${item.row}) — ทรัพย์หนึ่งชิ้นมีบรรทัดเดียว ต้นทุนจะซ้อนกัน`);
+          continue;
+        }
+        claimed.set(asset.id, item);
+      } else {
+        toCreate.push({ item, categoryCode: asset.categoryCode! });
+      }
+      itemAssets.set(item, asset);
+      const costSub = subByAccount.get(item.coaCode);
+      if (!costSub) {
+        fail(`บัญชี ${item.coaCode} ${coa(item.coaCode).nameTh} ยังไม่มีหมวด "ยอดยกมา" ในตารางกฎ`);
+        continue;
+      }
+      const sameLine = item.coaCode === RENOVATION_COA;
+      planned.push({ input: { ...base(costSub.code, sameLine ? round2(item.cost + item.renovation) : item.cost), assetId: asset.id }, cashDate: null });
+      if (!sameLine && item.renovation > 0) {
+        const renoSub = subByAccount.get(RENOVATION_COA);
+        if (!renoSub) {
+          fail(`บัญชี ${RENOVATION_COA} ${coa(RENOVATION_COA).nameTh} ยังไม่มีหมวด "ยอดยกมา" ในตารางกฎ`);
+          continue;
+        }
+        planned.push({ input: { ...base(renoSub.code, item.renovation), assetId: asset.id }, cashDate: null });
+      }
+      itemExpect.set(asset.id, { item, cents: cents(item.cost) + cents(item.renovation) });
     }
     if (capital) planned.push(capital);
 
@@ -296,6 +477,23 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
           fail(
             `บัญชี ${code} ${coa(code).nameTh}: ไฟล์ระบุ ${((w.dr - w.cr) / 100).toLocaleString("en-US")} แต่รายการที่ระบบประกอบได้ ${((p.dr - p.cr) / 100).toLocaleString("en-US")} ` +
               "(เดบิตเป็นบวก เครดิตเป็นลบ) — ไม่ตรงกันจึงไม่ลงสมุด"
+          );
+        }
+      }
+    }
+
+    // ---- ทรัพย์รายชิ้น: ต้นทุนที่ผูก asset_id ในสมุดต้องเท่ากับต้นทุน+ค่ารีโนเวทของชิ้นนั้นพอดี ----
+    // (กันบรรทัดที่หลุด asset_id — ทรัพย์ที่ต้นทุนในสมุดเป็น 0 คือทรัพย์ที่ขายไม่ออก)
+    if (!problems.some((p) => p.ownerName === owner.name)) {
+      for (const [assetId, exp] of itemExpect) {
+        const inLedger = entries
+          .flatMap((e) => e.transactions.flatMap((t) => t.lines))
+          .filter((l) => l.asset_id === assetId && coa(l.coa_code).type === "asset")
+          .reduce((t, l) => t + cents(l.debit) - cents(l.credit), 0);
+        if (inLedger !== exp.cents) {
+          fail(
+            `ทรัพย์ "${exp.item.name}" (แถว ${exp.item.row}): ต้นทุนที่ผูกทรัพย์ในรายการที่ประกอบได้ ${(inLedger / 100).toLocaleString("en-US")} ` +
+              `ไม่ตรงกับชีทแจกแจง ${(exp.cents / 100).toLocaleString("en-US")} — ไม่ลงสมุด`
           );
         }
       }
@@ -352,6 +550,6 @@ export function prepareOpeningPosting(parsed: ParsedOpening, env: PrepareEnv): P
     }
   }
 
-  if (problems.length) return { ok: false, problems, evidenceOwners, lotAssets };
-  return { ok: true, owners, evidenceOwners, lotAssets };
+  if (problems.length) return { ok: false, problems, evidenceOwners, lotAssets, itemAssets, toCreate };
+  return { ok: true, owners, evidenceOwners, lotAssets, itemAssets, toCreate };
 }
