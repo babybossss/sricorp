@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cellAt, readWorkbook, type Sheet } from "../xlsx";
+import { coa } from "@/lib/rules/coa";
 
 const TEMPLATE = path.join(__dirname, "..", "..", "..", "..", "..", "templates", "SRI_OS_3_แจกแจงทรัพย์สิน.xlsx");
 
@@ -111,7 +112,10 @@ describe("เทมเพลตแจกแจงทรัพย์สิน", (
     const s = sheetOf(DETAIL);
     const row = gridOf(s).get("ธนากร|1500");
     expect(row).toBeDefined();
-    expect(str(s, row!, "C")).toBe("อสังหาริมทรัพย์เพื่อการลงทุน");
+    // ชื่อบัญชีอ่านจากผังบัญชี **ไม่เขียนซ้ำที่นี่** — ลูกพี่เปลี่ยนชื่อ 1500 เมื่อ 27/10
+    // (เติม "เพื่อการเช่า") แล้วเทสต์นี้แดงเพราะพิมพ์ชื่อไว้ตรงๆ · เทสต์ต้องจับว่า
+    // เทมเพลตกับผังบัญชี **ตรงกัน** ไม่ใช่จับว่าชื่อเท่ากับสตริงที่คนเขียนเทสต์จำได้
+    expect(str(s, row!, "C")).toBe(coa("1500").nameTh);
     expect(num(s, row!, "D")).toBe(2); // จำนวนรายการ
     expect(num(s, row!, "E")).toBe(8_000_000); // รวมต้นทุน
     expect(num(s, row!, "G")).toBe(8_000_000); // ยอดที่ไปลงบัญชี 1500
