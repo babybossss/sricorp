@@ -413,7 +413,10 @@ export const CF_LAYOUT: CfSection[] = [
     title: "กระแสเงินสดจากกิจกรรมลงทุน",
     lines: [
       { line: "ซื้ออสังหาริมทรัพย์และปรับปรุง", subCodes: ["inv.buy_re", "inv.capex"] },
-      { line: "ขายอสังหาริมทรัพย์", subCodes: ["inv.sell_re"] },
+      // ของที่ปล่อยเช่า (1500) กับของที่ถือไว้ขาย (1520) ออกบรรทัดเดียวกัน —
+      // งบกระแสเงินสดสนใจ **เงินที่ได้จากการขายอสังหาฯ** ไม่ใช่บัญชีที่ทรัพย์ออกจาก
+      // (การแยกตามวัตถุประสงค์มีผลที่งบดุล ซึ่งแยกไว้แล้วสองบรรทัด)
+      { line: "ขายอสังหาริมทรัพย์", subCodes: ["inv.sell_re", "inv.sell_re_held_for_sale"] },
       { line: "ปล่อยเงินขายฝาก จำนอง และให้กู้", subCodes: ["inv.srr_out", "inv.mortgage_out", "inv.lend", "inv.lend_secured"] },
       // เงินต้นที่รับคืน **ไม่ใช่รายได้** — ดอกเบี้ยอยู่ฝั่งดำเนินงานคนละบรรทัด
       { line: "รับคืนเงินต้น ขายฝาก จำนอง และเงินให้กู้", subCodes: ["inv.srr_redeem", "inv.mortgage_redeem", "inv.loan_back", "inv.loan_back_secured"] },

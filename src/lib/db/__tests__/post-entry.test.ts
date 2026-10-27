@@ -187,7 +187,14 @@ describe("notWiredReason · หมวดที่เส้นทางบัน�
    */
   it("หมวดขายทรัพย์ไม่ถูกกั้นที่นี่แล้ว (ไม่ใช่ชุดว่าง)", () => {
     const sell = subs.filter((s) => s.requires?.includes("capitalGain"));
-    expect(sell.map((s) => s.code).sort()).toEqual(["inv.sell_commodity", "inv.sell_re", "inv.sell_securities"]);
+    // `inv.sell_re_held_for_sale` = ขายอสังหาฯ จากบัญชีเพื่อการขาย (1520 · 27/10)
+    // เส้นทางบันทึกเดียวกับ `inv.sell_re` เป๊ะ ต่างแค่บัญชีที่ทรัพย์ออกจาก
+    expect(sell.map((s) => s.code).sort()).toEqual([
+      "inv.sell_commodity",
+      "inv.sell_re",
+      "inv.sell_re_held_for_sale",
+      "inv.sell_securities",
+    ]);
     for (const s of sell) expect(notWiredReason(s), s.code).toBeNull();
   });
 

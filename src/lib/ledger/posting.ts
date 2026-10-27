@@ -25,7 +25,10 @@ import {
   coaLabel,
   isCashAccount,
   isFxTranslationAccount,
+  isPropertyAccount,
   CASH_COA,
+  PROPERTY_COA,
+  RENOVATION_COA,
   REVALUATION_SURPLUS_COA,
   FX_TRANSLATION_DIFF_COA,
 } from "@/lib/rules/coa";
@@ -66,11 +69,15 @@ import {
 } from "./guards";
 
 /**
- * ค่ารีโนเวทที่บันทึกเป็นทุน (1510) เป็นต้นทุนของอสังหาริมทรัพย์ (1500) ชิ้นเดียวกัน — ใบจำหน่ายอสังหาฯ ต้องตัดสองบัญชีนี้พร้อมกัน
- * รหัสทั้งสองตรงกับผังบัญชีใน `coa.ts` · ด่านฝั่ง DB (20261025000011) อนุญาต 1510 เฉพาะหมวดที่ `cr_coa_code = 1500`
+ * ค่ารีโนเวทที่บันทึกเป็นทุน (1510) เป็นต้นทุนของ **บัญชีอสังหาริมทรัพย์ตัวใดตัวหนึ่ง**
+ * ชิ้นเดียวกัน — ใบจำหน่ายอสังหาฯ ต้องตัดสองบัญชีนี้พร้อมกัน
+ *
+ * **ชุดบัญชี ไม่ใช่รหัสเดียว** — รายชื่ออ่านจาก `PROPERTY_COA` ใน `coa.ts` ที่เดียว
+ * (เหตุผลเต็มอยู่ที่คอมเมนต์ของชุดนั้น) · เดิมที่นี่เป็น `"1500"` ตัวเดียว ทำให้
+ * หมวดที่เครดิต 1520 (อสังหาฯ เพื่อการขาย) ตัดค่ารีโนเวทไม่ได้ = ขายของที่ตั้งใจขาย
+ * ไม่ได้ · ด่านฝั่ง DB อ่านชุดเดียวกันจาก `fn_property_coas()` (20261027041500)
  */
-const PROPERTY_COA = "1500";
-const RENOVATION_COA = "1510";
+const propertyCoaList = () => (PROPERTY_COA as readonly string[]).join(" / ");
 
 /**
  * ด่านตรวจร่วมอยู่ที่ `guards.ts` — re-export ไว้เพราะหน้าจอและเทสต์เรียกจากที่นี่มาก่อน
@@ -1066,9 +1073,9 @@ export function buildPostingDraft(input: PostingInput, resolve: LedgerResolver):
     if (renovation > costBasis) {
       throw new PostingError(`ค่ารีโนเวทสะสม (${renovation}) มากกว่าต้นทุนทั้งหมดที่ตัดออก (${costBasis}) — ค่ารีโนเวทเป็นส่วนหนึ่งของต้นทุน ไม่ใช่ส่วนเพิ่ม`);
     }
-    if (renovation > 0 && sub.cr !== PROPERTY_COA) {
+    if (renovation > 0 && !isPropertyAccount(sub.cr)) {
       throw new PostingError(
-        `หมวด "${sub.label}" ตัดค่ารีโนเวทสะสมไม่ได้ — ค่ารีโนเวท (${RENOVATION_COA}) เป็นต้นทุนของอสังหาริมทรัพย์ (${PROPERTY_COA}) เท่านั้น ` +
+        `หมวด "${sub.label}" ตัดค่ารีโนเวทสะสมไม่ได้ — ค่ารีโนเวท (${RENOVATION_COA}) เป็นต้นทุนของอสังหาริมทรัพย์ (${propertyCoaList()}) เท่านั้น ` +
           "(ด่านฝั่ง DB อนุญาตบรรทัดนี้เฉพาะหมวดที่เครดิตบัญชีอสังหาริมทรัพย์)"
       );
     }
