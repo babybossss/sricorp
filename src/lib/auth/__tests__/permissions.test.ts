@@ -23,14 +23,30 @@ describe("permissions: union type ตรงกับ migration ที่ seed �
     expect(diff).toEqual({ missingInTs: [], missingInDb: [] });
   });
 
-  it("มี 16 สิทธิ์ รวม asset.draft · asset.manage · asset.value · asset.assign_manager ที่สะกดตรง migration", () => {
-    expect(PERMISSIONS).toHaveLength(16);
-    for (const k of ["asset.draft", "asset.manage", "asset.value", "asset.assign_manager"]) {
+  it("มี 18 สิทธิ์ รวม asset.* และ tag.assign · tag.catalog ที่สะกดตรง migration", () => {
+    expect(PERMISSIONS).toHaveLength(18);
+    for (const k of [
+      "asset.draft",
+      "asset.manage",
+      "asset.value",
+      "asset.assign_manager",
+      "tag.assign",
+      "tag.catalog",
+    ]) {
       expect(isPermission(k)).toBe(true);
       expect(permissionSql.flatMap(permissionKeysFromMigration)).toContain(k);
     }
     // ชื่อใกล้เคียงที่สะกดผิดต้องไม่ผ่าน (ตัวพิมพ์ · จุด · ขีดล่าง)
-    for (const bad of ["Asset.draft", "asset_manage", "asset.values", "asset.valuation"]) {
+    for (const bad of [
+      "Asset.draft",
+      "asset_manage",
+      "asset.values",
+      "asset.valuation",
+      "tags.assign",
+      "tag_assign",
+      "tag.assigns",
+      "tag.catalogue",
+    ]) {
       expect(isPermission(bad)).toBe(false);
     }
   });

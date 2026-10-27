@@ -22,6 +22,8 @@ export const PERMISSIONS = [
   "period.reopen",
   "portfolio.view_all",
   "settings.manage",
+  "tag.assign",
+  "tag.catalog",
   "txn.create",
   "txn.void",
   "users.manage",
