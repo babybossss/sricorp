@@ -139,10 +139,33 @@ language sql stable as $fn$ select id from sri_os.tags where code = p_code $fn$;
 
 select pg_temp.klogin('k_mgmt');
 
+/**
+ * ชนิดของเทสต์ไฟล์นี้ — **แก้ 28/10 พร้อม ADR 0003 ชิ้น A2**
+ *
+ * เดิมไฟล์นี้ใช้ชนิด `project` ของจริง แต่ A2 เพิ่มด่าน Σ น้ำหนัก = 1.000000
+ * ต่อ (ใบ × ชนิดที่ `requires_allocation`) ซึ่งทำให้ "ติด project แล้วไม่ใส่น้ำหนัก"
+ * กลายเป็น **สภาพที่ DB ไม่ยอมรับ** (ซึ่งถูกต้องตาม ADR 0003 ข้อ 4.1)
+ *
+ * ไฟล์นี้ทดสอบ **ตารางลิงก์** ไม่ได้ทดสอบการปันส่วน จึงใช้ชนิดของตัวเองที่
+ * `requires_allocation = false` และ `allows_multi = true` เพื่อให้กลไกที่ทดสอบ
+ * (สำเนาคอนฟิก · ติดได้หลายอัน · การนับซ้ำของ touch · คานของทางเลือก B)
+ * เหมือนเดิมทุกข้อ · ด่านน้ำหนักมีเทสต์ของตัวเองที่ `zz_tag_allocation_test.sql`
+ *
+ * **ห้ามเปลี่ยนกลับไปใช้ `project` เฉยๆ** — จะทำให้ไฟล์นี้แดงทั้งไฟล์ และถ้า
+ * "แก้" ด้วยการใส่น้ำหนักให้ทุกเคส เคส "ติด tag เดิมใหม่หลังถอด" จะไม่ได้
+ * ทดสอบตารางลิงก์อีกต่อไป
+ */
+insert into sri_os.tag_kinds(key, name_th, name_en, allows_multi, aggregate_note_th,
+                             requires_allocation)
+values ('kgmulti', 'ชนิดหลายอัน (เทสต์ลิงก์)', 'Multi kind (link test)', true,
+        'ยอดที่แตะ tag นี้ · ใบที่ติดหลาย tag ถูกนับในทุก tag ที่ติด — เอายอดของแต่ละ tag มาบวกกันไม่ได้',
+        false)
+on conflict (key) do nothing;
+
 -- แค็ตตาล็อกของเทสต์ (ไฟล์ migration ไม่ seed tag ตัวอย่างเลยตาม ADR)
 insert into sri_os.tags(kind, code, name_th, color_token) values
-  ('project', 'kg-iris', 'ไอริส 235', 'brand'),
-  ('project', 'kg-reno', 'รีโนเวต 2026', 'info'),
+  ('kgmulti', 'kg-iris', 'ไอริส 235', 'brand'),
+  ('kgmulti', 'kg-reno', 'รีโนเวต 2026', 'info'),
   ('label',   'kg-urgent', 'เร่งด่วน', 'warn'),
   ('label',   'kg-old', 'ป้ายที่จะถูกปิด', null);
 
@@ -279,7 +302,7 @@ do $$
 declare v_t1 uuid := '00000000-0000-0000-0000-00000000c001';
 begin
   if (select tag_kind from sri_os.transaction_tags tt
-       where tt.transaction_id = v_t1 and tt.tag_id = pg_temp.tag('kg-iris')) <> 'project' then
+       where tt.transaction_id = v_t1 and tt.tag_id = pg_temp.tag('kg-iris')) <> 'kgmulti' then
     raise exception 'FAIL: K3a — tag_kind ไม่ได้ถูกคัดลอกจากแค็ตตาล็อก';
   end if;
   if (select single_per_txn from sri_os.transaction_tags tt
@@ -524,7 +547,7 @@ end $$;
 do $$
 begin
   perform pg_temp.must_fail_like('K10 พลิกคอนฟิกตอนมีลิงก์อยู่', $q$
-    update sri_os.tag_kinds set allows_multi = false where key = 'project' $q$,
+    update sri_os.tag_kinds set allows_multi = false where key = 'kgmulti' $q$,
     'migration ที่ backfill');
   raise notice 'ok K10 · พลิก allows_multi/requires_allocation ด้วย UPDATE เฉยๆ ไม่ได้เมื่อมีลิงก์อยู่ (คานของทางเลือก B ต้องมาพร้อม backfill ไม่ใช่พลิกแล้วใบเก่าขัดกับคอนฟิกเงียบๆ)';
 end $$;
@@ -642,7 +665,7 @@ begin
             from sri_os.transaction_tags tt
             join sri_os.transaction_lines l on l.transaction_id = tt.transaction_id
            where tt.transaction_id = v_t6 and tt.untagged_at is null
-             and tt.tag_kind = 'project'
+             and tt.tag_kind = 'kgmulti'
            group by tt.tag_id) x;
 
   if v_touch <> v_ledger * 2 then
