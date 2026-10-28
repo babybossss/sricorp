@@ -46,6 +46,15 @@
 --         จากเงินจริง 1,000,000 → **400,000 หายไปจากทุกรายงานต่อ project**
 --   M3  · MUTATION ให้ `fn_tag_counter_legs()` คืนแต่ขาตัวเอง → `fn_reallocate_tags`
 --         ต้อง **ปฏิเสธ** ไม่ใช่แก้ข้างเดียวเงียบๆ (ข้อ 4.2.2 "หาขาคู่ไม่เจอ → ปฏิเสธ")
+--   M5  · MUTATION **ขยับ `c_header` ของประตูจริง** → คำตอบของ
+--         `fn_post_entry_accepted_tag_kinds()` ต้อง **พลิก**: เติมช่องปลอมแล้วรับ
+--         `label` · ถอดช่องจริงแล้วเลิกรับ `project` · ชื่อช่องที่อยู่ใน **คอมเมนต์**
+--         หรือใน `c_line` **ห้ามนับ** · อ่านไม่ออก = พัง ไม่ใช่คืนชุดว่าง
+--         (พิสูจน์ว่า W12 เขียวเพราะตัวไล่อ่านของจริง ไม่ใช่เพราะคอมเมนต์)
+--   M6  · MUTATION เปิดช่อง `tag_ids` ขณะเส้นทางร่างยังไม่มีช่องน้ำหนัก →
+--         `fn_assert_tag_read_path()` ต้องพังพร้อมชี้ A8 (ADR 0003 ข้อ 7.1)
+--   M7  · MUTATION เพิ่มรายงานที่อ่านยอดที่ปันส่วนแล้ว **โดยไม่แตะธงขาคู่** →
+--         ด่านต้องพัง · ตัวที่ตัดขาคู่แล้วต้องผ่าน (มีธงแต่ไม่มีใครดู = ยอดโป่ง)
 --
 -- ทั้งไฟล์อยู่ใน transaction เดียวและ **rollback** ปิดท้าย — ไม่ทิ้งรายการเงินไว้
 -- ============================================================
@@ -1411,10 +1420,20 @@ begin
     raise exception 'FAIL: W12b — คืน "label" ทั้งที่ c_header ของประตูยังไม่มีช่อง tag_ids → ฟอร์มจะโชว์ช่องที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" (ถ้าชิ้น 3 ของ ADR 0002 ลงแล้วจริง ให้แก้เทสต์ข้อนี้)';
   end if;
 
-  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว (ไล่ c_header ของประตู)
+  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว และต้องใช้ตัวไล่ตัวเดียวของระบบ
+  -- (ตัวไล่สองตัว = วันหนึ่งคนแก้ตัวเดียว · M5 พิสูจน์ว่าตัวไล่อ่านของจริงจริง)
   if pg_get_functiondef('sri_os.fn_post_entry_accepted_tag_kinds()'::regprocedure)
+     !~ '\mfn_post_entry_header_fields\M' then
+    raise exception 'FAIL: W12c — ฟังก์ชันไม่ได้ถาม fn_post_entry_header_fields → ไล่ c_header เองหรือเป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาล)';
+  end if;
+  if pg_get_functiondef('sri_os.fn_post_entry_header_fields()'::regprocedure)
      !~ '\mc_header\M' then
-    raise exception 'FAIL: W12c — ฟังก์ชันไม่ได้อ่าน c_header ของ fn_post_entry → เป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาล)';
+    raise exception 'FAIL: W12c — fn_post_entry_header_fields ไม่ได้อ่าน c_header ของ fn_post_entry';
+  end if;
+  -- ช่องของ **บรรทัด** ต้องไม่ปนมาเป็นช่องของ **หัวใบ** (รุ่นแรกกินถึง c_line)
+  if 'fx_rate'  = any (sri_os.fn_post_entry_header_fields())
+     or 'coa_code' = any (sri_os.fn_post_entry_header_fields()) then
+    raise exception 'FAIL: W12e — ตัวไล่ c_header กินเลยไปถึง c_line (เจอ fx_rate / coa_code) → คำตอบเรื่อง "ประตูรับช่องไหน" เชื่อไม่ได้ทั้งหมด';
   end if;
   if not has_function_privilege('authenticated',
         'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
@@ -1425,6 +1444,192 @@ begin
   end if;
 
   raise notice 'ok W12 · fn_post_entry_accepted_tag_kinds คืน {project} จากการไล่ c_header ของประตูจริง · ยังไม่คืน label เพราะประตูยังไม่มีช่อง tag_ids · authenticated เรียกได้ anon ไม่ได้';
+end $$;
+
+-- ============================================================
+-- M5 · MUTATION — **ตัวไล่ `c_header` ต้องอ่านของจริง ไม่ใช่คอมเมนต์หรือ `c_line`**
+--
+--   W12 เขียวได้ด้วยเหตุผลผิดหลายแบบ: ตัวไล่ที่กินยาวถึง `c_line` ก็ตอบ
+--   `{project}` ถูก · ตัวไล่ที่เชื่อคอมเมนต์ก็ตอบถูก · แม้แต่รายชื่อตายตัวก็ตอบถูก
+--   → ข้อนี้ **ขยับ `c_header` ของประตูจริง** แล้ววัดว่าคำตอบ **พลิก**
+--
+--     M5a เติมช่องปลอม `'tag_ids'` เข้า c_header → ต้องเริ่มคืน `label`
+--     M5b ถอดช่องจริง `'tag_weights'` ออก (เหลือแต่ในคอมเมนต์และใน c_line)
+--         → ต้อง **เลิก** คืน `project`  (ถ้ายังคืน = ตอบถูกเพราะคอมเมนต์/c_line)
+--     M5c ชื่อช่องอยู่ **ในคอมเมนต์เท่านั้น** (ทั้ง `--` และ `/* */`) → ต้องไม่นับ
+--     M5d อ่าน c_header ไม่ออก → ต้อง **พัง** ไม่ใช่คืนชุดว่าง
+--     M5e ไล่ได้ผลที่ขาดช่องพื้นฐานของประตู → ต้องพัง (ด่านกันตัวเองตาย D-096)
+--
+--   ประตูตัวปลอมเป็น stub (`return p_payload`) เพราะข้อนี้วัด **ตัวไล่** ไม่ใช่ประตู
+--   ทั้งก้อนอยู่ใน savepoint → ประตูตัวจริงกลับมาครบ (ตรวจที่ M5z)
+-- ============================================================
+create or replace function pg_temp.stub_gate(p_decl text) returns void
+language plpgsql as $fn$
+begin
+  execute format($m$
+    create or replace function sri_os.fn_post_entry(p_payload jsonb) returns jsonb
+    language plpgsql set search_path = %L as $stub$
+    declare
+      %s
+    begin
+      return p_payload;
+    end $stub$
+  $m$, '', p_decl);
+end $fn$;
+
+savepoint before_header_mutation;
+do $$
+declare v_kinds text[];
+begin
+  -- ---------- M5a · เติมช่องปลอม → คำตอบต้องพลิกเป็น "รับ label แล้ว" ----------
+  perform pg_temp.stub_gate($d$
+    c_header constant text[] := array['txn_type_code', 'tag_weights',
+                                      'tag_ids', 'transactions'];
+    c_line   constant text[] := array['coa_code', 'fx_rate'];
+  $d$);
+  v_kinds := sri_os.fn_post_entry_accepted_tag_kinds();
+  if not ('label' = any (v_kinds)) then
+    raise exception 'FAIL: M5a — เติม ''tag_ids'' เข้า c_header ของประตูแล้ว คำตอบต้องพลิกเป็นรับ label ด้วย แต่ได้ % · แปลว่าตัวไล่ไม่ได้อ่าน c_header ของจริง (รายชื่อตายตัว/ธง requires_allocation เพียวๆ) → วันที่ชิ้น 3 ของ ADR 0002 ลง ฟอร์มจะซ่อน label ตลอดกาลโดยไม่มีใครรู้',
+      array_to_string(v_kinds, ', ');
+  end if;
+  if not ('project' = any (v_kinds)) then
+    raise exception 'FAIL: M5a — ฉากนี้ยังมี ''tag_weights'' อยู่ ต้องคืน project ด้วย (ได้ %)',
+      array_to_string(v_kinds, ', ');
+  end if;
+
+  -- ---------- M5b · ถอดช่องจริงออก เหลือแต่ในคอมเมนต์และใน c_line ----------
+  perform pg_temp.stub_gate($d$
+    -- ไฟล์ที่ลง tag_ids ต้องคง 'tag_weights' ไว้ (ประโยคนี้คือ **คอมเมนต์**)
+    c_header constant text[] := array['txn_type_code', 'transactions'];
+    c_line   constant text[] := array['coa_code', 'tag_weights', 'fx_rate'];
+  $d$);
+  v_kinds := sri_os.fn_post_entry_accepted_tag_kinds();
+  if 'project' = any (v_kinds) then
+    raise exception 'FAIL: M5b — ถอดช่อง ''tag_weights'' ออกจาก c_header แล้ว ยังตอบว่ารับ project (ได้ %) · คำตอบมาจาก **คอมเมนต์หรือ c_line** ไม่ใช่จากของจริง → ด่านที่ตอบถูกเพราะคอมเมนต์ ไม่ใช่เพราะของจริง',
+      array_to_string(v_kinds, ', ');
+  end if;
+
+  -- ---------- M5c · ชื่อช่องอยู่ในคอมเมนต์เท่านั้น → ห้ามนับ ----------
+  perform pg_temp.stub_gate($d$
+    -- ช่องที่ยังไม่มี: 'tag_ids' (ADR 0002 ชิ้น 3 ยังไม่ลง)
+    c_header constant text[] := array[
+      'txn_type_code',
+      /* บล็อกคอมเมนต์ที่เอ่ย 'tag_ids' เหมือนกัน */
+      'tag_weights', 'transactions'];
+    c_line   constant text[] := array['coa_code', 'tag_ids', 'fx_rate'];
+  $d$);
+  v_kinds := sri_os.fn_post_entry_accepted_tag_kinds();
+  if 'label' = any (v_kinds) then
+    raise exception 'FAIL: M5c — ''tag_ids'' อยู่ใน **คอมเมนต์** (และใน c_line) เท่านั้น แต่ตอบว่ารับ label แล้ว (ได้ %) · ฟอร์มจะโชว์ชนิดที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" = ช่องเดิมที่เพิ่งปิดไปกลับมา',
+      array_to_string(v_kinds, ', ');
+  end if;
+  if not ('project' = any (v_kinds)) then
+    raise exception 'FAIL: M5c — ฉากนี้มี ''tag_weights'' จริงใน c_header ต้องคืน project (ได้ %)',
+      array_to_string(v_kinds, ', ');
+  end if;
+
+  -- ---------- M5d · อ่าน c_header ไม่ออก → พัง ไม่ใช่คืนชุดว่าง ----------
+  perform pg_temp.stub_gate($d$
+    c_hdr constant text[] := array['txn_type_code', 'tag_weights', 'transactions'];
+  $d$);
+  perform pg_temp.must_fail_like('M5d อ่าน c_header ไม่ออก',
+    'select sri_os.fn_post_entry_accepted_tag_kinds()', 'c_header');
+
+  -- ---------- M5e · ด่านกันตัวเองตาย (D-096) ----------
+  perform pg_temp.stub_gate($d$
+    c_header constant text[] := array['tag_weights'];
+  $d$);
+  perform pg_temp.must_fail_like('M5e ไล่ได้ผลที่ขาดช่องพื้นฐาน',
+    'select sri_os.fn_post_entry_header_fields()', 'txn_type_code');
+
+  raise notice 'ok M5 · ตัวไล่ c_header อ่าน **ของจริง**: เติมช่องปลอม = คำตอบพลิก · ถอดช่องจริง = พลิกกลับ · ชื่อช่องในคอมเมนต์/ใน c_line ไม่นับ · อ่านไม่ออกหรือไล่ได้ผลครึ่งเดียว = พัง ไม่ใช่คืนชุดว่าง';
+end $$;
+
+-- ============================================================
+-- M6 · MUTATION — **ด่าน "ห้ามเปิด `tag_ids` ก่อนปิด A8" ต้องดังวันที่ควรดัง**
+--      (ADR 0003 ข้อ 7.1) · เดิมอยู่ใน migration ซึ่ง **รันก่อนไฟล์อนาคตเสมอ**
+--      จึงไม่ดังเลยวันที่ใครลง migration เปิด `tag_ids` · ย้ายมาอยู่ใน
+--      `fn_assert_tag_read_path()` ที่เทสต์เรียกสดกับสคีมาสุดท้าย
+-- ============================================================
+do $$
+begin
+  -- ฉากของ "วันที่ชิ้น 3 ของ ADR 0002 ลงแต่ A8 ยังไม่ปิด"
+  perform pg_temp.stub_gate($d$
+    c_header constant text[] := array['txn_type_code', 'tag_weights',
+                                      'tag_ids', 'transactions'];
+  $d$);
+  if exists (select 1 from information_schema.columns c
+              where c.table_schema = 'sri_os'
+                and c.table_name like 'draft\_entry\_tag%'
+                and c.column_name like '%weight%') then
+    raise notice 'skip M6 · เส้นทางร่างมีช่องน้ำหนักแล้ว (A8 ปิดแล้ว) → ฉากนี้ไม่มีอยู่จริงอีก';
+  else
+    perform pg_temp.must_fail_like('M6 เปิด tag_ids ขณะ A8 ยังไม่ปิด',
+      'select sri_os.fn_assert_tag_read_path()', 'A8');
+    raise notice 'ok M6 · ประตูรับ tag_ids ขณะเส้นทางร่างยังไม่มีช่องน้ำหนัก = fn_assert_tag_read_path พังทันที (ร่างที่ติด project จะคีย์ได้แต่อนุมัติไม่ได้ · ADR 0003 ข้อ 7.1)';
+  end if;
+end $$;
+
+rollback to savepoint before_header_mutation;
+
+-- ============================================================
+-- M5z · ประตูตัวจริงกลับมาครบหลัง rollback (ไม่ใช่ stub ค้างอยู่)
+-- ============================================================
+do $$
+declare v_fields text[];
+begin
+  v_fields := sri_os.fn_post_entry_header_fields();
+  -- ช่องของ FCD/WHT ต้องยังอยู่ → ที่กลับมาคือประตูตัวจริง ไม่ใช่ stub
+  if not ('wht_rate' = any (v_fields)) or not ('tag_weights' = any (v_fields)) then
+    raise exception 'FAIL: M5z — ประตูตัวจริงไม่กลับมาหลัง rollback (ช่องที่ไล่ได้: %)',
+      array_to_string(v_fields, ', ');
+  end if;
+  if 'tag_ids' = any (v_fields) then
+    raise exception 'FAIL: M5z — stub ของ mutation ยังค้างอยู่ (c_header ยังมี tag_ids)';
+  end if;
+  perform sri_os.fn_assert_tag_read_path();
+  raise notice 'ok M5z · ประตูตัวจริงกลับมาครบ (wht_rate + tag_weights ยังอยู่ · ไม่มี tag_ids) และด่านเส้นทางอ่าน tag ผ่านตามปกติ';
+end $$;
+
+-- ============================================================
+-- M7 · MUTATION — **ผู้บริโภคของยอดที่ปันส่วนแล้วต้องแตะธงขาคู่**
+--      ธงมีมาตั้งแต่ (T10) แต่ **ไม่มีใครใช้** = ยอดโป่งเหมือนไม่มีธง
+--      ข้อนี้พิสูจน์ว่าด่านดังวันที่มีคนเพิ่มผู้บริโภคตัวแรกที่ลืมกรอง
+-- ============================================================
+savepoint before_consumer_mutation;
+do $$
+begin
+  -- (ก) รายงานที่บวกข้ามผู้ถือโดยไม่ดูธงเลย → ด่านต้องพัง
+  create view sri_os.v_wa_profit_by_project as
+    select tag_id, sum(allocated_debit) as dr, sum(allocated_credit) as cr
+      from sri_os.v_tag_allocated_totals
+     group by tag_id;
+  perform pg_temp.must_fail_like('M7a ผู้บริโภคที่ไม่แตะธงขาคู่',
+    'select sri_os.fn_assert_tag_read_path()', 'ขาคู่');
+end $$;
+rollback to savepoint before_consumer_mutation;
+
+savepoint before_consumer_ok;
+do $$
+begin
+  -- (ข) รายงานเดียวกันที่ตัดขาคู่ออก → ด่านต้องปล่อยผ่าน (ไม่กันแน่นเกิน)
+  create view sri_os.v_wa_profit_by_project as
+    select tag_id, sum(allocated_debit) as dr, sum(allocated_credit) as cr
+      from sri_os.v_tag_allocated_totals
+     where not is_intercompany
+     group by tag_id;
+  perform sri_os.fn_assert_tag_read_path();
+  raise notice 'ok M7 · ผู้บริโภคที่ไม่แตะ is_intercompany/counter_owner_id = ด่านพัง · ตัวที่ตัดขาคู่แล้ว = ผ่าน (ด่านบังคับให้ตัดสินใจ ไม่ได้บังคับคำตอบ)';
+end $$;
+rollback to savepoint before_consumer_ok;
+
+do $$
+begin
+  if to_regclass('sri_os.v_wa_profit_by_project') is not null then
+    raise exception 'FAIL: M7b — วิวของ mutation ยังค้างอยู่ในสคีมา';
+  end if;
+  perform sri_os.fn_assert_tag_read_path();
+  raise notice 'ok M7b · วิวของ mutation ไม่ค้าง และด่านกลับมาเขียวตามปกติ';
 end $$;
 
 rollback;

@@ -79,6 +79,9 @@ begin
   if to_regclass('sri_os.v_ledger_allocated') is null then
     raise exception 'ไม่มี v_ledger_allocated → ต้องรัน 20261028000002_tag_allocated_views.sql ก่อน';
   end if;
+  if to_regprocedure('sri_os.fn_post_entry_header_fields()') is null then
+    raise exception 'ไม่มี fn_post_entry_header_fields → ต้องรัน 20261028000002_tag_allocated_views.sql ก่อน · fn_post_entry_accepted_tag_kinds ของไฟล์นี้ **ห้ามไล่ c_header เอง** (ตัวไล่สองตัวที่อ่านคนละแบบ = วันหนึ่งคนแก้ตัวเดียว · รุ่นแรกที่เขียนเองกินยาวถึง c_line และนับชื่อช่องในคอมเมนต์เป็นช่องจริง)';
+  end if;
   if to_regprocedure('sri_os.fn_post_entry(jsonb)') is null then
     raise exception 'ไม่มี fn_post_entry → ไฟล์นี้ทับประตูด้วยรุ่นเดิม + ช่อง tag_weights · ต้องรัน 20261025000004_fcd_bank_currency.sql ก่อน';
   end if;
@@ -244,17 +247,24 @@ end $$;
 --   บันทึกแล้วตาย** · กติกาของฝั่งแอปคือ "อ่านไม่ได้ = ซ่อน" จึงต้องมีฟังก์ชันนี้
 --   ไม่งั้นฟอร์มซ่อน tag **ทุกชนิด** รวมชนิดที่ประตูรับอยู่แล้ว
 --
---   **อ่านจากของจริง ไม่ใช่รายชื่อตายตัว**: ไล่ `c_header` (รายการช่องที่
---   `fn_post_entry` รับ) จาก `pg_get_functiondef` ของประตูเอง แล้วจับคู่กับคอนฟิก
+--   **อ่านจากของจริง ไม่ใช่รายชื่อตายตัว**: ถาม `fn_post_entry_header_fields()`
+--   (ใน 20261028000002 · **ตัวไล่ `c_header` ตัวเดียวของระบบ**) ว่าประตูรับช่องไหน
+--   แล้วจับคู่กับคอนฟิก
 --     ชนิดที่ `requires_allocation` → เข้าทางช่อง `tag_weights`
 --     ชนิดที่ไม่ปันส่วน            → เข้าทางช่อง `tag_ids` (ADR 0002 ชิ้น 3)
 --   วันที่ชิ้น 3 ของ ADR 0002 ลงแล้วประตูรับ `tag_ids` ด้วย ฟังก์ชันนี้จะเริ่มคืน
 --   `label` **เอง** โดยไม่มีใครต้องมาแก้ → ถ้าตัดสินจากธง `requires_allocation`
 --   เพียวๆ ฟอร์มจะซ่อน `label` ต่อไปตลอดกาลโดยไม่มีใครรู้
 --
+--   **ห้ามเขียน regex ไล่ `c_header` ซ้ำที่นี่** — ของเดิมเขียนเอง (`array\[(.*?)\]`)
+--   แล้วอ่านผิดสองทิศ: ARE ของ Postgres ตัดสินความละโมบจาก quantifier ตัวแรก
+--   จึงกินยาวถึง `];` ของ `c_line` (ได้ `'fx_rate'` ติดมา) และไม่ได้ตัดคอมเมนต์
+--   จึงนับชื่อช่องที่เอ่ยในคอมเมนต์เป็นช่องจริง → ตัวไล่อยู่ที่เดียวแล้ว
+--   (กฎเดียวห้ามอยู่สองที่ · บทเรียน mace-windu ข้อ 5)
+--
 --   อ่าน `c_header` ไม่ออก = **พัง** ไม่ใช่คืนชุดว่าง (ชุดว่างแปลว่า "ไม่มีชนิดไหน
 --   ลงได้" ซึ่งฟอร์มจะปิดทุกช่องทิ้งทั้งที่ของจริงลงได้ · หลักเดียวกับ check:sync
---   ที่ไม่ยอมผ่านด้วยชุดว่าง)
+--   ที่ไม่ยอมผ่านด้วยชุดว่าง) — ตัวไล่เป็นคนโยน ฟังก์ชันนี้ไม่กลืน exception
 --
 --   อ่านอย่างเดียว · **INVOKER** · อ่านแค่แค็ตตาล็อกชนิด (`tag_kinds`) ซึ่งเปิดให้
 --   ทุกคนที่ล็อกอินอ่านอยู่แล้ว และ catalog ของฟังก์ชัน → ไม่มีอะไรรั่วเพิ่ม
@@ -262,35 +272,24 @@ end $$;
 create or replace function fn_post_entry_accepted_tag_kinds() returns text[]
 language plpgsql stable set search_path = '' as $fn$
 declare
-  c_q      constant text := chr(39);   -- เครื่องหมายคำพูดเดี่ยว (ใช้ล้อมชื่อช่องใน c_header)
-  v_def    text;
-  v_header text;
+  v_fields text[];
   v_kinds  text[];
 begin
-  if to_regprocedure('sri_os.fn_post_entry(jsonb)') is null then
-    raise exception 'ไม่มีประตู fn_post_entry ในฐานข้อมูลนี้ → ตอบไม่ได้ว่าชนิด tag ไหนลงได้ · ปฏิเสธไว้ก่อน ไม่คืนชุดว่าง (ชุดว่างแปลว่า "ไม่มีชนิดไหนลงได้" ซึ่งฟอร์มจะซ่อนทุกช่องทิ้งทั้งที่ของจริงอาจลงได้)';
-  end if;
-
-  v_def := pg_get_functiondef('sri_os.fn_post_entry(jsonb)'::regprocedure);
-  -- รายการช่องของประตูอยู่ **ในตัวฟังก์ชัน** (ค่าคงที่ c_header) → อ่านจากนิยามจริง
-  v_header := substring(v_def from 'c_header[^:]*:=\s*array\[(.*?)\]\s*;');
-  if v_header is null or btrim(v_header) = '' then
-    raise exception 'อ่านรายการช่องของประตู (c_header ใน fn_post_entry) ไม่ออก → ตอบไม่ได้ว่าชนิด tag ไหนลงผ่านประตูได้ · **ปฏิเสธไว้ก่อน ไม่คืนชุดว่าง** · ถ้าประตูถูกเขียนใหม่ด้วยรูปอื่น (เช่นย้ายรายการช่องไปเก็บในตาราง) ต้องแก้ฟังก์ชันนี้ให้อ่านจากที่ใหม่ ไม่ใช่เขียนรายชื่อชนิดตายตัวไว้ที่นี่ (รายชื่อตายตัวจะค้างล้าสมัยเงียบๆ เหมือนจำนวนผังบัญชีในเอกสาร)';
-  end if;
+  -- **ไม่ไล่เอง** — ตัวไล่ c_header อยู่ที่ fn_post_entry_header_fields() ที่เดียว
+  -- (มันเป็นคนโยนเองถ้าอ่านไม่ออก · ที่นี่ห้าม catch แล้วคืนชุดว่าง)
+  v_fields := sri_os.fn_post_entry_header_fields();
 
   select array_agg(k.key order by k.sort_order, k.key) into v_kinds
     from sri_os.tag_kinds k
    where k.is_active
-     and position(c_q
-                  || case when k.requires_allocation then 'tag_weights' else 'tag_ids' end
-                  || c_q
-                  in v_header) > 0;
+     and (case when k.requires_allocation then 'tag_weights' else 'tag_ids' end)
+         = any (v_fields);
 
   return coalesce(v_kinds, '{}'::text[]);
 end $fn$;
 
 comment on function fn_post_entry_accepted_tag_kinds() is
-  'ชนิด tag ที่ **ลงผ่าน fn_post_entry ได้จริงวันนี้** (ADR 0003 ข้อ 6 · ADR 0002 ชิ้น 3 ยังไม่ลง ณ 28/10) · ตัดสินจาก **การมีอยู่จริงของช่องใน c_header ของประตู** ที่อ่านจาก pg_get_functiondef ไม่ใช่จากธง requires_allocation เพียวๆ และไม่ใช่รายชื่อตายตัว → วันที่ประตูรับ tag_ids ฟังก์ชันนี้จะคืน label เองโดยไม่มีใครต้องแก้ · อ่าน c_header ไม่ออก = **พัง** ไม่คืนชุดว่าง (ชุดว่าง = ฟอร์มซ่อนทุกชนิดทั้งที่ของจริงลงได้) · อ่านอย่างเดียว · INVOKER · มีไว้ให้ฟอร์มปิดช่องที่ประตูยังไม่รับ แทนที่จะโชว์แล้วไปตายตอนกดบันทึก';
+  'ชนิด tag ที่ **ลงผ่าน fn_post_entry ได้จริงวันนี้** (ADR 0003 ข้อ 6 · ADR 0002 ชิ้น 3 ยังไม่ลง ณ 28/10) · ตัดสินจาก **การมีอยู่จริงของช่องใน c_header ของประตู** ที่ถามจาก fn_post_entry_header_fields() (ตัวไล่ตัวเดียวของระบบ · 20261028000002 · ตัดคอมเมนต์ก่อนไล่และหยุดที่ ] ตัวแรก) ไม่ใช่จากธง requires_allocation เพียวๆ ไม่ใช่รายชื่อตายตัว และ **ไม่ไล่ regex เอง** → วันที่ประตูรับ tag_ids ฟังก์ชันนี้จะคืน label เองโดยไม่มีใครต้องแก้ · อ่าน c_header ไม่ออก = **พัง** ไม่คืนชุดว่าง (ชุดว่าง = ฟอร์มซ่อนทุกชนิดทั้งที่ของจริงลงได้) · อ่านอย่างเดียว · INVOKER · มีไว้ให้ฟอร์มปิดช่องที่ประตูยังไม่รับ แทนที่จะโชว์แล้วไปตายตอนกดบันทึก';
 
 revoke all on function fn_post_entry_accepted_tag_kinds() from public;
 do $$
@@ -1128,10 +1127,25 @@ begin
      or has_function_privilege('public', 'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
     raise exception 'fn_post_entry_accepted_tag_kinds เปิดให้ PUBLIC/anon';
   end if;
-  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว
+  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว และต้องใช้ **ตัวไล่ตัวเดียวของระบบ**
   v := pg_get_functiondef('sri_os.fn_post_entry_accepted_tag_kinds()'::regprocedure);
+  if v !~ '\mfn_post_entry_header_fields\M' then
+    raise exception 'fn_post_entry_accepted_tag_kinds ไม่ได้ถาม fn_post_entry_header_fields → กลับไปไล่ c_header เอง (= ตัวไล่สองตัวที่อ่านคนละแบบ · ตัวที่เขียนเองรุ่นแรกกินยาวถึง c_line และนับชื่อช่องในคอมเมนต์เป็นช่องจริง) หรือกลายเป็นรายชื่อตายตัวที่ค้างล้าสมัยเงียบๆ';
+  end if;
+  v := pg_get_functiondef('sri_os.fn_post_entry_header_fields()'::regprocedure);
   if v !~ '\mc_header\M' or v !~ '\mpg_get_functiondef\M' then
-    raise exception 'fn_post_entry_accepted_tag_kinds ไม่ได้อ่าน c_header ของ fn_post_entry จาก catalog → กลายเป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาลโดยไม่มีใครรู้)';
+    raise exception 'fn_post_entry_header_fields ไม่ได้อ่าน c_header ของ fn_post_entry จาก catalog → กลายเป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาลโดยไม่มีใครรู้)';
+  end if;
+  if v !~ 'chr\(10\)' then
+    raise exception 'fn_post_entry_header_fields ไม่ตัดคอมเมนต์ท้ายบรรทัดออกก่อนไล่ c_header → ชื่อช่องที่เอ่ยใน -- ของบล็อก declare จะถูกนับเป็นช่องจริง · อ่านผิดได้สองทิศ: เขียนชื่อช่องที่ยังไม่มีไว้ในคอมเมนต์ = ตอบว่า "รับแล้ว" (ฟอร์มโชว์ชนิดที่กดแล้วถูกปฏิเสธ) · ถอดช่องจริงออกแต่คอมเมนต์ยังเอ่ยถึง = ยังตอบว่า "รับอยู่" (ด่านเขียวเพราะคอมเมนต์ ไม่ใช่เพราะของจริง)';
+  end if;
+  if v ~ 'array\\\[\(\.' then
+    raise exception 'fn_post_entry_header_fields กลับไปไล่ c_header ด้วย array\[(.…)\] ซึ่ง **ไม่ได้ไม่ละโมบจริง** — ARE ของ Postgres ตัดสินความละโมบของ RE ทั้งก้อนจาก quantifier ตัวแรก จึงทำให้ (.*?) กินยาวข้ามไปจบที่ ]; ของ c_line (วัดได้ 2,237 ตัวอักษร มี ''fx_rate'' ติดมา) = ช่องของ **บรรทัด** ถูกนับเป็นช่องของ **หัวใบ** · ให้บังคับที่ตัวอักษรที่ยอมรับ เช่น array\[([^]]*)\] ที่หยุดที่ ] ตัวแรกเสมอ';
+  end if;
+  -- **วัดผลจริง ไม่ใช่วัดแต่ข้อความโค้ด**: ช่องที่ประตูรับต้องไม่มีของ c_line ปนมา
+  if 'fx_rate' = any (sri_os.fn_post_entry_header_fields())
+     or 'coa_code' = any (sri_os.fn_post_entry_header_fields()) then
+    raise exception 'ตัวไล่ c_header กินเลยไปถึง c_line (เจอ fx_rate / coa_code ซึ่งเป็นช่องของ **บรรทัด** ไม่ใช่ของหัวใบ) → ทุกคำตอบเรื่อง "ประตูรับช่องไหน" เชื่อไม่ได้ทั้งหมด';
   end if;
   -- **สภาพวันนี้ (28/10)**: ประตูรับ `tag_weights` แล้ว แต่ยังไม่รับ `tag_ids`
   --   (ADR 0002 ชิ้น 3 ยังไม่ลง) → ต้องคืน 'project' และต้องยังไม่คืน 'label'
@@ -1141,8 +1155,12 @@ begin
   if not ('project' = any (sri_os.fn_post_entry_accepted_tag_kinds())) then
     raise exception 'fn_post_entry_accepted_tag_kinds ไม่คืน "project" ทั้งที่ประตูรับช่อง tag_weights แล้ว → ฟอร์มจะซ่อนช่อง project ทั้งที่ลงได้ (ฟีเจอร์ที่ลงเสร็จแล้วแต่ใช้ไม่ได้)';
   end if;
+  -- ข้อนี้เป็น **ภาพสภาพวันนี้** ไม่ใช่ด่านของ A8 อีกแล้ว: guard ในไฟล์ migration
+  -- รันก่อนไฟล์อนาคตเสมอ จึงไม่ดังวันที่ใครเปิด `tag_ids` · ด่านตัวจริงของ
+  -- "ห้ามเปิด tag_ids ก่อนปิด A8" ย้ายไปอยู่ใน fn_assert_tag_read_path() ข้อ (T12)
+  -- (20261028000002) ซึ่งเทสต์เรียกสดกับสคีมาสุดท้าย → ดังวันที่ควรดัง
   if 'label' = any (sri_os.fn_post_entry_accepted_tag_kinds()) then
-    raise exception 'fn_post_entry_accepted_tag_kinds คืน "label" ทั้งที่ c_header ของประตูยังไม่มีช่อง tag_ids → ฟอร์มจะโชว์ช่องที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" · **ถ้า guard นี้ดังเพราะชิ้น 3 ของ ADR 0002 ลงแล้วจริง ให้แก้ guard ข้อนี้ ไม่ใช่แก้ฟังก์ชัน**';
+    raise exception 'fn_post_entry_accepted_tag_kinds คืน "label" ทั้งที่ c_header ของประตูยังไม่มีช่อง tag_ids → ฟอร์มจะโชว์ช่องที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" · **ถ้า guard นี้ดังเพราะชิ้น 3 ของ ADR 0002 ลงแล้วจริง ให้แก้ guard ข้อนี้ ไม่ใช่แก้ฟังก์ชัน** และต้องไปปิดชิ้นงาน A8 (ADR 0003 ข้อ 7.1) ด้วย ซึ่งด่าน (T12) ใน fn_assert_tag_read_path() จะบังคับให้เอง';
   end if;
 
   -- (จ) ACL: ประตูเปิดให้ authenticated · ปิดจาก anon/PUBLIC
