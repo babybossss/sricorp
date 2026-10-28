@@ -90,6 +90,9 @@ insert into sri_os.tags(kind, code, name_th, color_token) values
   ('project', 'wa-p6', 'โปรเจกต์ F (น้ำหนัก)', null),
   ('project', 'wa-p7', 'โปรเจกต์ G (น้ำหนัก)', null),
   ('project', 'wa-off', 'โปรเจกต์ที่ปิดแล้ว', null),
+  ('project', 'wa-ic',  'โปรเจกต์ของรายการข้ามผู้ถือ', null),
+  ('project', 'wa-ic2', 'โปรเจกต์ของรายการข้ามผู้ถือ (ฉาก mutation)', null),
+  ('project', 'wa-shut','โปรเจกต์ที่จะถูกปิดหลังมีใบติดไปแล้ว', null),
   ('label',   'wa-lbl', 'ป้ายกำกับ (ไม่ปันส่วน)', 'warn');
 
 -- ------------------------------------------------------------
@@ -196,6 +199,17 @@ begin
   return v;
 end $fn$;
 
+/** ใส่น้ำหนักโดย **ส่ง owner_id มาเอง** — ใช้พิสูจน์ว่าสำเนาผู้ถือถูกบังคับ
+ *  (ส่งตรงกับลิงก์ = ผ่าน · ส่งไม่ตรง = ปฏิเสธ · ไม่ใช่ทับให้เงียบๆ) */
+create or replace function pg_temp.alloc_own(p_link uuid, p_owner uuid, p_w numeric) returns uuid
+language plpgsql as $fn$
+declare v uuid;
+begin
+  insert into sri_os.tag_allocations(transaction_tag_id, owner_id, weight)
+  values (p_link, p_owner, p_w) returning id into v;
+  return v;
+end $fn$;
+
 /** ติด tag + ใส่น้ำหนักในคราวเดียว (ไม่ยิงด่าน — ปล่อยให้ผู้เรียกยิงเอง) */
 create or replace function pg_temp.weigh(p_txn uuid, p_tag text, p_w numeric) returns uuid
 language sql as $fn$ select pg_temp.alloc(pg_temp.link(p_txn, p_tag), p_w) $fn$;
@@ -262,6 +276,31 @@ begin
                     and c.column_name = 'weight' and c.data_type = 'numeric'
                     and c.numeric_precision = 9 and c.numeric_scale = 6) then
     raise exception 'FAIL: W0a — weight ต้องเป็น numeric(9,6) ตาม ADR 0003 ข้อ 3.2 (scale 6 คือที่ด่าน W0a ใช้แยกตัวคูณจากจำนวนเงิน)';
+  end if;
+
+  -- (ก2) **ทุกแถวมี owner_id** (กฎเหล็กข้อ 3) — เหมือน transaction_tags ของ ADR 0002
+  --      ตารางนี้คือตารางที่รายงานเงินพึ่งพาโดยตรง (ตัวคูณของยอดต่อ Entity)
+  if not exists (select 1 from information_schema.columns c
+                  where c.table_schema = 'sri_os' and c.table_name = 'tag_allocations'
+                    and c.column_name = 'owner_id'
+                    and c.data_type = 'uuid' and c.is_nullable = 'NO') then
+    raise exception 'FAIL: W0a2 — tag_allocations ไม่มีคอลัมน์ owner_id แบบ uuid not null → ละเมิดกฎเหล็กข้อ 3 ("ทุกแถวมี owner_id และรายงานทุกหน้ากรอง Entity ได้") · การ join ผ่านลิงก์ไม่ใช่ข้อยกเว้นที่กฎเหล็กเจาะให้';
+  end if;
+  if not exists (select 1 from pg_constraint con
+                  where con.conrelid = 'sri_os.tag_allocations'::regclass
+                    and con.contype = 'f'
+                    and con.confrelid = 'sri_os.owners'::regclass) then
+    raise exception 'FAIL: W0a2 — owner_id ของ tag_allocations ไม่มี FK ไปที่ owners → ชี้ผู้ถือที่ไม่มีตัวตนได้';
+  end if;
+  if not exists (select 1 from pg_class i
+                  where i.relname = 'tag_alloc_by_owner'
+                    and i.relnamespace = 'sri_os'::regnamespace) then
+    raise exception 'FAIL: W0a2 — ไม่มี index tag_alloc_by_owner → กรอง Entity ต้องไล่ทั้งตาราง';
+  end if;
+  -- ด่านของแถวต้องอ่านผู้ถือ **จากลิงก์เอง** ไม่ใช่เชื่อค่าที่ส่งมา (D-115)
+  if pg_get_functiondef('sri_os.fn_tag_alloc_system_columns()'::regprocedure)
+     !~ 'from sri_os\.transaction_tags' then
+    raise exception 'FAIL: W0a2 — ด่านของน้ำหนักไม่ได้อ่าน owner_id จาก transaction_tags → แถวน้ำหนักชี้ผู้ถือผิดได้ทั้งที่ FK ผ่าน';
   end if;
 
   -- (ข) index/constraint ตาม ADR 0003 ข้อ 3.2
@@ -1105,6 +1144,287 @@ begin
   perform sri_os.fn_assert_tag_read_path();
 
   raise notice 'ok W8 · ชนิดที่ไม่ปันส่วนไม่โผล่ในวิวที่ปันส่วนแล้ว · งบต่อ project ดุลเมื่อรวมทุกบัญชี · ยอดที่ปันส่วนของใบ = ยอดในสมุด · weight_sum + ประโยคกำกับมาจาก DB และไม่พูดถึงกฎปัดเศษที่ ADR ปฏิเสธ';
+end $$;
+
+-- ============================================================
+-- W9 · **`owner_id` ของ `tag_allocations`** (กฎเหล็กข้อ 3)
+--      เป็นสำเนาที่ระบบเติมจากลิงก์ · ส่งมาไม่ตรง = ปฏิเสธ · **ย้ายไม่ได้**
+-- ============================================================
+do $$
+declare
+  v_t   uuid := '00000000-0000-0000-0000-0000000ea901';
+  v_l1  uuid; v_l2 uuid; v_a1 uuid;
+  v_own uuid;
+begin
+  perform pg_temp.mk(v_t, 800000);
+  v_l1 := pg_temp.link(v_t, 'wa-p1');
+  v_l2 := pg_temp.link(v_t, 'wa-p2');
+  v_a1 := pg_temp.alloc(v_l1, 0.6);
+  perform pg_temp.alloc(v_l2, 0.4);
+  perform pg_temp.fire();
+
+  -- (ก) ไม่ส่ง owner_id มาเลย → ระบบเติมจากลิงก์ (ซึ่งเติมจากใบ) ให้ตรงกันทั้งสาย
+  select a.owner_id into v_own from sri_os.tag_allocations a where a.id = v_a1;
+  if v_own is distinct from pg_temp.own('THANAKORN') then
+    raise exception 'FAIL: W9a — owner_id ของน้ำหนักต้องเป็นผู้ถือของใบ (%) แต่ได้ % · ถ้าคอลัมน์นี้ไม่ถูกเติมเอง รายงานที่กรอง Entity จะไม่เห็นแถวนี้เลยหรือเห็นผิดคน',
+      pg_temp.own('THANAKORN'), v_own;
+  end if;
+  if exists (select 1 from sri_os.tag_allocations a
+               join sri_os.transaction_tags l on l.id = a.transaction_tag_id
+              where a.owner_id is distinct from l.owner_id) then
+    raise exception 'FAIL: W9a — มีแถวน้ำหนักที่ owner_id ไม่ตรงกับผู้ถือของลิงก์ (สำเนาเพี้ยนจากต้นทาง)';
+  end if;
+
+  -- (ข) ส่ง owner_id ที่ **ถูก** มาก็ได้ (ห้ามกันแน่นเกิน)
+  --     ติดลิงก์ + ใส่น้ำหนักในคำสั่งเดียว เพื่อไม่ให้มีลิงก์ที่ยังไม่มีน้ำหนักค้างไว้
+  perform pg_temp.mk('00000000-0000-0000-0000-0000000ea902'::uuid, 100000);
+  perform pg_temp.must_pass('W9b ส่ง owner_id ที่ตรงกับลิงก์', format($q$
+    select pg_temp.alloc_own(pg_temp.link(%L, 'wa-p1'), %L, 1.0) $q$,
+    '00000000-0000-0000-0000-0000000ea902'::uuid, pg_temp.own('THANAKORN')));
+
+  -- (ค) ส่ง owner_id ของ **ผู้ถืออีกคน** → ปฏิเสธ ไม่ใช่ทับให้เงียบๆ (D-115)
+  --     ใช้ลิงก์ที่มีอยู่แล้ว: ด่านของแถว (BEFORE) ยิงก่อน partial unique index
+  --     จึงได้ข้อความเรื่องผู้ถือ ไม่ใช่ข้อความเรื่องน้ำหนักซ้อน
+  perform pg_temp.must_fail_like('W9c owner_id ไม่ตรงกับลิงก์', format($q$
+    select pg_temp.alloc_own(%L, %L, 1.0) $q$, v_l1, pg_temp.own('SUTEE')),
+    'ผู้ถือ');
+
+  -- (ง) **ย้ายผู้ถือย้อนหลังไม่ได้** — ย้ายได้ = ย้ายส่วนแบ่งของเงินก้อนหนึ่ง
+  --     ไปอยู่กับผู้ถืออีกคนโดยที่ยอดในสมุดไม่เปลี่ยนเลย
+  perform pg_temp.must_fail_like('W9d ย้าย owner_id', format($q$
+    update sri_os.tag_allocations set owner_id = %L where id = %L $q$,
+    pg_temp.own('SUTEE'), v_a1),
+    'ย้ายผู้ถือ');
+  -- ย้ายพร้อมกับการปิดชุด (ซ่อนมาในคำสั่งเดียว) ก็ไม่ได้
+  perform pg_temp.must_fail_like('W9e ย้าย owner_id พร้อมปิดชุด', format($q$
+    update sri_os.tag_allocations
+       set owner_id = %L, superseded_at = now(), superseded_by = auth.uid(),
+           supersede_reason = 'W9e แอบย้ายผู้ถือมาพร้อมการปิด'
+     where id = %L $q$, pg_temp.own('SUTEE'), v_a1),
+    'ย้ายผู้ถือ');
+
+  -- (ฉ) ผู้ถือเดิมยังอยู่ครบหลังทุกความพยายามข้างบน
+  select a.owner_id into v_own from sri_os.tag_allocations a where a.id = v_a1;
+  if v_own is distinct from pg_temp.own('THANAKORN') then
+    raise exception 'FAIL: W9f — owner_id เปลี่ยนไปได้จริง (ได้ %)', v_own;
+  end if;
+
+  raise notice 'ok W9 · owner_id ของน้ำหนักเป็นสำเนาจากลิงก์ที่ระบบเติมเอง · ส่งมาไม่ตรง = ปฏิเสธ · ย้ายไม่ได้ทั้งทางตรงและทางที่ซ่อนมากับการปิดชุด (กฎเหล็กข้อ 3)';
+end $$;
+
+-- ============================================================
+-- W10 · **รายการข้ามผู้ถือต้องไม่ถูกนับสองขาซ้ำ**
+--
+--   ประตูติด tag ชุดเดียวกันให้ **ทั้งสองขา** โดยเจตนา (ข้อ 4.2.2 ชั้น 1 — ไม่งั้น
+--   ยอดต่อ project ของคู่นั้นไม่สมมาตร) → วิวที่รวมยอดต่อ tag **ต้องพา
+--   `counter_owner_id` และ `is_intercompany` มาด้วย** ไม่งั้นรายงานที่บวกข้าม
+--   ผู้ถือจะนับเงินก้อนเดียวสองครั้ง **โดยที่ทุกใบดุลและ Σ น้ำหนัก = 1 พอดี**
+--   จึงไม่มีด่านไหนจับได้ (= กำไรที่ไม่จริงแบบเดียวกับที่ฟีเจอร์นี้มาแก้)
+-- ============================================================
+do $$
+declare
+  v_ids   uuid[];
+  v_all   numeric;
+  v_net   numeric;
+  v_mine  numeric;
+  n       int;
+begin
+  v_ids := pg_temp.pair('W10', 200000,
+             jsonb_build_object(pg_temp.tag('wa-ic')::text, 1.0));
+  if array_length(v_ids, 1) <> 2 then
+    raise exception 'FAIL: W10 — ฉากต้องเป็นใบข้ามผู้ถือสองใบคู่กัน แต่ได้ % ใบ', array_length(v_ids, 1);
+  end if;
+
+  -- (ก) วิวต้องพาสองช่องนั้นมาจริง (ไม่ใช่ให้คนอ่านไป join เอง)
+  select count(*) into n
+    from (values ('counter_owner_id'), ('is_intercompany')) x(col)
+   where not exists (select 1 from information_schema.columns c
+                      where c.table_schema = 'sri_os'
+                        and c.table_name = 'v_tag_allocated_totals'
+                        and c.column_name = x.col);
+  if n > 0 then
+    raise exception 'FAIL: W10a — v_tag_allocated_totals ไม่มี counter_owner_id/is_intercompany (ขาด % ช่อง) · v_ledger_allocated มี counter_owner_id อยู่แล้ว แต่วิวยอดรวมไม่มี → รายงาน "กำไรต่อ project" ที่บวกข้ามผู้ถือจะนับสองขาซ้ำโดยไม่มีใครรู้', n;
+  end if;
+
+  -- (ข) ทุกแถวของคู่นี้ต้องถูกธงว่าเป็นรายการข้ามผู้ถือ และมีคู่สัญญาติดมา
+  select count(*) into n
+    from sri_os.v_tag_allocated_totals v
+   where v.tag_id = pg_temp.tag('wa-ic')
+     and (not v.is_intercompany or v.counter_owner_id is null);
+  if n > 0 then
+    raise exception 'FAIL: W10b — มี % แถวของ wa-ic ที่ไม่ได้ถูกธงว่าข้ามผู้ถือหรือไม่มีคู่สัญญา → แยกขาคู่ออกจากรายการธรรมดาไม่ได้', n;
+  end if;
+
+  -- (ค) **ตัวเลขของเรื่องนี้**: เงินที่เคลื่อนจริง 200,000
+  --     บวกทุกแถวแบบไม่ดูธง  → 400,000 (**สองเท่า** = กำไรที่ไม่จริง)
+  --     ตัดขาคู่ออกตาม Money Invariant ข้อ 6 → 0 (การย้ายเงินในบ้านไม่ใช่ผลงานของ project)
+  --     กรองผู้ถือรายคน → 200,000 (ขาของตัวเองต้องเห็นครบ วิวห้ามตัดให้เอง)
+  select coalesce(sum(v.allocated_debit), 0) into v_all
+    from sri_os.v_tag_allocated_totals v where v.tag_id = pg_temp.tag('wa-ic');
+  select coalesce(sum(v.allocated_debit), 0) into v_net
+    from sri_os.v_tag_allocated_totals v
+   where v.tag_id = pg_temp.tag('wa-ic') and not v.is_intercompany;
+  select coalesce(sum(v.allocated_debit), 0) into v_mine
+    from sri_os.v_tag_allocated_totals v
+   where v.tag_id = pg_temp.tag('wa-ic') and v.owner_id = pg_temp.own('THANAKORN');
+
+  if v_all <> 400000 then
+    raise exception 'FAIL: W10c — ฉากไม่ใช่ฉากเดิม: บวกทุกแถวต้องได้ 400,000 (สองขา × 200,000) แต่ได้ % · ถ้าตัวเลขนี้ไม่ใช่ 400,000 แปลว่าประตูไม่ได้ลง tag ให้ทั้งสองขา แล้วเทสต์นี้ไม่ได้วัดการนับซ้ำเลย',
+      v_all;
+  end if;
+  if v_net <> 0 then
+    raise exception 'FAIL: W10c — ตัดขาคู่ด้วย is_intercompany แล้วยอดต่อ project ต้องเป็น 0 (การย้ายเงินข้ามกระเป๋าในบ้านไม่ใช่ผลงานของ project · Money Invariant ข้อ 6) แต่ได้ %',
+      v_net;
+  end if;
+  if v_mine <> 200000 then
+    raise exception 'FAIL: W10c — กรองผู้ถือรายคนต้องเห็นขาของตัวเองเต็ม 200,000 แต่ได้ % · วิวห้ามตัด intercompany ให้เอง (ยอดต่อผู้ถือรายคนต้องตรงกับสมุดของคนนั้น) ต้องให้ช่องที่ตัดสินได้มาเสมอ',
+      v_mine;
+  end if;
+  if v_net = v_all or v_mine = v_all then
+    raise exception 'FAIL: W10c — ยอดที่ตัดขาคู่แล้วเท่ากับยอดที่ไม่ตัด (%) → ไม่มีอะไรกันการนับสองเท่าเลย', v_all;
+  end if;
+
+  raise notice 'ok W10 · วิวยอดรวมพา counter_owner_id/is_intercompany มาด้วย · บวกไม่ดูธง = 400,000 (สองเท่าของเงินจริง) · ตัดขาคู่ = 0 · ต่อผู้ถือรายคน = 200,000 ครบตามสมุด';
+end $$;
+
+-- ============================================================
+-- M4 · MUTATION — **ปิดการกันการนับซ้ำ** (= รายงานที่ไม่ดูสองช่องนั้น ซึ่งเป็น
+--      สิ่งที่เกิดขึ้นเองถ้าวิวไม่พามันมา) แล้ว **วัดได้** ว่ายอดต่อ project
+--      โป่งเป็น **สองเท่า** ของเงินที่เคลื่อนจริง
+--      ถ้าปิดแล้วตัวเลขไม่โป่ง แปลว่า W10 เขียวเพราะอย่างอื่น ไม่ใช่เพราะสองช่องนี้
+-- ============================================================
+savepoint before_ic_mutation;
+do $$
+declare
+  v_ids    uuid[];
+  v_moved  numeric;
+  v_blind  numeric;
+  v_guard  numeric;
+begin
+  -- ใช้ tag ของตัวเอง (wa-ic2) เพื่อให้ยอดที่วัดมีแต่ของฉากนี้ ไม่ปนกับ W10
+  v_ids := pg_temp.pair('M4', 350000,
+             jsonb_build_object(pg_temp.tag('wa-ic2')::text, 1.0));
+
+  -- เงินที่เคลื่อนจริง = ยอดของ **ขาเดียว** (อีกขาคือด้านตรงข้ามของเงินก้อนเดิม)
+  v_moved := pg_temp.book(v_ids[1], 'dr');
+
+  -- **ปิดการกัน** = รายงานที่บวกยอดต่อ tag โดยไม่ดู is_intercompany/counter_owner_id
+  --   ซึ่งเป็นสิ่งที่เกิดขึ้น **เอง** ถ้าวิวไม่พาสองช่องนั้นมา (ตัดไม่ได้เพราะไม่มีช่องให้ตัด)
+  select coalesce(sum(v.allocated_debit), 0) into v_blind
+    from sri_os.v_tag_allocated_totals v
+   where v.tag_id = pg_temp.tag('wa-ic2');
+  if v_blind <> v_moved * 2 then
+    raise exception 'FAIL: M4 — ปิดการกันแล้วยอดต่อ project ต้องเป็นสองเท่าของเงินที่เคลื่อนจริง (% vs %)',
+      v_blind, v_moved;
+  end if;
+
+  -- **เปิดการกัน**: ใช้สองช่องที่วิวพามาให้ → ตัดขาคู่ออกได้
+  select coalesce(sum(v.allocated_debit), 0) into v_guard
+    from sri_os.v_tag_allocated_totals v
+   where v.tag_id = pg_temp.tag('wa-ic2') and not v.is_intercompany;
+  if v_guard <> 0 then
+    raise exception 'FAIL: M4 — เปิดการกันแล้วต้องตัดขาคู่ออกได้หมด (ได้ %)', v_guard;
+  end if;
+
+  raise notice 'ok M4 · ปิดการกัน = ยอดต่อ project โป่งเป็นสองเท่าของเงินจริงทันที (% → %)',
+    v_moved, v_blind;
+end $$;
+rollback to savepoint before_ic_mutation;
+
+-- ============================================================
+-- W11 · **tag ที่ถูกปิดหลังมีใบติดไปแล้ว**
+--       ติดใหม่ห้าม · **แก้สัดส่วนของใบที่ติดอยู่แล้วได้**
+--       (ถ้าแก้ไม่ได้ ใบนั้นติดค้างถาวรพร้อมสัดส่วนที่รู้อยู่ว่าผิด — และถอด tag
+--        ก็ยังไม่มีประตู · เปิดฟีเจอร์ครึ่งเดียวอันตรายกว่าไม่เปิด)
+-- ============================================================
+do $$
+declare
+  v_t   uuid := '00000000-0000-0000-0000-0000000eb101';
+  v_t2  uuid := '00000000-0000-0000-0000-0000000eb102';
+  v_res jsonb;
+  v_w   numeric;
+begin
+  perform pg_temp.mk(v_t, 1000000);
+  perform pg_temp.weigh(v_t, 'wa-shut', 0.6);
+  perform pg_temp.weigh(v_t, 'wa-p1',  0.4);
+  perform pg_temp.fire();
+
+  -- ปิด tag **หลังจาก** ใบติดไปแล้ว (เกิดขึ้นจริงได้ทุกเมื่อที่หน้าตั้งค่า)
+  update sri_os.tags set is_active = false, archived_at = now(), archived_by = auth.uid()
+   where code = 'wa-shut';
+
+  -- (ก) **แก้สัดส่วนของใบเดิมได้** แม้ tag ถูกปิดแล้ว
+  v_res := sri_os.fn_reallocate_tags(v_t, 'project',
+             jsonb_build_object(pg_temp.tag('wa-shut')::text, 0.25,
+                                pg_temp.tag('wa-p1')::text,  0.75),
+             'W11 ลูกพี่สั่งแก้สัดส่วนของใบเดิม ทั้งที่ project นี้ปิดรับงานใหม่แล้ว');
+  perform pg_temp.fire();
+  select a.weight into v_w
+    from sri_os.tag_allocations a
+    join sri_os.transaction_tags l on l.id = a.transaction_tag_id
+   where l.transaction_id = v_t and l.tag_id = pg_temp.tag('wa-shut')
+     and a.superseded_at is null;
+  if v_w is distinct from 0.250000 then
+    raise exception 'FAIL: W11a — แก้สัดส่วนของใบที่ติด tag ซึ่งถูกปิดแล้วไม่ได้ (น้ำหนักที่ใช้อยู่ = %) · ถ้าแก้ไม่ได้ ใบนั้นติดค้างถาวรพร้อมสัดส่วนที่รู้อยู่ว่าผิด และถอด tag ก็ยังไม่มีประตู (บทเรียน mace-windu ข้อ 7)',
+      v_w;
+  end if;
+  if pg_temp.alloc_all(v_t, 'dr') <> pg_temp.book(v_t, 'dr') then
+    raise exception 'FAIL: W11a — หลังแก้สัดส่วน Σ ที่ปันส่วนไม่ตรงสมุด (% vs %)',
+      pg_temp.alloc_all(v_t, 'dr'), pg_temp.book(v_t, 'dr');
+  end if;
+
+  -- (ข) แต่ **ติด tag ที่ปิดแล้วให้ใบใหม่ไม่ได้** (เส้นแบ่งอยู่ที่นี่)
+  perform pg_temp.mk(v_t2, 1000000);
+  perform pg_temp.must_fail_like('W11b ติด tag ที่ปิดแล้วให้ใบใหม่', format($q$
+    select pg_temp.weigh(%L, 'wa-shut', 1.0) $q$, v_t2),
+    'ปิดใช้งาน');
+
+  -- (ค) และผ่านประตูก็ติดใหม่ไม่ได้เหมือนกัน (ประตูเขียนลิงก์ก่อนน้ำหนักเสมอ)
+  perform pg_temp.must_fail_like('W11c ประตู + tag ที่ปิดแล้ว', format($q$
+    select pg_temp.post(pg_temp.entry('W11c', 1000, jsonb_build_object(%L, 1.0))) $q$,
+    pg_temp.tag('wa-shut')::text),
+    'tag');
+
+  raise notice 'ok W11 · tag ที่ปิดแล้ว: แก้สัดส่วนของใบที่ติดอยู่แล้วได้ (ไม่ติดค้างถาวร) · ติดให้ใบใหม่ไม่ได้ทั้งทางตรงและทางประตู';
+end $$;
+
+-- ============================================================
+-- W12 · **ชนิด tag ที่ประตูรับได้จริงวันนี้** — ฝั่งแอปใช้ปิดช่องที่กดแล้วตาย
+--       กติกาฝั่งแอปคือ "อ่านไม่ได้ = ซ่อน" → ฟังก์ชันนี้ต้องมีและต้องตอบจากของจริง
+-- ============================================================
+do $$
+declare v_kinds text[];
+begin
+  if to_regprocedure('sri_os.fn_post_entry_accepted_tag_kinds()') is null then
+    raise exception 'FAIL: W12 — ไม่มี sri_os.fn_post_entry_accepted_tag_kinds() → ฟอร์มจะซ่อน tag ทุกชนิด รวม project ที่ประตูรับอยู่แล้ว';
+  end if;
+  v_kinds := sri_os.fn_post_entry_accepted_tag_kinds();
+
+  if not ('project' = any (v_kinds)) then
+    raise exception 'FAIL: W12a — ต้องคืน "project" (ประตูรับช่อง tag_weights แล้ว) แต่ได้ %',
+      array_to_string(v_kinds, ', ');
+  end if;
+  -- **สภาพวันนี้ (28/10)**: ADR 0002 ชิ้น 3 ยังไม่ลง → ประตูยังไม่มีช่อง tag_ids
+  --   ถ้าข้อนี้แดงเพราะคืน 'label' ด้วย แปลว่าชิ้น 3 ลงแล้ว → **แก้เทสต์ข้อนี้
+  --   ไม่ใช่แก้ฟังก์ชัน** (ฟังก์ชันอ่านช่องจริงของประตู ไม่ได้เขียนรายชื่อตายตัว)
+  if 'label' = any (v_kinds) then
+    raise exception 'FAIL: W12b — คืน "label" ทั้งที่ c_header ของประตูยังไม่มีช่อง tag_ids → ฟอร์มจะโชว์ช่องที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" (ถ้าชิ้น 3 ของ ADR 0002 ลงแล้วจริง ให้แก้เทสต์ข้อนี้)';
+  end if;
+
+  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว (ไล่ c_header ของประตู)
+  if pg_get_functiondef('sri_os.fn_post_entry_accepted_tag_kinds()'::regprocedure)
+     !~ '\mc_header\M' then
+    raise exception 'FAIL: W12c — ฟังก์ชันไม่ได้อ่าน c_header ของ fn_post_entry → เป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาล)';
+  end if;
+  if not has_function_privilege('authenticated',
+        'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
+    raise exception 'FAIL: W12d — authenticated เรียกไม่ได้ → ฟอร์มซ่อนทุกชนิด';
+  end if;
+  if has_function_privilege('anon', 'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
+    raise exception 'FAIL: W12d — เปิดให้ anon';
+  end if;
+
+  raise notice 'ok W12 · fn_post_entry_accepted_tag_kinds คืน {project} จากการไล่ c_header ของประตูจริง · ยังไม่คืน label เพราะประตูยังไม่มีช่อง tag_ids · authenticated เรียกได้ anon ไม่ได้';
 end $$;
 
 rollback;

@@ -32,6 +32,18 @@
 --    ชื่อ `'project'` ที่พิมพ์ในโค้ด · กฎเหล็กข้อ 5) · ใส่น้ำหนักให้ `label` = ปฏิเสธ
 --    เพราะจะทำให้ **touch กับ allocated ปนกัน** ซึ่ง ADR 0003 ข้อ 5 ห้ามเด็ดขาด
 --
+-- 7. **ทุกแถวมี `owner_id` และเป็นสำเนาที่ trigger บังคับ** (กฎเหล็กข้อ 3 —
+--    "ทุกแถวมี owner_id และรายงานทุกหน้ากรอง Entity ได้") · แพทเทิร์นเดียวกับ
+--    `transaction_tags` ของ ADR 0002 เป๊ะ: trigger **อ่านผู้ถือจากลิงก์เอง**
+--    (`transaction_tags.owner_id` ซึ่งเองก็เป็นสำเนาที่อ่านจากใบ) · **ไม่รับค่าจาก
+--    ผู้เรียก** (D-115: ด่านห้ามอ่านฟิลด์ที่ผู้เรียกเลือกได้) · ส่งมาไม่ตรง =
+--    **ปฏิเสธ** ไม่ใช่ทับให้เงียบๆ (ทับเงียบๆ ซ่อนบั๊กของผู้เรียก) · **ย้ายไม่ได้**
+--    (UPDATE owner_id = ปฏิเสธทุกกรณี)
+--    เหตุผลที่ตารางนี้ต้องมีเหมือนตารางลิงก์ ไม่ใช่ "join ผ่านลิงก์ก็ได้":
+--    ตารางนี้คือตารางที่ **รายงานเงินพึ่งพาโดยตรง** (ตัวคูณของยอดต่อ Entity)
+--    → RLS/รายงานต้องกรอง Entity ได้ที่ตัวแถวเอง และกฎเหล็กข้อ 3 ไม่เจาะข้อยกเว้น
+--    ให้ความสะดวกของการ join
+--
 -- ------------------------------------------------------------
 -- **ด่าน Σ น้ำหนัก = 1.000000 พอดี** (ADR 0003 ข้อ 4.1)
 --
@@ -133,6 +145,13 @@ create table if not exists tag_allocations (
    */
   transaction_tag_id uuid not null references transaction_tags(id) on delete restrict,
   /**
+   * **สำเนาผู้ถือจากลิงก์** (กฎเหล็กข้อ 3) · trigger อ่านจาก
+   * `transaction_tags.owner_id` เองและบังคับให้ตรงเสมอ · ส่งมาไม่ตรง = ปฏิเสธ ·
+   * ย้ายไม่ได้ · มีไว้เพื่อให้ RLS/รายงานกรอง Entity ได้ **ที่ตัวแถวเอง**
+   * ไม่ต้อง join ลิงก์กับใบ — แพทเทิร์นเดียวกับ transaction_tags เป๊ะ
+   */
+  owner_id           uuid not null references owners(id),
+  /**
    * **สัดส่วน ไม่ใช่จำนวนเงิน** · 0.600000 = 60% · ตัวคูณมาจากที่นี่
    * ตัวตั้งมาจากสมุดเสมอ (ข้อ 3.2) · scale = 6 คือสิ่งที่ guard ใช้แยก
    * "ตัวคูณ" ออกจาก "จำนวนเงิน" → อย่าเปลี่ยน scale โดยไม่แก้ guard พร้อมกัน
@@ -147,8 +166,35 @@ create table if not exists tag_allocations (
   supersede_reason   text
 );
 
+-- ---------- ตารางที่ถูกสร้างไว้ก่อนรุ่นนี้ยังไม่มี `owner_id` ----------
+-- `create table if not exists` ข้างบนไม่เติมคอลัมน์ให้ตารางที่มีอยู่แล้ว →
+-- ถ้าเคยรันรุ่นก่อนหน้าของไฟล์นี้ไว้ (เครื่องใครเครื่องมัน) ตารางจะขาดคอลัมน์
+-- ที่กฎเหล็กข้อ 3 บังคับโดยไม่มีอะไรฟ้อง · เติมโดย **อ่านจากลิงก์** เท่านั้น
+-- (ไม่มีทางเดาผู้ถือจากที่อื่น) และถ้าเติมไม่ครบ = พังเสียงดัง ไม่ปล่อย null ไว้
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'sri_os' and table_name = 'tag_allocations'
+                    and column_name = 'owner_id') then
+    execute 'alter table sri_os.tag_allocations add column owner_id uuid';
+    execute 'update sri_os.tag_allocations a
+                set owner_id = l.owner_id
+               from sri_os.transaction_tags l
+              where l.id = a.transaction_tag_id and a.owner_id is null';
+    if exists (select 1 from sri_os.tag_allocations where owner_id is null) then
+      raise exception 'เติม owner_id ให้ tag_allocations ไม่ครบ (ยังมีแถวที่หาลิงก์ไม่เจอ) → ปฏิเสธ ไม่ปล่อยให้คอลัมน์ที่กฎเหล็กข้อ 3 บังคับเป็น null · แถวกำพร้าแบบนี้เกิดไม่ได้ (FK ไป transaction_tags) ถ้าเจอแปลว่าฐานข้อมูลเสียหายและต้องตรวจมือ';
+    end if;
+    execute 'alter table sri_os.tag_allocations alter column owner_id set not null';
+    execute 'alter table sri_os.tag_allocations
+               add constraint tag_allocations_owner_id_fkey
+               foreign key (owner_id) references sri_os.owners(id)';
+  end if;
+end $$;
+
 comment on table tag_allocations is
-  'น้ำหนักของ tag ต่อใบ (ADR 0003 ข้อ 3.2) · **ตารางแยกตามที่ ADR 0002 ข้อ 4.3 สั่ง ไม่ใช่คอลัมน์ในตารางลิงก์** · ถือ **ตัวคูณ** เท่านั้น ห้ามมีคอลัมน์จำนวนเงิน (guard ไล่ numeric_scale ≠ 6) · append-only + ปิดด้วยร่องรอย ไม่มี DELETE และ weight แก้ทับไม่ได้ (กำไรต่อ project ที่รายงานไปแล้วคิดจากน้ำหนักชุดเดิม) · Σ ต่อ (ใบ × ชนิดที่ปันส่วน) = 1.000000 พอดี บังคับด้วย constraint trigger แบบ deferred บนตารางนี้ **และบนตารางลิงก์**';
+  'น้ำหนักของ tag ต่อใบ (ADR 0003 ข้อ 3.2) · **ทุกแถวมี owner_id ที่เป็นสำเนาจากลิงก์ซึ่ง trigger บังคับให้ตรงเสมอและย้ายไม่ได้ (กฎเหล็กข้อ 3)** → รายงานกรอง Entity ได้ที่ตัวแถวเอง · **ตารางแยกตามที่ ADR 0002 ข้อ 4.3 สั่ง ไม่ใช่คอลัมน์ในตารางลิงก์** · ถือ **ตัวคูณ** เท่านั้น ห้ามมีคอลัมน์จำนวนเงิน (guard ไล่ numeric_scale ≠ 6) · append-only + ปิดด้วยร่องรอย ไม่มี DELETE และ weight แก้ทับไม่ได้ (กำไรต่อ project ที่รายงานไปแล้วคิดจากน้ำหนักชุดเดิม) · Σ ต่อ (ใบ × ชนิดที่ปันส่วน) = 1.000000 พอดี บังคับด้วย constraint trigger แบบ deferred บนตารางนี้ **และบนตารางลิงก์**';
+comment on column tag_allocations.owner_id is
+  'สำเนาของ transaction_tags.owner_id (ซึ่งเองเป็นสำเนาของ transactions.owner_id) · trigger อ่านจากลิงก์เองไม่เชื่อค่าที่ส่งมา (D-115) และปฏิเสธถ้าส่งมาไม่ตรง · ย้ายไม่ได้ · มีไว้เพื่อให้ RLS/รายงานกรอง Entity ได้โดยไม่ต้อง join ลิงก์กับใบ (กฎเหล็กข้อ 3)';
 comment on column tag_allocations.weight is
   'สัดส่วน 0 < w <= 1 · numeric(9,6) → 0.600000 = 60% · **ไม่ใช่จำนวนเงิน** · w = 0 ห้ามโดยเจตนา (ติด tag ไว้แล้วบอกว่าไม่เกี่ยว = แถวที่โผล่ในรายการแต่ไม่โผล่ในยอด คนอ่านจะคิดว่าระบบลืมนับ ถ้าไม่เกี่ยวให้ถอด tag ซึ่งมีร่องรอยชัดกว่า)';
 comment on column tag_allocations.transaction_tag_id is
@@ -204,6 +250,11 @@ create unique index if not exists tag_alloc_active_uq
 create index if not exists tag_alloc_by_link
   on tag_allocations (transaction_tag_id, superseded_at);
 
+-- รายงานทุกหน้ากรอง Entity ได้ (กฎเหล็กข้อ 3) → ต้องมี index ของผู้ถือเหมือน
+-- `tag_link_by_owner` ของตารางลิงก์ ไม่ใช่ให้ไปไล่ทั้งตารางทุกครั้งที่กรองผู้ถือ
+create index if not exists tag_alloc_by_owner
+  on tag_allocations (owner_id, transaction_tag_id) where superseded_at is null;
+
 -- ============================================================
 -- 2 · ด่านของแถว — ตั้งค่าระบบเอง · แก้ทับไม่ได้ · ลบไม่ได้
 --
@@ -239,7 +290,8 @@ begin
     new.allocated_at := now();
 
     -- ลิงก์ต้องมีจริง · ยังใช้อยู่ · และเป็นชนิดที่ **ปันส่วน**
-    select l.id, l.tag_kind, l.untagged_at, k.requires_allocation, t.code as tag_code
+    select l.id, l.tag_kind, l.untagged_at, l.owner_id,
+           k.requires_allocation, t.code as tag_code
       into v_link
       from sri_os.transaction_tags l
       join sri_os.tag_kinds k on k.key = l.tag_kind
@@ -253,6 +305,17 @@ begin
       raise exception 'ลิงก์ tag "%" ถูกถอดไปแล้ว → ใส่น้ำหนักใหม่ไม่ได้ · ถ้าจะให้ tag นี้กลับมามีสัดส่วน ต้องติด tag ใหม่ (แถวใหม่) แล้วใส่น้ำหนักให้แถวนั้น',
         v_link.tag_code;
     end if;
+    -- **ผู้ถือ = สำเนาจากลิงก์** (กฎเหล็กข้อ 3 · แพทเทิร์นเดียวกับ
+    -- fn_tag_link_system_columns ที่อ่าน owner_id จากใบเอง)
+    -- อ่านจากต้นทางเอง **ไม่เชื่อค่าที่ส่งมา** (D-115) · ส่งมาไม่ตรง = ปฏิเสธ
+    -- ไม่ใช่ทับให้เงียบๆ: ส่งมาไม่ตรงคือสัญญาณว่าผู้เรียกเข้าใจผิดว่าสัดส่วนนี้
+    -- เป็นของใคร และถ้าทับเงียบๆ บั๊กของผู้เรียกจะอยู่ต่อไปโดยไม่มีใครรู้
+    if new.owner_id is not null and new.owner_id <> v_link.owner_id then
+      raise exception 'ผู้ถือของน้ำหนัก (%) ไม่ตรงกับผู้ถือของลิงก์ tag (%) · owner_id ของแถวนี้เป็น **สำเนาจากลิงก์** (กฎเหล็กข้อ 3) ระบบอ่านจากลิงก์เองและไม่ทับค่าที่ส่งมาเงียบๆ — ส่งมาไม่ตรงคือสัญญาณว่าผู้เรียกเข้าใจผิดว่าใบนี้เป็นของใคร แล้วรายงานที่กรอง Entity จะนับสัดส่วนนี้ให้ผู้ถือผิดคน',
+        new.owner_id, v_link.owner_id;
+    end if;
+    new.owner_id := v_link.owner_id;
+
     if not v_link.requires_allocation then
       raise exception 'ชนิด tag "%" ไม่ใช่ชนิดที่ **ปันส่วน** (tag_kinds.requires_allocation = false) → ใส่น้ำหนักให้ไม่ได้ · ยอดของชนิดนี้เป็น "ยอดที่แตะ tag" (touch) ซึ่งบวกข้าม tag ไม่ได้ · ถ้าเอาน้ำหนักมาใส่ จะมีวิวที่เอา touch ไปบวกกับ allocated แล้วไม่มีใครรู้ว่าตัวเลขไหนหมายถึงอะไร (ADR 0003 ข้อ 5) · ถ้าวันหนึ่งชนิดนี้ต้องปันส่วนจริง ให้พลิกคอนฟิกพร้อม migration ที่ backfill ไม่ใช่แอบใส่น้ำหนักให้บางใบ',
         v_link.tag_kind;
@@ -262,6 +325,15 @@ begin
 
   -- ======================= UPDATE =======================
   if tg_op = 'UPDATE' then
+    -- **ย้ายผู้ถือไม่ได้** (กฎเหล็กข้อ 3 · เหมือน owner_id ของ transaction_tags)
+    -- แยกข้อความออกมาเพราะอาการต่างกับการแก้ weight: ย้าย owner_id คือการย้าย
+    -- ส่วนแบ่งของเงินก้อนหนึ่งไปอยู่กับผู้ถืออีกคน **โดยที่ยอดในสมุดไม่เปลี่ยนเลย**
+    -- → รายงานต่อ Entity สองรุ่นของงวดเดียวกันจะต่างกันแบบอธิบายไม่ได้
+    if new.owner_id is distinct from old.owner_id then
+      raise exception 'ย้ายผู้ถือของน้ำหนัก tag ไม่ได้ (% → %) · owner_id เป็น **สำเนาจากลิงก์** ที่แช่แข็งตั้งแต่ตอนลง (กฎเหล็กข้อ 3) · ถ้าสัดส่วนนี้ควรเป็นของผู้ถืออีกคน แปลว่ามันผูกกับลิงก์ผิดใบ ให้ปิดชุดนี้ด้วยเหตุผลแล้วใส่น้ำหนักให้ลิงก์ของใบที่ถูก ไม่ใช่ย้ายผู้ถือของแถวเดิมซึ่งไม่เหลือร่องรอยว่าเคยนับให้ใคร',
+        old.owner_id, new.owner_id;
+    end if;
+
     if new.id <> old.id
        or new.transaction_tag_id <> old.transaction_tag_id
        or new.weight <> old.weight
@@ -300,7 +372,7 @@ begin
 end $fn$;
 
 comment on function fn_tag_alloc_system_columns() is
-  'ADR 0003 ข้อ 3.2/3.3 · ตั้ง allocated_at/by จาก auth.uid() (ปลอมไม่ได้) · weight/ลิงก์/เวลา/คนกรอก **แช่แข็ง** (แก้สัดส่วน = ปิด + เปิดใหม่ผ่าน fn_reallocate_tags) · UPDATE ยอมแค่การปิด และปิดแล้วแช่แข็ง · น้ำหนักติดได้เฉพาะลิงก์ที่ยังใช้อยู่ของชนิดที่ requires_allocation (อ่านจากคอนฟิก ไม่ใช่ชื่อ project ในโค้ด) · ไม่เรียกฟังก์ชันตรวจสิทธิ์เลย — ใครใส่ได้เป็นเรื่องของ RLS กฎร่องรอยต้องเท่ากันทุกตำแหน่ง';
+  'ADR 0003 ข้อ 3.2/3.3 · ตั้ง allocated_at/by จาก auth.uid() (ปลอมไม่ได้) · **owner_id อ่านจาก transaction_tags.owner_id เอง ไม่รับจากผู้เรียก ส่งมาไม่ตรง = ปฏิเสธ และย้ายย้อนหลังไม่ได้ (กฎเหล็กข้อ 3)** · weight/ลิงก์/เวลา/คนกรอก **แช่แข็ง** (แก้สัดส่วน = ปิด + เปิดใหม่ผ่าน fn_reallocate_tags) · UPDATE ยอมแค่การปิด และปิดแล้วแช่แข็ง · น้ำหนักติดได้เฉพาะลิงก์ที่ยังใช้อยู่ของชนิดที่ requires_allocation (อ่านจากคอนฟิก ไม่ใช่ชื่อ project ในโค้ด) · ไม่เรียกฟังก์ชันตรวจสิทธิ์เลย — ใครใส่ได้เป็นเรื่องของ RLS กฎร่องรอยต้องเท่ากันทุกตำแหน่ง';
 
 revoke all on function fn_tag_alloc_system_columns() from public;
 do $$
@@ -509,6 +581,10 @@ begin
         for insert to authenticated
         with check (
           sri_os.fn_can('tag.assign')
+          -- สำเนาผู้ถือบนแถวต้องอยู่ในขอบเขตของผู้เรียก **จากตัวแถวเอง**
+          -- (เหมือน policy tag_links_insert ของ transaction_tags) · RLS ตรวจ
+          -- หลัง BEFORE trigger เติมค่าให้แล้ว → ค่าที่ถูกตรวจคือค่าที่อ่านจากลิงก์
+          and sri_os.fn_can_see_owner(owner_id)
           and exists (
             select 1 from sri_os.transaction_tags l
               join sri_os.transactions t on t.id = l.transaction_id
@@ -591,8 +667,8 @@ on conflict (table_name) do update
 insert into column_exposure (table_name, column_name, exposure, min_permission, rationale)
 select 'tag_allocations', c, 'row', 'ledger.read', t.why
   from (values
-    (array['id', 'transaction_tag_id', 'weight'],
-     'สัดส่วนที่ใบหนึ่งถูกแบ่งให้แต่ละ project · ไม่ใช่จำนวนเงินแต่เป็น **ตัวคูณของจำนวนเงิน** → ใครอ่านค่านี้พร้อมยอดของใบ ก็อ่านยอดของ project ได้ · ต้องมี ledger.read + ขอบเขตของใบ (fn_can_read_txn) ถึงจะเห็น'),
+    (array['id', 'transaction_tag_id', 'owner_id', 'weight'],
+     'สัดส่วนที่ใบหนึ่งถูกแบ่งให้แต่ละ project · ไม่ใช่จำนวนเงินแต่เป็น **ตัวคูณของจำนวนเงิน** → ใครอ่านค่านี้พร้อมยอดของใบ ก็อ่านยอดของ project ได้ · owner_id เป็นสำเนาจากลิงก์ที่ trigger บังคับ มีไว้ให้รายงานกรอง Entity ได้ที่ตัวแถวเอง (กฎเหล็กข้อ 3) และบอกว่าเงินก้อนนี้เป็นของผู้ถือใด · ต้องมี ledger.read + ขอบเขตของใบ (fn_can_read_txn) ถึงจะเห็น'),
     (array['allocated_at', 'allocated_by', 'superseded_at', 'superseded_by', 'supersede_reason'],
      'ร่องรอยการตั้ง/แก้สัดส่วน (ใคร เมื่อไหร่ ทำไม) · supersede_reason เป็นข้อความที่ผู้ใช้เขียนถึงใบใดใบหนึ่งและมักอ้างยอด/ช่วงเวลา → ใช้สิทธิ์เดียวกับแถวที่มันอธิบาย')
   ) as t(cols, why), unnest(t.cols) c
@@ -629,6 +705,36 @@ begin
                     and c.column_name = 'weight' and c.data_type = 'numeric'
                     and c.numeric_precision = 9 and c.numeric_scale = 6) then
     raise exception 'คอลัมน์ weight ต้องเป็น numeric(9,6) · scale 6 คือสิ่งที่ guard ข้อ (ก) ใช้แยกตัวคูณออกจากจำนวนเงิน — เปลี่ยน scale ต้องแก้ guard พร้อมกัน';
+  end if;
+
+  -- (ก2) **ทุกแถวมี owner_id** (กฎเหล็กข้อ 3) — คอลัมน์ not null + FK ไปที่ owners
+  if not exists (select 1 from information_schema.columns c
+                  where c.table_schema = 'sri_os' and c.table_name = 'tag_allocations'
+                    and c.column_name = 'owner_id'
+                    and c.data_type = 'uuid' and c.is_nullable = 'NO') then
+    raise exception 'tag_allocations ไม่มีคอลัมน์ owner_id แบบ uuid not null → ละเมิดกฎเหล็กข้อ 3 ("ทุกแถวมี owner_id และรายงานทุกหน้ากรอง Entity ได้") · ตารางนี้คือตารางที่รายงานเงินพึ่งพาโดยตรง (ตัวคูณของยอดต่อ Entity) การ join ผ่านลิงก์ไม่ใช่ข้อยกเว้นที่กฎเหล็กเจาะให้';
+  end if;
+  if not exists (select 1 from pg_constraint con
+                  where con.conrelid = 'sri_os.tag_allocations'::regclass
+                    and con.contype = 'f'
+                    and con.confrelid = 'sri_os.owners'::regclass
+                    and con.conkey = array[(select a.attnum from pg_attribute a
+                                             where a.attrelid = con.conrelid
+                                               and a.attname = 'owner_id')]) then
+    raise exception 'owner_id ของ tag_allocations ไม่มี FK ไปที่ owners → ชี้ผู้ถือที่ไม่มีตัวตนได้';
+  end if;
+  if not exists (select 1 from pg_index x join pg_class i on i.oid = x.indexrelid
+                  where x.indrelid = 'sri_os.tag_allocations'::regclass
+                    and i.relname = 'tag_alloc_by_owner') then
+    raise exception 'ไม่มี index tag_alloc_by_owner → การกรอง Entity ของรายงานต้องไล่ทั้งตาราง (กฎเหล็กข้อ 3 บังคับให้กรองได้ ไม่ใช่กรองได้แบบช้าจนไม่มีใครใช้)';
+  end if;
+  -- สำเนาต้องตรงกับต้นทางทุกแถว **เดี๋ยวนี้** (ไม่ใช่เชื่อว่า trigger ทำงานถูก)
+  select count(*) into n
+    from sri_os.tag_allocations a
+    join sri_os.transaction_tags l on l.id = a.transaction_tag_id
+   where a.owner_id is distinct from l.owner_id;
+  if n > 0 then
+    raise exception 'มี % แถวใน tag_allocations ที่ owner_id ไม่ตรงกับผู้ถือของลิงก์ → สำเนาเพี้ยนจากต้นทาง แปลว่ารายงานที่กรอง Entity นับสัดส่วนให้ผู้ถือผิดคน', n;
   end if;
 
   -- (ข) constraint + index ตาม ADR 0003 ข้อ 3.2
@@ -696,6 +802,10 @@ begin
   if v ~ '\mfn_can\M' or v ~ 'fn_is_management' then
     raise exception 'ด่านของน้ำหนัก tag เรียกฟังก์ชันตรวจสิทธิ์ → ปลดกฎร่องรอยได้ด้วยการแก้ตารางสิทธิ์ · ใครใส่น้ำหนักได้เป็นเรื่องของ RLS';
   end if;
+  -- และต้องอ่าน **ผู้ถือจากลิงก์เอง** ไม่ใช่เชื่อค่าที่ส่งมา (กฎเหล็กข้อ 3 · D-115)
+  if v !~ 'from sri_os\.transaction_tags' or v !~ '\mowner_id\M' then
+    raise exception 'ด่านของน้ำหนัก tag ไม่ได้อ่าน owner_id จาก sri_os.transaction_tags → มีไฟล์อื่นเขียนทับหลังไฟล์นี้ · ถ้าเชื่อค่าที่ส่งมา แถวน้ำหนักจะชี้ผู้ถือผิดได้ทั้งที่ FK ผ่าน แล้วรายงานที่กรอง Entity จะนับส่วนแบ่งให้ผู้ถือผิดคนโดยไม่มีตัวเลขไหนในสมุดผิดเลย (กฎเหล็กข้อ 3)';
+  end if;
   -- และต้องอ่านคอนฟิก "ชนิดไหนปันส่วน" จากตาราง ไม่ใช่เทียบชื่อ 'project' ในโค้ด
   if v !~ 'requires_allocation' then
     raise exception 'ด่านของน้ำหนัก tag ไม่ได้อ่าน tag_kinds.requires_allocation → มีไฟล์อื่นเขียนทับหลังไฟล์นี้ · ถ้าตัดสินจากชื่อชนิดที่พิมพ์ในโค้ด การเปลี่ยนคอนฟิกวันหน้าจะไม่มีผล (กฎเหล็กข้อ 5)';
@@ -732,5 +842,5 @@ begin
     raise exception 'transaction_tags มีคอลัมน์ตัวเลขเงิน/สัดส่วน % คอลัมน์ · น้ำหนักต้องอยู่ใน tag_allocations ตารางแยกเท่านั้น (ADR 0002 ข้อ 4.3)', n;
   end if;
 
-  raise notice 'ok · ตารางน้ำหนัก tag พร้อม: ถือแต่ตัวคูณ numeric(9,6) ตัวเดียว · 0 < w <= 1 · append-only (แก้ทับ/ลบไม่ได้) · ปิดต้องมีเหตุผล · หนึ่งลิงก์หนึ่งน้ำหนักที่ใช้อยู่ · ด่าน Σ = 1.000000 พอดี ผูกทั้ง tag_allocations และ transaction_tags แบบ deferred · RLS ใช้ fn_can_read_txn ตัวเดียวกับสมุด';
+  raise notice 'ok · ตารางน้ำหนัก tag พร้อม: ทุกแถวมี owner_id ที่เป็นสำเนาจากลิงก์และย้ายไม่ได้ (กฎเหล็กข้อ 3) · ถือแต่ตัวคูณ numeric(9,6) ตัวเดียว · 0 < w <= 1 · append-only (แก้ทับ/ลบไม่ได้) · ปิดต้องมีเหตุผล · หนึ่งลิงก์หนึ่งน้ำหนักที่ใช้อยู่ · ด่าน Σ = 1.000000 พอดี ผูกทั้ง tag_allocations และ transaction_tags แบบ deferred · RLS ใช้ fn_can_read_txn ตัวเดียวกับสมุด';
 end $$;

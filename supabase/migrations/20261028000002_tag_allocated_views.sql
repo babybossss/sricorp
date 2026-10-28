@@ -157,7 +157,15 @@ select
   v.credit,
   -- **ไม่ปัด · ห้าม cast** (ADR 0003 ข้อ 4.2) — ดูเหตุผลเต็มที่หัวไฟล์
   v.debit  * a.weight      as allocated_debit,
-  v.credit * a.weight      as allocated_credit
+  v.credit * a.weight      as allocated_credit,
+  -- **ธงรายการข้ามผู้ถือ** — ต่อท้ายคอลัมน์เดิมเท่านั้น (`create or replace view`
+  -- เพิ่มได้แค่ท้ายสุด) · `counter_owner_id` อยู่ข้างบนแล้ว แต่ **ธงต้องมาด้วย**
+  -- เพราะคนอ่านแยก "ขาคู่ของรายการข้ามผู้ถือ" ออกจากรายการธรรมดาที่บังเอิญมี
+  -- คู่สัญญาไม่ได้ถ้ามีแต่ id · รายการข้ามผู้ถือเป็น **สองใบคู่กัน** (กฎเหล็กข้อ 4)
+  -- ที่ติด tag ชุดเดียวกันทั้งสองขา (ประตูบังคับไว้เอง) → รายงานที่บวกข้ามผู้ถือ
+  -- โดยไม่ตัดขาคู่ออกจะ **นับเงินก้อนเดียวสองครั้ง** = กำไรที่ไม่จริงแบบเดียวกับที่
+  -- ฟีเจอร์นี้มาแก้ · เทสต์ W9 ของ zz_tag_allocation_test.sql ตรึงตัวเลขไว้แล้ว
+  v.is_intercompany
 from v_ledger_posted v
 join transaction_tags l on l.transaction_id = v.transaction_id and l.untagged_at is null
 join tag_allocations  a on a.transaction_tag_id = l.id and a.superseded_at is null
@@ -169,7 +177,7 @@ where k.requires_allocation;
 alter view v_ledger_allocated set (security_invoker = true);
 
 comment on view v_ledger_allocated is
-  'ADR 0003 ข้อ 4.2 · สมุด (v_ledger_posted) × น้ำหนักของ tag ชนิดที่ปันส่วน · allocated_debit = debit * weight และ allocated_credit = credit * weight **ไม่ปัดและห้าม cast กลับเป็น numeric(18,2)** (cast = ปัด = ผลรวมข้าม tag ไม่ตรงสมุด และงบต่อ project ไม่ดุล) · ปันส่วน **รายบรรทัด** ไม่ใช่รายใบ เพราะ "ยอดใบ" ของใบเงินต้น+ดอกเบี้ยไม่มีนิยามเดียว · ยอดของทุก tag บวกกันได้และเท่ากับยอดในสมุดพอดี (ด่าน Σ น้ำหนัก = 1 รับประกัน) · security_invoker → ยอดของคนละสิทธิ์ไม่เท่ากันโดยเจตนา';
+  'ADR 0003 ข้อ 4.2 · สมุด (v_ledger_posted) × น้ำหนักของ tag ชนิดที่ปันส่วน · allocated_debit = debit * weight และ allocated_credit = credit * weight **ไม่ปัดและห้าม cast กลับเป็น numeric(18,2)** (cast = ปัด = ผลรวมข้าม tag ไม่ตรงสมุด และงบต่อ project ไม่ดุล) · ปันส่วน **รายบรรทัด** ไม่ใช่รายใบ เพราะ "ยอดใบ" ของใบเงินต้น+ดอกเบี้ยไม่มีนิยามเดียว · ยอดของทุก tag บวกกันได้และเท่ากับยอดในสมุดพอดี (ด่าน Σ น้ำหนัก = 1 รับประกัน) · security_invoker → ยอดของคนละสิทธิ์ไม่เท่ากันโดยเจตนา · พา counter_owner_id + is_intercompany มาด้วยเพื่อให้รายงานที่บวกข้ามผู้ถือตัดขาคู่ของรายการข้ามผู้ถือได้ (ไม่ตัด = นับเงินก้อนเดียวสองครั้ง)';
 
 -- ============================================================
 -- 3 · `v_tag_allocated_totals` — ยอดรวมต่อ tag ที่ **บวกข้าม tag ได้**
@@ -193,12 +201,15 @@ with per_txn as (
     v.tag_id, v.tag_code, v.tag_kind, v.owner_id, v.coa_id, v.cf_category,
     date_trunc('month', v.doc_date)::date as period,
     v.transaction_id,
+    -- คู่สัญญา + ธงข้ามผู้ถือเป็นค่าของ **หัวรายการ** → ค่าเดียวทุกบรรทัดของใบ
+    v.counter_owner_id, v.is_intercompany,
     min(v.weight)             as weight,
     sum(v.allocated_debit)    as allocated_debit,
     sum(v.allocated_credit)   as allocated_credit
   from v_ledger_allocated v
   group by v.tag_id, v.tag_code, v.tag_kind, v.owner_id, v.coa_id, v.cf_category,
-           date_trunc('month', v.doc_date)::date, v.transaction_id
+           date_trunc('month', v.doc_date)::date, v.transaction_id,
+           v.counter_owner_id, v.is_intercompany
 )
 select
   p.tag_id,
@@ -212,16 +223,32 @@ select
   sum(p.allocated_credit)           as allocated_credit,
   count(distinct p.transaction_id)  as allocated_txn_count,
   sum(p.weight)                     as weight_sum,
-  k.allocation_note_th
+  k.allocation_note_th,
+  -- **สองช่องที่แยกขาคู่ออกจากกันได้** — ต่อท้ายคอลัมน์เดิมเท่านั้น
+  --
+  -- วิวนี้เคยไม่มีสองช่องนี้ ขณะที่ `v_ledger_allocated` มี `counter_owner_id` อยู่แล้ว
+  -- ผลคือรายงาน "กำไรต่อ project" ที่บวกข้ามผู้ถือ (ซึ่งเป็นสิ่งที่วิวนี้มีไว้ให้ทำ
+  -- เพราะมันรวมมาถึงระดับ tag × ผู้ถือ × งวด) **นับสองขาของรายการเดียวซ้ำ**:
+  -- ประตูลง tag ชุดเดียวกันให้ทั้งสองขาโดยเจตนา (ADR 0003 ข้อ 4.2.2 ชั้น 1 —
+  -- ไม่งั้นยอดต่อ project ของคู่นั้นไม่สมมาตร) → ยอดโอน 200,000 ที่ติด project
+  -- เดียวกันจะกลายเป็น 400,000 เมื่อบวกข้ามผู้ถือ **ทั้งที่ทุกใบดุลและ Σ น้ำหนัก = 1**
+  -- จึงไม่มีด่านไหนจับได้ — กำไรที่ไม่จริงแบบเดียวกับที่ฟีเจอร์นี้มาแก้
+  --
+  -- **หน้าที่ของคนอ่าน**: รายงานที่บวกข้ามผู้ถือต้องตัดสินเรื่องขาคู่ด้วยสองช่องนี้
+  -- (กรอง `not is_intercompany` หรือหักขาที่ `counter_owner_id` อยู่ในชุดเดียวกัน
+  --  — หลักเดียวกับ Money Invariant ข้อ 6 "Consolidated ตัด intercompany แล้ว")
+  -- วิวไม่ตัดให้เอง เพราะยอด **ต่อผู้ถือรายคน** ต้องเห็นขาของตัวเองครบตามจริง
+  p.counter_owner_id,
+  p.is_intercompany
 from per_txn p
 join tag_kinds k on k.key = p.tag_kind
 group by p.tag_id, p.tag_code, p.tag_kind, p.owner_id, p.coa_id, p.cf_category,
-         p.period, k.allocation_note_th;
+         p.period, k.allocation_note_th, p.counter_owner_id, p.is_intercompany;
 
 alter view v_tag_allocated_totals set (security_invoker = true);
 
 comment on view v_tag_allocated_totals is
-  'ADR 0003 ข้อ 5 · ยอดรวมต่อ tag ชนิดที่ปันส่วน · **บวกข้าม tag ได้** (ต่างจาก v_tag_touch_totals ของ ADR 0002 ที่บวกไม่ได้ และห้ามมีวิว/หน้าจอไหนเอาสองอย่างมารวมกัน) · มี weight_sum มาในแถวเดียวกันเพื่อให้คนอ่านเห็นเองว่าใบถูกแบ่ง · ไม่มีคอลัมน์ชื่อ total/amount เปล่าๆ · allocation_note_th มาจาก tag_kinds ไม่ใช่จากหน้าจอ · นับใบจาก v_ledger_allocated ที่ RLS กรองแล้ว ไม่ใช่ count(*) จาก transaction_tags ตรง';
+  'ADR 0003 ข้อ 5 · ยอดรวมต่อ tag ชนิดที่ปันส่วน · **บวกข้าม tag ได้** (ต่างจาก v_tag_touch_totals ของ ADR 0002 ที่บวกไม่ได้ และห้ามมีวิว/หน้าจอไหนเอาสองอย่างมารวมกัน) · มี weight_sum มาในแถวเดียวกันเพื่อให้คนอ่านเห็นเองว่าใบถูกแบ่ง · ไม่มีคอลัมน์ชื่อ total/amount เปล่าๆ · allocation_note_th มาจาก tag_kinds ไม่ใช่จากหน้าจอ · นับใบจาก v_ledger_allocated ที่ RLS กรองแล้ว ไม่ใช่ count(*) จาก transaction_tags ตรง · **พา counter_owner_id และ is_intercompany มาด้วย** เพราะรายการข้ามผู้ถือเป็นสองใบคู่กันที่ประตูติด tag ชุดเดียวกันให้ทั้งสองขา → รายงานที่บวกข้ามผู้ถือโดยไม่ตัดขาคู่จะนับเงินก้อนเดียวสองครั้ง (200,000 → 400,000) โดยที่ทุกใบดุลและ Σ น้ำหนัก = 1 จึงไม่มีด่านไหนจับได้ · วิวไม่ตัดให้เอง (ยอดต่อผู้ถือรายคนต้องเห็นขาของตัวเองครบ) แต่ให้ช่องที่ตัดสินได้มาเสมอ';
 
 grant select on v_ledger_allocated, v_tag_allocated_totals to authenticated;
 do $$
@@ -436,6 +463,25 @@ begin
     raise exception 'allocation_note_th ของชนิด % ยังบอกผู้ใช้ว่าระบบปัดเศษตอนปันส่วน (กฎของ **ร่างแรกที่ ADR 0003 ข้อ 4.2 ปฏิเสธไปแล้ว**) · ระบบไม่ปัดตอนปันส่วน และถ้าประโยคในหน้าจอบอกตรงข้าม จะมีคนไปเขียนโค้ดปัดเศษตามนั้นแล้วงบต่อ project ไม่ดุล', v;
   end if;
 
+  -- ---------- (T10) วิวที่ปันส่วนแล้วต้องพาช่องที่ **แยกขาคู่** ออกมาได้ ----------
+  --   รายการข้ามผู้ถือเป็นสองใบคู่กัน (กฎเหล็กข้อ 4) และประตูติด tag ชุดเดียวกัน
+  --   ให้ทั้งสองขาโดยเจตนา (ADR 0003 ข้อ 4.2.2 ชั้น 1) → ถ้าวิวไม่พา
+  --   `counter_owner_id` / `is_intercompany` มา รายงานที่บวกข้ามผู้ถือจะ
+  --   **นับเงินก้อนเดียวสองครั้ง** โดยที่ทุกใบดุลและ Σ น้ำหนัก = 1 พอดี
+  --   จึงไม่มีด่านไหนจับได้ (= กำไรที่ไม่จริงแบบเดียวกับที่ฟีเจอร์นี้มาแก้)
+  select string_agg(x.rel || '.' || x.col, ', ') into v
+    from (values ('v_ledger_allocated', 'counter_owner_id'),
+                 ('v_ledger_allocated', 'is_intercompany'),
+                 ('v_tag_allocated_totals', 'counter_owner_id'),
+                 ('v_tag_allocated_totals', 'is_intercompany')) x(rel, col)
+   where not exists (select 1 from information_schema.columns c
+                      where c.table_schema = 'sri_os'
+                        and c.table_name = x.rel and c.column_name = x.col);
+  if v is not null then
+    raise exception 'วิวที่ปันส่วนแล้วขาดช่องที่แยกขาคู่ของรายการข้ามผู้ถือ: % · ประตูติด tag ชุดเดียวกันให้ทั้งสองขาโดยเจตนา (ADR 0003 ข้อ 4.2.2 ชั้น 1 — ไม่งั้นยอดต่อ project ของคู่นั้นไม่สมมาตร) → ถ้าไม่มีสองช่องนี้ รายงาน "กำไรต่อ project" ที่บวกข้ามผู้ถือจะนับเงินก้อนเดียวสองครั้ง (โอน 200,000 กลายเป็น 400,000) **โดยที่ทุกใบดุลและ Σ น้ำหนัก = 1 พอดี** จึงไม่มีด่านไหนจับได้',
+      v;
+  end if;
+
   -- ---------- (T9) ด่านกันตัวเองตาย (D-096) ----------
   --   ถ้าวิธีไล่ catalog เพี้ยน query ทุกข้อข้างบนจะคืนค่าว่างและ "ผ่าน" ทุกครั้ง
   --   เครื่องมือที่ครอบไม่ครบอันตรายกว่าไม่มีเครื่องมือ
@@ -476,7 +522,7 @@ begin
 end $fn$;
 
 comment on function fn_assert_tag_read_path() is
-  'ADR 0002 ข้อ 4 ชั้น 4 + ADR 0003 ข้อ 5 · ด่าน "เส้นทางอ่าน tag": view/matview หรือฟังก์ชันรายงานที่อ่าน transaction_tags/tag_allocations ตรงๆ นอก allow-list → พัง · ห้ามอะไรอ่านทั้ง v_tag_touch_totals และ v_tag_allocated_totals (touch กับ allocated ห้ามปนกัน) · ชื่อคอลัมน์ห้ามหลอกกัน · **ห้ามปัด/cast ที่ชั้นวิว** (ไล่จากนิยามจริงใน catalog ตามข้อ 4.2.1) · ชนิดที่ไม่ปันส่วนห้ามโผล่ในวิวที่ปันส่วนแล้ว · ประโยคกำกับว่างไม่ได้และห้ามพูดถึงกฎปัดเศษที่ ADR ปฏิเสธไปแล้ว · รวมด่านกันตัวเองตาย (D-096) · **ชิ้น 3 ของ ADR 0002 ต้องเพิ่มข้อ ไม่ใช่เขียนทับฟังก์ชันนี้** ไม่งั้นด่านของ allocated หายไปทั้งก้อน';
+  'ADR 0002 ข้อ 4 ชั้น 4 + ADR 0003 ข้อ 5 · ด่าน "เส้นทางอ่าน tag": view/matview หรือฟังก์ชันรายงานที่อ่าน transaction_tags/tag_allocations ตรงๆ นอก allow-list → พัง · ห้ามอะไรอ่านทั้ง v_tag_touch_totals และ v_tag_allocated_totals (touch กับ allocated ห้ามปนกัน) · ชื่อคอลัมน์ห้ามหลอกกัน · **ห้ามปัด/cast ที่ชั้นวิว** (ไล่จากนิยามจริงใน catalog ตามข้อ 4.2.1) · ชนิดที่ไม่ปันส่วนห้ามโผล่ในวิวที่ปันส่วนแล้ว · ประโยคกำกับว่างไม่ได้และห้ามพูดถึงกฎปัดเศษที่ ADR ปฏิเสธไปแล้ว · **วิวที่ปันส่วนแล้วต้องพา counter_owner_id/is_intercompany มาด้วย** (ไม่มี = รายงานที่บวกข้ามผู้ถือนับเงินก้อนเดียวสองครั้งโดยไม่มีด่านไหนจับ) · รวมด่านกันตัวเองตาย (D-096) · **ชิ้น 3 ของ ADR 0002 ต้องเพิ่มข้อ ไม่ใช่เขียนทับฟังก์ชันนี้** ไม่งั้นด่านของ allocated หายไปทั้งก้อน';
 
 -- guard function ห้ามเรียกจากข้างนอก (ไม่ใช่ข้อมูล เป็นด่านของ migration/เทสต์)
 revoke all on function fn_assert_tag_read_path() from public;

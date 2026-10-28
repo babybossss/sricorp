@@ -130,12 +130,27 @@ begin
       v_bad;
   end if;
 
-  -- (ข) tag ต้องมีจริงและใช้งานอยู่ — ไม่รู้จัก/ปิดแล้ว = ปฏิเสธทั้งคำขอ
+  -- (ข) tag ต้องมีจริงในแค็ตตาล็อก — ไม่รู้จัก = ปฏิเสธทั้งคำขอ
+  --
+  -- **เส้นแบ่งของ "tag ที่ถูกปิดใช้งาน" (is_active = false) อยู่ที่นี่**
+  --   ติด tag ใหม่  → **ห้าม** · บังคับที่ `fn_tag_link_system_columns` บนตาราง
+  --                   `transaction_tags` ซึ่งอ่าน `tags.is_active` เองตอน INSERT
+  --                   (ครอบการเขียนตรงด้วย ไม่ใช่แค่ทางประตู) · guard ท้ายไฟล์นี้
+  --                   ตรวจว่าด่านตัวนั้นยังอ่าน is_active อยู่
+  --   แก้สัดส่วนของ **tag ที่ติดอยู่กับใบนั้นแล้ว** → **ได้**
+  --
+  -- ฟังก์ชันนี้จึง **ไม่ตรวจ is_active** โดยเจตนา: มันถูกเรียกจากสองทางที่ความหมาย
+  -- ต่างกัน — ประตู (ติดใหม่) และ `fn_reallocate_tags` (แก้ของที่ติดแล้ว) — และตัวมันเอง
+  -- ไม่รู้จักใบ จึงแยกสองกรณีไม่ได้ · ถ้าตรวจที่นี่ ใบที่ติด tag ไปแล้วก่อน tag ถูกปิด
+  -- จะ **แก้สัดส่วนไม่ได้อีกเลยตลอดกาล** (และถอด tag ก็ยังไม่มีประตู) = ใบนั้นติดค้าง
+  -- ถาวรพร้อมสัดส่วนที่รู้อยู่ว่าผิด — เปิดฟีเจอร์ครึ่งเดียวอันตรายกว่าไม่เปิด
+  -- (บทเรียน mace-windu ข้อ 7) · ส่วนทางติดใหม่ยังปิดสนิทเพราะด่านบนตารางปฏิเสธ
+  -- ทั้งคำขอตอน INSERT ลิงก์ (ประตูเขียนลิงก์ก่อนน้ำหนักเสมอ) ไม่ใช่ทิ้งเงียบๆ
   select string_agg(k, ', ' order by k) into v_bad
     from jsonb_object_keys(p_weights) as k
-   where not exists (select 1 from sri_os.tags t where t.id = k::uuid and t.is_active);
+   where not exists (select 1 from sri_os.tags t where t.id = k::uuid);
   if v_bad is not null then
-    raise exception 'tag % ไม่มีในแค็ตตาล็อกหรือถูกปิดใช้งานแล้ว → ปฏิเสธทั้งคำขอ ไม่ใช่ทิ้ง tag นั้นเงียบๆ (ทิ้งเงียบๆ = ใบนี้หายจากรายงานต่อ project โดยคนกดคิดว่าติดแล้ว และ Σ น้ำหนักที่เหลือจะไม่ครบ 1 โดยไม่มีใครรู้ว่าเพราะอะไร)',
+    raise exception 'tag % ไม่มีในแค็ตตาล็อก → ปฏิเสธทั้งคำขอ ไม่ใช่ทิ้ง tag นั้นเงียบๆ (ทิ้งเงียบๆ = ใบนี้หายจากรายงานต่อ project โดยคนกดคิดว่าติดแล้ว และ Σ น้ำหนักที่เหลือจะไม่ครบ 1 โดยไม่มีใครรู้ว่าเพราะอะไร) · tag ต้องตั้งไว้ก่อนแล้วเลือก (คำสั่ง 26/10)',
       v_bad;
   end if;
 
@@ -213,13 +228,75 @@ begin
 end $fn$;
 
 comment on function fn_assert_tag_weights_shape(jsonb) is
-  'ADR 0003 ข้อ 6 · กฎ "รูปของชุดน้ำหนัก tag" **ที่เดียว** ที่ทั้ง fn_post_entry และ fn_reallocate_tags เรียก (กฎเดียวกันห้ามเขียนสองที่) · ตรวจ: เป็น object ไม่ว่าง · คีย์เป็น tag id · tag มีจริงและ is_active · ชนิดต้อง requires_allocation · น้ำหนักเป็นตัวเลข 0 < w <= 1 · ละเอียดไม่เกิน 6 ตำแหน่ง (เกิน = ปฏิเสธ ไม่ปัดให้) · น้ำหนักที่ไม่ส่งมายอมได้เฉพาะกรณี tag เดียว (เติม 1.000000) · Σ ต่อชนิด = 1.000000 พอดี · **ไม่ใช่แหล่งความจริง** — ด่านจริงคือ trg_assert_tag_allocation_complete ที่ชั้นตาราง ซึ่งครอบการ INSERT ตรงด้วย';
+  'ADR 0003 ข้อ 6 · กฎ "รูปของชุดน้ำหนัก tag" **ที่เดียว** ที่ทั้ง fn_post_entry และ fn_reallocate_tags เรียก (กฎเดียวกันห้ามเขียนสองที่) · ตรวจ: เป็น object ไม่ว่าง · คีย์เป็น tag id · tag มีจริงในแค็ตตาล็อก · ชนิดต้อง requires_allocation · น้ำหนักเป็นตัวเลข 0 < w <= 1 · ละเอียดไม่เกิน 6 ตำแหน่ง (เกิน = ปฏิเสธ ไม่ปัดให้) · น้ำหนักที่ไม่ส่งมายอมได้เฉพาะกรณี tag เดียว (เติม 1.000000) · Σ ต่อชนิด = 1.000000 พอดี · **ไม่ตรวจ tags.is_active โดยเจตนา**: ห้ามติด tag ที่ปิดแล้ว **ใหม่** บังคับที่ fn_tag_link_system_columns บนตารางลิงก์ (ครอบการเขียนตรงด้วย) ส่วนการ **แก้สัดส่วนของ tag ที่ติดอยู่กับใบนั้นแล้ว** ต้องทำได้ต่อไปแม้ tag ถูกปิด ไม่งั้นใบนั้นติดค้างถาวรพร้อมสัดส่วนที่รู้อยู่ว่าผิด (บทเรียนผู้ตรวจข้อ 7) · **ไม่ใช่แหล่งความจริง** — ด่านจริงคือ trg_assert_tag_allocation_complete ที่ชั้นตาราง ซึ่งครอบการ INSERT ตรงด้วย';
 
 revoke all on function fn_assert_tag_weights_shape(jsonb) from public;
 do $$
 begin
   execute 'revoke all on function sri_os.fn_assert_tag_weights_shape(jsonb) from anon';
   execute 'grant execute on function sri_os.fn_assert_tag_weights_shape(jsonb) to authenticated';
+end $$;
+
+-- ============================================================
+-- 1b · `fn_post_entry_accepted_tag_kinds` — **ชนิด tag ที่ลงผ่านประตูได้จริงวันนี้**
+--
+--   ฝั่งแอปต้องรู้ว่าชนิดไหน "มีช่องทางเข้าประตู" แล้ว เพื่อ **ไม่โชว์ช่องที่กด
+--   บันทึกแล้วตาย** · กติกาของฝั่งแอปคือ "อ่านไม่ได้ = ซ่อน" จึงต้องมีฟังก์ชันนี้
+--   ไม่งั้นฟอร์มซ่อน tag **ทุกชนิด** รวมชนิดที่ประตูรับอยู่แล้ว
+--
+--   **อ่านจากของจริง ไม่ใช่รายชื่อตายตัว**: ไล่ `c_header` (รายการช่องที่
+--   `fn_post_entry` รับ) จาก `pg_get_functiondef` ของประตูเอง แล้วจับคู่กับคอนฟิก
+--     ชนิดที่ `requires_allocation` → เข้าทางช่อง `tag_weights`
+--     ชนิดที่ไม่ปันส่วน            → เข้าทางช่อง `tag_ids` (ADR 0002 ชิ้น 3)
+--   วันที่ชิ้น 3 ของ ADR 0002 ลงแล้วประตูรับ `tag_ids` ด้วย ฟังก์ชันนี้จะเริ่มคืน
+--   `label` **เอง** โดยไม่มีใครต้องมาแก้ → ถ้าตัดสินจากธง `requires_allocation`
+--   เพียวๆ ฟอร์มจะซ่อน `label` ต่อไปตลอดกาลโดยไม่มีใครรู้
+--
+--   อ่าน `c_header` ไม่ออก = **พัง** ไม่ใช่คืนชุดว่าง (ชุดว่างแปลว่า "ไม่มีชนิดไหน
+--   ลงได้" ซึ่งฟอร์มจะปิดทุกช่องทิ้งทั้งที่ของจริงลงได้ · หลักเดียวกับ check:sync
+--   ที่ไม่ยอมผ่านด้วยชุดว่าง)
+--
+--   อ่านอย่างเดียว · **INVOKER** · อ่านแค่แค็ตตาล็อกชนิด (`tag_kinds`) ซึ่งเปิดให้
+--   ทุกคนที่ล็อกอินอ่านอยู่แล้ว และ catalog ของฟังก์ชัน → ไม่มีอะไรรั่วเพิ่ม
+-- ============================================================
+create or replace function fn_post_entry_accepted_tag_kinds() returns text[]
+language plpgsql stable set search_path = '' as $fn$
+declare
+  c_q      constant text := chr(39);   -- เครื่องหมายคำพูดเดี่ยว (ใช้ล้อมชื่อช่องใน c_header)
+  v_def    text;
+  v_header text;
+  v_kinds  text[];
+begin
+  if to_regprocedure('sri_os.fn_post_entry(jsonb)') is null then
+    raise exception 'ไม่มีประตู fn_post_entry ในฐานข้อมูลนี้ → ตอบไม่ได้ว่าชนิด tag ไหนลงได้ · ปฏิเสธไว้ก่อน ไม่คืนชุดว่าง (ชุดว่างแปลว่า "ไม่มีชนิดไหนลงได้" ซึ่งฟอร์มจะซ่อนทุกช่องทิ้งทั้งที่ของจริงอาจลงได้)';
+  end if;
+
+  v_def := pg_get_functiondef('sri_os.fn_post_entry(jsonb)'::regprocedure);
+  -- รายการช่องของประตูอยู่ **ในตัวฟังก์ชัน** (ค่าคงที่ c_header) → อ่านจากนิยามจริง
+  v_header := substring(v_def from 'c_header[^:]*:=\s*array\[(.*?)\]\s*;');
+  if v_header is null or btrim(v_header) = '' then
+    raise exception 'อ่านรายการช่องของประตู (c_header ใน fn_post_entry) ไม่ออก → ตอบไม่ได้ว่าชนิด tag ไหนลงผ่านประตูได้ · **ปฏิเสธไว้ก่อน ไม่คืนชุดว่าง** · ถ้าประตูถูกเขียนใหม่ด้วยรูปอื่น (เช่นย้ายรายการช่องไปเก็บในตาราง) ต้องแก้ฟังก์ชันนี้ให้อ่านจากที่ใหม่ ไม่ใช่เขียนรายชื่อชนิดตายตัวไว้ที่นี่ (รายชื่อตายตัวจะค้างล้าสมัยเงียบๆ เหมือนจำนวนผังบัญชีในเอกสาร)';
+  end if;
+
+  select array_agg(k.key order by k.sort_order, k.key) into v_kinds
+    from sri_os.tag_kinds k
+   where k.is_active
+     and position(c_q
+                  || case when k.requires_allocation then 'tag_weights' else 'tag_ids' end
+                  || c_q
+                  in v_header) > 0;
+
+  return coalesce(v_kinds, '{}'::text[]);
+end $fn$;
+
+comment on function fn_post_entry_accepted_tag_kinds() is
+  'ชนิด tag ที่ **ลงผ่าน fn_post_entry ได้จริงวันนี้** (ADR 0003 ข้อ 6 · ADR 0002 ชิ้น 3 ยังไม่ลง ณ 28/10) · ตัดสินจาก **การมีอยู่จริงของช่องใน c_header ของประตู** ที่อ่านจาก pg_get_functiondef ไม่ใช่จากธง requires_allocation เพียวๆ และไม่ใช่รายชื่อตายตัว → วันที่ประตูรับ tag_ids ฟังก์ชันนี้จะคืน label เองโดยไม่มีใครต้องแก้ · อ่าน c_header ไม่ออก = **พัง** ไม่คืนชุดว่าง (ชุดว่าง = ฟอร์มซ่อนทุกชนิดทั้งที่ของจริงลงได้) · อ่านอย่างเดียว · INVOKER · มีไว้ให้ฟอร์มปิดช่องที่ประตูยังไม่รับ แทนที่จะโชว์แล้วไปตายตอนกดบันทึก';
+
+revoke all on function fn_post_entry_accepted_tag_kinds() from public;
+do $$
+begin
+  execute 'revoke all on function sri_os.fn_post_entry_accepted_tag_kinds() from anon';
+  execute 'grant execute on function sri_os.fn_post_entry_accepted_tag_kinds() to authenticated';
 end $$;
 
 -- ============================================================
@@ -1015,6 +1092,57 @@ begin
   end if;
   if v !~ 'counter_owner_id' then
     raise exception 'fn_reallocate_tags ไม่ได้ยืนยันเองว่าชุดใบที่จะแก้มีขาของผู้ถืออีกฝ่าย → ถ้าวันหนึ่งตัวหาขาคู่ถูกแก้/ถอยรุ่น การแก้ข้างเดียวจะผ่านเงียบ (เทสต์ M3 วัดข้อนี้)';
+  end if;
+
+  -- (ง2) **เส้นแบ่งของ tag ที่ถูกปิดใช้งาน** (is_active = false)
+  --   ติดใหม่ห้าม · แก้สัดส่วนของที่ติดแล้วได้
+  --   `fn_assert_tag_weights_shape` ไม่ตรวจ is_active โดยเจตนา (มันไม่รู้จักใบ
+  --   จึงแยก "ติดใหม่" กับ "แก้ของที่ติดแล้ว" ไม่ได้) → ทางติดใหม่ต้องปิดสนิทที่
+  --   ด่านบนตารางลิงก์ · ถ้าด่านตัวนั้นเลิกอ่าน is_active ขึ้นวันหนึ่ง
+  --   **tag ที่ปิดแล้วจะติดใหม่ได้เงียบๆ** ซึ่งเป็นรูที่เรายอมแลกมาโดยไม่รู้ตัว
+  --   เทียบจากนิยามที่ **ตัดคอมเมนต์ออกแล้ว** — ไม่งั้นข้อนี้จะเขียว/แดงเพราะ
+  --   ประโยคอธิบายที่พูดถึงธงตัวนี้ ไม่ใช่เพราะโค้ดที่ตรวจมันจริง
+  if regexp_replace(pg_get_functiondef('sri_os.fn_tag_link_system_columns()'::regprocedure),
+                    '--[^' || chr(10) || ']*', '', 'g') !~ '\mis_active\M' then
+    raise exception 'fn_tag_link_system_columns ไม่ได้อ่าน tags.is_active อีกแล้ว → ติด tag ที่ปิดใช้งานแล้วเป็นลิงก์ใหม่ได้เงียบๆ · กฎรูปน้ำหนัก (fn_assert_tag_weights_shape) ปล่อย is_active ผ่านโดยเจตนาเพื่อให้ **แก้สัดส่วนของ tag ที่ติดอยู่กับใบนั้นแล้ว** ทำได้แม้ tag ถูกปิด (ไม่งั้นใบนั้นติดค้างถาวรพร้อมสัดส่วนที่รู้อยู่ว่าผิด) → ด่านบนตารางลิงก์คือที่เดียวที่ปิดทางติดใหม่ ห้ามถอด';
+  end if;
+  if regexp_replace(pg_get_functiondef('sri_os.fn_assert_tag_weights_shape(jsonb)'::regprocedure),
+                    '--[^' || chr(10) || ']*', '', 'g') ~ '\mis_active\M' then
+    raise exception 'fn_assert_tag_weights_shape กลับไปตรวจ tags.is_active → ใบที่ติด tag ไว้ก่อน tag ถูกปิด จะ **แก้สัดส่วนไม่ได้อีกเลยตลอดกาล** (fn_reallocate_tags เรียกฟังก์ชันนี้) และถอด tag ก็ยังไม่มีประตู = ใบนั้นติดค้างถาวร · เปิดฟีเจอร์ครึ่งเดียวอันตรายกว่าไม่เปิด (บทเรียนผู้ตรวจข้อ 7) · ทางติดใหม่ปิดอยู่แล้วที่ด่านบนตารางลิงก์';
+  end if;
+
+  -- (ง3) **ฟังก์ชันบอกชนิดที่ประตูรับแล้ว** (ฝั่งแอปใช้ปิดช่องที่กดแล้วตาย)
+  if to_regprocedure('sri_os.fn_post_entry_accepted_tag_kinds()') is null then
+    raise exception 'ไม่มี fn_post_entry_accepted_tag_kinds → ฝั่งแอปอ่านไม่ได้ว่าชนิด tag ไหนลงผ่านประตูได้ และกติกา "อ่านไม่ได้ = ซ่อน" จะทำให้ฟอร์มซ่อน tag ทุกชนิด รวมชนิดที่ประตูรับอยู่แล้ว';
+  end if;
+  if exists (select 1 from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+              where ns.nspname = 'sri_os'
+                and p.proname = 'fn_post_entry_accepted_tag_kinds' and p.prosecdef) then
+    raise exception 'fn_post_entry_accepted_tag_kinds เป็น security definer → ต้องเป็น INVOKER (มันแค่อ่านคอนฟิกกับนิยามของประตู ไม่มีเหตุผลให้ยกสิทธิ์)';
+  end if;
+  if not has_function_privilege('authenticated',
+        'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
+    raise exception 'authenticated เรียก fn_post_entry_accepted_tag_kinds ไม่ได้ → ฟอร์มจะซ่อน tag ทุกชนิด (อ่านไม่ได้ = ซ่อน)';
+  end if;
+  if has_function_privilege('anon', 'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute')
+     or has_function_privilege('public', 'sri_os.fn_post_entry_accepted_tag_kinds()', 'execute') then
+    raise exception 'fn_post_entry_accepted_tag_kinds เปิดให้ PUBLIC/anon';
+  end if;
+  -- ต้องตัดสินจาก **ของจริง** ไม่ใช่รายชื่อตายตัว
+  v := pg_get_functiondef('sri_os.fn_post_entry_accepted_tag_kinds()'::regprocedure);
+  if v !~ '\mc_header\M' or v !~ '\mpg_get_functiondef\M' then
+    raise exception 'fn_post_entry_accepted_tag_kinds ไม่ได้อ่าน c_header ของ fn_post_entry จาก catalog → กลายเป็นรายชื่อตายตัวที่จะค้างล้าสมัยเงียบๆ (วันที่ประตูรับ tag_ids ฟอร์มจะยังซ่อน label ตลอดกาลโดยไม่มีใครรู้)';
+  end if;
+  -- **สภาพวันนี้ (28/10)**: ประตูรับ `tag_weights` แล้ว แต่ยังไม่รับ `tag_ids`
+  --   (ADR 0002 ชิ้น 3 ยังไม่ลง) → ต้องคืน 'project' และต้องยังไม่คืน 'label'
+  --   **ถ้า guard นี้ดังเพราะคืน 'label' ด้วย แปลว่าชิ้น 3 ของ ADR 0002 ลงแล้ว
+  --   → แก้ guard ข้อนี้ ไม่ใช่แก้ฟังก์ชัน** (ฟังก์ชันทำงานถูกแล้ว: มันอ่านช่องจริง
+  --   ของประตู ไม่ได้เขียนรายชื่อตายตัว)
+  if not ('project' = any (sri_os.fn_post_entry_accepted_tag_kinds())) then
+    raise exception 'fn_post_entry_accepted_tag_kinds ไม่คืน "project" ทั้งที่ประตูรับช่อง tag_weights แล้ว → ฟอร์มจะซ่อนช่อง project ทั้งที่ลงได้ (ฟีเจอร์ที่ลงเสร็จแล้วแต่ใช้ไม่ได้)';
+  end if;
+  if 'label' = any (sri_os.fn_post_entry_accepted_tag_kinds()) then
+    raise exception 'fn_post_entry_accepted_tag_kinds คืน "label" ทั้งที่ c_header ของประตูยังไม่มีช่อง tag_ids → ฟอร์มจะโชว์ช่องที่กดบันทึกแล้วเด้ง "ช่องที่ยังไม่รู้จัก" · **ถ้า guard นี้ดังเพราะชิ้น 3 ของ ADR 0002 ลงแล้วจริง ให้แก้ guard ข้อนี้ ไม่ใช่แก้ฟังก์ชัน**';
   end if;
 
   -- (จ) ACL: ประตูเปิดให้ authenticated · ปิดจาก anon/PUBLIC
