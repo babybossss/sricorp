@@ -23,12 +23,47 @@ function fakeApi(over: { tagIds: string[]; tagWeights?: TagWeights; amount?: num
     draft: { tagIds: over.tagIds, tagWeights },
     patch: () => {},
     canTag: over.canTag ?? true,
-    tagCatalog: { loading: false, error: null, notMigrated: false, kinds, tags, ...over.cat },
+    tagCatalog: { loading: false, error: null, notMigrated: false, kinds, tags, hiddenKinds: [], ...over.cat },
     tagCheck: check,
     tagWeightsEffective: eff,
     postingInput: over.amount === undefined ? null : { amount: over.amount },
   } as unknown as TxFormApi;
 }
+
+describe("TagSection · ชนิดที่ประตูบันทึกยังไม่รับ", () => {
+  // แค็ตตาล็อกที่ server ส่งมาหลังกรองแล้ว: เหลือแต่ project · label ถูกซ่อน
+  const onlyProject = { kinds: [kinds[0]], tags: tags.filter((x) => x.kind === "project"), hiddenKinds: [{ key: "label", nameTh: "ป้ายกำกับ", reason: "not_open" as const }] };
+
+  it("ชนิดที่ซ่อนไม่โผล่ให้เลือก · ชนิดที่รับยังเลือกได้ · มีข้อความอธิบายเป็นภาษาคน", () => {
+    const html = renderToStaticMarkup(<TagSection api={fakeApi({ tagIds: [], cat: onlyProject })} />);
+    const text = visibleText(html);
+    expect(text).toMatch(/ไอริส 235/);
+    expect(text).not.toMatch(/ภาษี/); // tag ของ label ไม่โผล่
+    expect(html).toContain('data-testid="tag-hidden-kinds"');
+    expect(text).toMatch(/ป้ายกำกับ.*ยังเลือกไม่ได้/);
+    expect(text).toMatch(/จะกลับมาให้เลือกเอง/);
+  });
+
+  it("อ่านรายชื่อที่ประตูรับไม่ได้ → ไม่มีอะไรให้เลือกเลย (ซ่อนหมด) แต่บอกเหตุ และไม่ขึ้น 'ยังไม่มี tag'", () => {
+    const html = renderToStaticMarkup(
+      <TagSection
+        api={fakeApi({
+          tagIds: [],
+          cat: { kinds: [], tags: [], hiddenKinds: kinds.map((k) => ({ key: k.key, nameTh: k.nameTh, reason: "unreadable" as const })) },
+        })}
+      />
+    );
+    const text = visibleText(html);
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain("tag-picker-empty");
+    expect(text).toMatch(/ตรวจไม่ได้/);
+    expect(text).toMatch(/โปรเจกต์/);
+  });
+
+  it("ไม่มีอะไรซ่อน → ไม่มีกล่องข้อความ", () => {
+    expect(renderToStaticMarkup(<TagSection api={fakeApi({ tagIds: [] })} />)).not.toContain("tag-hidden-kinds");
+  });
+});
 
 describe("TagSection", () => {
   it("ไม่มีสิทธิ์ tag.assign → ไม่แสดงอะไรเลย", () => {

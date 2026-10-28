@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { getAccess } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { readTagCatalog } from "@/lib/db/tag-catalog-server";
+import { readAcceptedTagKinds } from "@/lib/db/tag-gate-server";
+import { splitByAcceptance, type HiddenKind } from "@/lib/tags/acceptance";
 import { NOT_MIGRATED_MESSAGE, isMissingDbObject } from "@/lib/tags/db-errors";
 import { checkWeights } from "@/lib/tags/weights";
 import type { Tag, TagKind } from "@/components/tags/types";
@@ -21,10 +23,13 @@ import type { Tag, TagKind } from "@/components/tags/types";
  */
 
 export type TagCatalogState =
-  | { ok: true; kinds: TagKind[]; tags: Tag[] }
+  | { ok: true; kinds: TagKind[]; tags: Tag[]; hiddenKinds: HiddenKind[] }
   | { ok: false; message: string; notMigrated: boolean };
 
-/** รายการ tag ที่เลือกได้ (เฉพาะที่เปิดใช้งาน) + กติกาของแต่ละชนิด สำหรับฟอร์ม */
+/**
+ * รายการ tag ที่เลือกได้ (เฉพาะที่เปิดใช้งาน) + กติกาของแต่ละชนิด สำหรับฟอร์ม
+ * คืนเฉพาะชนิดที่ประตูบันทึกรับได้จริง (อ่านจาก DB) · ชนิดที่ไม่รับ/อ่านไม่ได้อยู่ใน `hiddenKinds` พร้อมเหตุ ไม่หายเงียบ
+ */
 export async function loadTagCatalog(): Promise<TagCatalogState> {
   const access = await getAccess();
   if (!access.user) return { ok: false, notMigrated: false, message: "เข้าสู่ระบบหมดอายุ — ให้เข้าสู่ระบบใหม่" };
@@ -36,7 +41,8 @@ export async function loadTagCatalog(): Promise<TagCatalogState> {
   }
   const read = await readTagCatalog(supabase);
   if (!read.ok) return read;
-  return { ok: true, kinds: [...read.catalog.kinds], tags: [...read.catalog.tags] };
+  const split = splitByAcceptance(read.catalog, await readAcceptedTagKinds(supabase));
+  return { ok: true, kinds: split.catalog.kinds, tags: split.catalog.tags, hiddenKinds: split.hidden };
 }
 
 export type ReallocateRequest = {

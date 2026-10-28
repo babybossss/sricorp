@@ -60,6 +60,37 @@ export function roundShares(exact: readonly bigint[]): RoundedShares {
   return { cents, totalCents };
 }
 
+export type RoundedSharePairs = {
+  /** สตางค์ที่ปัดแล้วของแต่ละ tag ฝั่งเดบิต / เครดิต ตามลำดับเดียวกับอินพุต */
+  debitCents: bigint[];
+  creditCents: bigint[];
+  /** ยอดรวมแต่ละฝั่ง (ปัดครั้งเดียวที่ชั้นยอดรวม) */
+  totalDebitCents: bigint;
+  totalCreditCents: bigint;
+  /** = totalDebitCents เมื่อสมุดสมดุล · ใช้เป็น "ยอดรายการ" ที่แสดง */
+  totalCents: bigint;
+};
+
+/**
+ * **ทางเข้าเดียวสำหรับหน้าจอ** — รับส่วนแบ่งเป็นคู่ dr/cr ต่อ tag (รูปเดียวกับ `TagShare` จาก `allocation.ts`)
+ *
+ * ทำไมต้องเป็นคู่: ถ้าให้เรียก `roundShares` แยกฝั่ง แล้วแต่ละฝั่งมีเศษไม่เท่ากัน tag เดียวกันอาจโชว์ dr 0.06 / cr 0.05
+ * คนอ่านเห็นว่าไม่ดุลทั้งที่ของจริงดุล · ที่นี่ทั้งสองฝั่งผ่านฟังก์ชันเดียวกันกับ **อินพุตชุดเดียวกัน**
+ * จึงรับประกันว่าเมื่อยอดแม่นตรงของ tag ฝั่ง dr = ฝั่ง cr ตัวเลขที่ปัดแล้วก็เท่ากันเสมอ
+ * (เทสต์ `display.test.ts` พิสูจน์ · `no-split-rounding.test.ts` กันไม่ให้ใครเรียก `roundShares` ตรงจากหน้าจอ)
+ */
+export function roundSharePairs(shares: readonly { debit: bigint; credit: bigint }[]): RoundedSharePairs {
+  const d = roundShares(shares.map((s) => s.debit));
+  const c = roundShares(shares.map((s) => s.credit));
+  return {
+    debitCents: d.cents,
+    creditCents: c.cents,
+    totalDebitCents: d.totalCents,
+    totalCreditCents: c.totalCents,
+    totalCents: d.totalCents,
+  };
+}
+
 /** สตางค์ → บาท (number) สำหรับส่งเข้า `money()` แสดงผลเท่านั้น */
 export function centsToBaht(cents: bigint): number {
   return Number(cents) / 100;

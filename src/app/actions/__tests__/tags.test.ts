@@ -29,6 +29,31 @@ describe("loadTagCatalog", () => {
     expect(out.tags.find((t) => t.id === TAG.p1)).toEqual({ id: TAG.p1, kind: "project", code: "iris-235", nameTh: "ไอริส 235", isActive: true, colorToken: "brand" });
   });
 
+  it("ประตูรับแค่ project → label ไม่โผล่ให้เลือก (ทั้งชนิดและ tag) และอยู่ใน hiddenKinds พร้อมเหตุ", async () => {
+    db.acceptedKinds = ["project"];
+    const out = await loadTagCatalog();
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.kinds.map((k) => k.key)).toEqual(["project"]);
+    expect(out.tags.map((t) => t.id).sort()).toEqual([TAG.p1, TAG.p2, TAG.p3].sort());
+    expect(out.hiddenKinds).toEqual([{ key: "label", nameTh: "ป้ายกำกับ", reason: "not_open" }]);
+  });
+
+  it("ประตูรับครบ → ไม่ซ่อนอะไร (ชนิดที่รับเลือกได้ปกติ)", async () => {
+    const out = await loadTagCatalog();
+    expect(out.ok && out.hiddenKinds).toEqual([]);
+  });
+
+  it.each([["missing"], ["throw"], [null], [{ oops: 1 }], ["project"]])("อ่านรายชื่อที่ประตูรับไม่ได้ (%j) → ซ่อนทุกชนิด ไม่ใช่โชว์", async (bad) => {
+    db.acceptedKinds = bad;
+    const out = await loadTagCatalog();
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.kinds).toEqual([]);
+    expect(out.tags).toEqual([]);
+    expect(out.hiddenKinds.map((h) => [h.key, h.reason])).toEqual([["project", "unreadable"], ["label", "unreadable"]]);
+  });
+
   it("ยังไม่ได้ลง migration → ok:false บอกตรงๆ ไม่คืนแค็ตตาล็อกว่าง", async () => {
     db.migrated = false;
     const out = await loadTagCatalog();
@@ -258,6 +283,22 @@ describe("postEntry · ลงรายการพร้อม tag + น้ำ�
     db.migrated = false;
     await refused(req({ tagIds: [TAG.p1], weights: { [TAG.p1]: 1 } }), /ยังไม่ได้ลง migration.*ยังไม่ได้บันทึกอะไร/);
     expect(ctx.db.rpcCalls).toHaveLength(0);
+  });
+
+  it("ส่งตรงมาด้วย tag ชนิดที่ประตูไม่รับ → ปฏิเสธด้วยข้อความภาษาคน ไม่เรียก fn_post_entry", async () => {
+    db.acceptedKinds = ["project"];
+    await refused(req({ tagIds: [TAG.p1, TAG.l1], weights: { [TAG.p1]: 1 } }), /ป้ายกำกับ.*ยังเลือกไม่ได้.*ยังไม่ได้บันทึกอะไร/);
+    expect(ctx.db.rpcCalls).toHaveLength(0);
+    // ชนิดที่รับยังบันทึกได้ปกติ
+    expect((await postEntry(req({ tagIds: [TAG.p1], weights: { [TAG.p1]: 1 } }))).ok).toBe(true);
+  });
+
+  it("อ่านรายชื่อที่ประตูรับไม่ได้ → ไม่ยิง fn_post_entry (ปฏิเสธก่อน) · ไม่ติด tag ยังลงได้ตามปกติ", async () => {
+    db.acceptedKinds = "missing";
+    await refused(req({ tagIds: [TAG.p1], weights: { [TAG.p1]: 1 } }), /ตรวจไม่ได้.*ยังไม่ได้บันทึกอะไร/);
+    expect(ctx.db.rpcCalls).toHaveLength(0);
+    expect((await postEntry(req())).ok).toBe(true);
+    expect(db.gateCalls).toBe(1); // ใบที่ไม่ติด tag ไม่ต้องถามประตู
   });
 
   it("แค็ตตาล็อกมีแต่ fn_post_entry ยังไม่รู้จัก tag_* (DB ที่ลงอยู่วันนี้) → DB ปฏิเสธทั้งใบ แอปตอบ 'ยังไม่ได้ลง migration' และสมุดว่าง", async () => {

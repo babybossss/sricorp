@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allocateLines } from "../allocation";
-import { centsToBaht, roundShares } from "../display";
+import { centsToBaht, roundShares, roundSharePairs } from "../display";
 import { checkWeights } from "../weights";
 
 const D = (n: number) => BigInt(n);
@@ -77,5 +77,54 @@ describe("roundShares · ฟังก์ชันปัดเพื่อแส�
         expect(diff > D(-1_000_000) && diff < D(1_000_000)).toBe(true);
       });
     }
+  });
+});
+
+describe("roundSharePairs · รับเป็นคู่ dr/cr (กันตัวเลขของ tag เดียวแสดงไม่ดุล)", () => {
+  const pairs = (baht: number, w: Record<string, number>) => {
+    const c = checkWeights(Object.keys(w).map((id) => ({ id })), w);
+    if (!c.ok) throw new Error("weights");
+    // ใบสมดุล: เดบิตหนึ่งบรรทัด เครดิตแตกเป็นสองบรรทัด → เศษต่อบรรทัดต่างกันแต่ยอดต่อ tag ต้องเท่ากัน
+    const half = baht / 2;
+    return allocateLines(
+      [
+        { debit: baht, credit: 0 },
+        { debit: 0, credit: half },
+        { debit: 0, credit: half },
+      ],
+      c.weights
+    ).shares;
+  };
+
+  it("ใบสมดุล: ทุก tag ได้ dr = cr ทุกสตางค์ (ค่าสุ่ม)", () => {
+    let seed = 11;
+    const rnd = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed % n);
+    const sets: Record<string, number>[] = [
+      { a: 0.333333, b: 0.333333, c: 0.333334 },
+      { a: 0.6, b: 0.4 },
+      { a: 0.142857, b: 0.142857, c: 0.142857, d: 0.142857, e: 0.142857, f: 0.142857, g: 0.142858 },
+    ];
+    for (const w of sets) {
+      for (let run = 0; run < 100; run++) {
+        const baht = (2 * (1 + rnd(2_500_000))) / 100; // เป็นเลขสตางค์คู่ เพื่อแบ่งครึ่งเป็นสองบรรทัดเครดิตได้พอดี
+        const shares = pairs(baht, w);
+        const r = roundSharePairs(shares);
+        expect(r.creditCents).toEqual(r.debitCents);
+        expect(r.totalCreditCents).toBe(r.totalDebitCents);
+        expect(sum(r.debitCents)).toBe(r.totalCents);
+      }
+    }
+  });
+
+  it("ยอดแม่นตรงของ tag เท่ากัน → ผลปัดเท่ากัน แม้ลำดับ/จำนวน tag เป็นแบบที่เศษไม่ลงตัว", () => {
+    const x = [D(333_333_333), D(333_333_333), D(333_333_334)]; // 3.33333333 สตางค์ ×3
+    const r = roundSharePairs(x.map((v) => ({ debit: v, credit: v })));
+    expect(r.debitCents).toEqual(r.creditCents);
+  });
+
+  it("ถ้ายอดแม่นตรงสองฝั่งต่างกันจริง (ใบไม่สมดุล) ก็แสดงตามจริง ไม่ซ่อน", () => {
+    const r = roundSharePairs([{ debit: D(1_000_000), credit: D(2_000_000) }]);
+    expect(r.debitCents).toEqual([D(1)]);
+    expect(r.creditCents).toEqual([D(2)]);
   });
 });

@@ -27,6 +27,8 @@ import { readDisposalContext } from "@/lib/db/disposal-context-server";
 import { movesWholeBalance } from "@/lib/db/balance-move";
 import { readBalanceMove } from "@/lib/db/balance-move-server";
 import { readTagCatalog } from "@/lib/db/tag-catalog-server";
+import { readAcceptedTagKinds } from "@/lib/db/tag-gate-server";
+import { hiddenKindsMessage, refusedKinds } from "@/lib/tags/acceptance";
 import { NOT_MIGRATED_MESSAGE, isUnknownTagField } from "@/lib/tags/db-errors";
 import { checkTagSelection } from "@/lib/tags/selection";
 import type { TagWeights } from "@/components/tags/types";
@@ -288,6 +290,9 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
       if (!cat.ok) return fail(cat.message);
       const checked = checkTagSelection({ tagIds: ids, weights: wantedTags.weights }, cat.catalog);
       if (!checked.ok) return fail(`${checked.issues.join(" · ")} · ยังไม่ได้บันทึกอะไร`);
+      // ชนิดที่ประตูยังรับไม่ได้ → ปฏิเสธที่นี่ด้วยข้อความที่อ่านรู้เรื่อง (ฟอร์มซ่อนอยู่แล้ว · นี่คือด่านสำรองถ้ามีใครส่งตรงมา)
+      const refusedByGate = refusedKinds(ids, cat.catalog, await readAcceptedTagKinds(supabase));
+      if (refusedByGate.length > 0) return fail(`${hiddenKindsMessage(refusedByGate)} · ยังไม่ได้บันทึกอะไร`);
       tagFields = {
         ...(checked.labelTagIds.length > 0 ? { tag_ids: checked.labelTagIds } : {}),
         ...(Object.keys(checked.tagWeights).length > 0 ? { tag_weights: checked.tagWeights } : {}),

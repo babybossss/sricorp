@@ -50,6 +50,9 @@ export function installTagDb(opts: { migrated?: boolean; postGateKnowsTags?: boo
     postTagFields: [] as Row[],
     /** ทำให้ rpc/from ล้ม */
     reallocReply: null as null | { data: unknown; error: Err } | "throw",
+    /** ฟังก์ชันที่คืนรายชื่อชนิดที่ fn_post_entry รับได้ · "missing" = ฟังก์ชันยังไม่มี · "throw" = ล้ม · อื่นๆ = คำตอบดิบ */
+    acceptedKinds: ["project", "label"] as unknown,
+    gateCalls: 0,
   };
 
   const missing = (what: string): { data: null; error: Err } => ({
@@ -101,6 +104,12 @@ export function installTagDb(opts: { migrated?: boolean; postGateKnowsTags?: boo
       if (sumMicro(w) !== 1_000_000) return { data: null, error: { code: "P0001", message: "น้ำหนักรวมไม่ครบ 100% พอดี" } };
       if (!String(args.p_reason ?? "").trim()) return { data: null, error: { code: "P0001", message: "ต้องมีเหตุผล" } };
       return { data: { transaction_ids: [args.p_transaction_id] }, error: null };
+    }
+    if (fn === "fn_post_entry_accepted_tag_kinds") {
+      state.gateCalls++;
+      if (state.acceptedKinds === "throw") throw new Error("network down");
+      if (state.acceptedKinds === "missing") return { data: null, error: { code: "PGRST202", message: "Could not find the function sri_os.fn_post_entry_accepted_tag_kinds in the schema cache" } };
+      return { data: state.acceptedKinds, error: null };
     }
     if (fn === "fn_post_entry") {
       const p = args.p_payload as Row;

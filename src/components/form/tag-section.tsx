@@ -6,7 +6,8 @@ import { TagChip, formatPercent } from "@/components/tags/tag-chip";
 import { TagPicker } from "@/components/tags/tag-picker";
 import { TagWeightInput } from "@/components/tags/tag-weight-input";
 import { allocateLines } from "@/lib/tags/allocation";
-import { centsToBaht, roundShares } from "@/lib/tags/display";
+import { centsToBaht, roundSharePairs } from "@/lib/tags/display";
+import { hiddenKindsMessage } from "@/lib/tags/acceptance";
 import type { TxFormApi } from "./use-tx-form";
 
 /**
@@ -46,18 +47,28 @@ export function TagSection({ api }: { api: TxFormApi }) {
   }
 
   const chosen = cat.tags.filter((t) => draft.tagIds.includes(t.id));
+  const hiddenNotice =
+    cat.hiddenKinds.length > 0 ? (
+      <div role="note" data-testid="tag-hidden-kinds" className="rounded border border-warn bg-warn-bg p-[12px_14px] text-base leading-7 text-warn-fg">
+        {hiddenKindsMessage(cat.hiddenKinds)}
+      </div>
+    ) : null;
   const allocKinds = cat.kinds.filter((k) => k.requiresAllocation);
 
   return (
     <div className="flex flex-col gap-4 rounded-card border border-line bg-canvas p-4">
       {title}
-      <TagPicker
-        catalog={cat.tags}
-        kinds={cat.kinds}
-        selectedIds={draft.tagIds}
-        onChange={(ids) => patch({ tagIds: ids })}
-        label="เลือก tag จากรายการที่ตั้งไว้"
-      />
+      {/* ทุกชนิดถูกซ่อน = ไม่มีอะไรให้เลือก · ไม่โชว์ "ยังไม่มี tag" เพราะจะอ่านแล้วเข้าใจผิดว่าไม่เคยตั้ง */}
+      {cat.kinds.length > 0 ? (
+        <TagPicker
+          catalog={cat.tags}
+          kinds={cat.kinds}
+          selectedIds={draft.tagIds}
+          onChange={(ids) => patch({ tagIds: ids })}
+          label="เลือก tag จากรายการที่ตั้งไว้"
+        />
+      ) : null}
+      {hiddenNotice}
 
       {allocKinds.map((k) => {
         const ts = chosen.filter((t) => t.kind === k.key);
@@ -101,7 +112,7 @@ export function TagSection({ api }: { api: TxFormApi }) {
 
 /**
  * "ระบบจะบันทึกให้ดังนี้" ของส่วน tag — โชว์เฉพาะเมื่อชุด tag ผ่านตัวตรวจแล้ว
- * ส่วนแบ่งเป็นบาทปัดด้วย `roundShares` (ฟังก์ชันปัดเพื่อแสดงผลตัวเดียวของระบบ) ให้รวมกันเท่ายอดรายการพอดี
+ * ส่วนแบ่งเป็นบาทปัดด้วย `roundSharePairs` (ฟังก์ชันปัดเพื่อแสดงผลตัวเดียวของระบบ) ให้รวมกันเท่ายอดรายการพอดี
  * ตัวเลขที่ระบบเก็บจริงแม่นตรงไม่ปัด (คิดต่อบรรทัดบัญชีที่ DB) — ที่นี่เป็นภาพให้คนอ่านเท่านั้น
  */
 export function TagSummary({ api }: { api: TxFormApi }) {
@@ -116,11 +127,11 @@ export function TagSummary({ api }: { api: TxFormApi }) {
       <div className="mb-2 text-base font-semibold">ระบบจะบันทึก tag ให้ดังนี้</div>
 
       {tagCheck.groups.map((g) => {
-        let rounded: ReturnType<typeof roundShares> | null = null;
+        let rounded: ReturnType<typeof roundSharePairs> | null = null;
         if (typeof amount === "number" && Number.isFinite(amount)) {
           try {
             const a = allocateLines([{ debit: amount, credit: 0 }], g.weights);
-            rounded = roundShares(a.shares.map((s) => s.debit));
+            rounded = roundSharePairs(a.shares.map((s) => ({ debit: s.debit, credit: s.credit })));
           } catch {
             rounded = null; // ยอดมีทศนิยมเกินสองตำแหน่ง ฯลฯ — engine ฝั่งบันทึกจะปฏิเสธเอง ที่นี่แค่ไม่แสดงยอดส่วนแบ่ง
           }
@@ -132,7 +143,7 @@ export function TagSummary({ api }: { api: TxFormApi }) {
                 <span className="min-w-0 break-words">
                   {t.nameTh} · <span className="tabular-nums">{formatPercent(api.tagWeightsEffective[t.id] ?? 0)}</span>
                 </span>
-                {rounded ? <span className="font-semibold tabular-nums">฿ {money(centsToBaht(rounded.cents[i]), { dash: false })}</span> : null}
+                {rounded ? <span className="font-semibold tabular-nums">฿ {money(centsToBaht(rounded.debitCents[i]), { dash: false })}</span> : null}
               </div>
             ))}
             {rounded ? (

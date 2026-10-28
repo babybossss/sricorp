@@ -30,6 +30,7 @@ import { loadBalanceMove } from "@/app/actions/balance-move";
 import { loadTagCatalog } from "@/app/actions/tags";
 import { checkTagSelection, pruneWeights, withSoleTagWeight, type SelectionCheck } from "@/lib/tags/selection";
 import type { Tag, TagKind, TagWeights } from "@/components/tags/types";
+import type { HiddenKind } from "@/lib/tags/acceptance";
 import { movesWholeBalance, type BalanceMove } from "@/lib/db/balance-move";
 import type { FxAccountContext } from "@/lib/db/fx-context";
 import { fxInputFor, fxKindOf } from "@/lib/db/fx-input";
@@ -631,16 +632,17 @@ export function useTxForm() {
   // ---- tag + น้ำหนัก (ADR 0002/0003) ----
   // แค็ตตาล็อกอ่านสดจาก DB · อ่านไม่ได้/ยังไม่ได้ลง migration = บอกตรงๆ และ **ไม่ให้เลือก tag** (ไม่ใช่ซ่อนแล้วลงโดยไม่มี tag เงียบๆ)
   const canTag = permissions.has("tag.assign");
-  const [tagCat, setTagCat] = React.useState<{ loading: boolean; error: string | null; notMigrated: boolean; kinds: TagKind[]; tags: Tag[] }>({
+  const [tagCat, setTagCat] = React.useState<{ loading: boolean; error: string | null; notMigrated: boolean; kinds: TagKind[]; tags: Tag[]; hiddenKinds: HiddenKind[] }>({
     loading: true,
     error: null,
     notMigrated: false,
     kinds: [],
     tags: [],
+    hiddenKinds: [],
   });
   React.useEffect(() => {
     if (!canTag) {
-      setTagCat({ loading: false, error: null, notMigrated: false, kinds: [], tags: [] });
+      setTagCat({ loading: false, error: null, notMigrated: false, kinds: [], tags: [], hiddenKinds: [] });
       return;
     }
     let live = true;
@@ -649,11 +651,11 @@ export function useTxForm() {
         if (!live) return;
         setTagCat(
           r.ok
-            ? { loading: false, error: null, notMigrated: false, kinds: r.kinds, tags: r.tags }
-            : { loading: false, error: r.message, notMigrated: r.notMigrated, kinds: [], tags: [] }
+            ? { loading: false, error: null, notMigrated: false, kinds: r.kinds, tags: r.tags, hiddenKinds: r.hiddenKinds }
+            : { loading: false, error: r.message, notMigrated: r.notMigrated, kinds: [], tags: [], hiddenKinds: [] }
         );
       })
-      .catch(() => live && setTagCat({ loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงโหลดรายการ tag ไม่ได้", notMigrated: false, kinds: [], tags: [] }));
+      .catch(() => live && setTagCat({ loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงโหลดรายการ tag ไม่ได้", notMigrated: false, kinds: [], tags: [], hiddenKinds: [] }));
     return () => {
       live = false;
     };
