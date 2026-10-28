@@ -27,6 +27,9 @@ import { loadFxContext } from "@/app/actions/fx-context";
 import { loadDisposalContext } from "@/app/actions/disposal-context";
 import { disposalFor, type DisposalContext } from "@/lib/db/disposal-context";
 import { loadBalanceMove } from "@/app/actions/balance-move";
+import { loadTagCatalog } from "@/app/actions/tags";
+import { checkTagSelection, pruneWeights, withSoleTagWeight, type SelectionCheck } from "@/lib/tags/selection";
+import type { Tag, TagKind, TagWeights } from "@/components/tags/types";
 import { movesWholeBalance, type BalanceMove } from "@/lib/db/balance-move";
 import type { FxAccountContext } from "@/lib/db/fx-context";
 import { fxInputFor, fxKindOf } from "@/lib/db/fx-input";
@@ -72,6 +75,10 @@ export type TxDraft = CashFields & {
   clearsSourceId: string;
   /** หมวดแปลงค่า/แลกเงินตรา — เลือกอัตราจากตาราง + จำนวนเงินตราที่แลก (ยอดคงเหลือ/อัตราตามบัญชี/ผลต่างที่ค้างอ่านจากสมุด) */
   fx: FxDraft;
+  /** tag ที่ติดกับรายการนี้ (ADR 0002) — เลือกจากแค็ตตาล็อกเท่านั้น */
+  tagIds: string[];
+  /** สัดส่วนของ tag ในชนิดที่ถ่วงน้ำหนัก (ADR 0003) · 0.6 = 60% · null = ยังไม่ได้กรอก */
+  tagWeights: TagWeights;
 };
 
 /**
@@ -102,6 +109,8 @@ const freshDraft = (): TxDraft => ({
   wht: EMPTY_WHT,
   clearsSourceId: "",
   fx: EMPTY_FX,
+  tagIds: [],
+  tagWeights: {},
 });
 
 /** ค่า "ยังไม่ได้รับ-จ่าย" ตั้งต้น — อ้างจากฟอร์มเปล่าที่เดียว ไม่เขียนซ้ำ */
@@ -619,8 +628,54 @@ export function useTxForm() {
     }
   }, [postingInput, resolver]);
 
-  /** กดบันทึกได้ก็ต่อเมื่อกรอกครบ **และ** engine ยอมรับ */
-  const canSubmit = missing.length === 0 && !postingError && !notWired && !clearNoSource && canPost && refState.ok && !submitting;
+  // ---- tag + น้ำหนัก (ADR 0002/0003) ----
+  // แค็ตตาล็อกอ่านสดจาก DB · อ่านไม่ได้/ยังไม่ได้ลง migration = บอกตรงๆ และ **ไม่ให้เลือก tag** (ไม่ใช่ซ่อนแล้วลงโดยไม่มี tag เงียบๆ)
+  const canTag = permissions.has("tag.assign");
+  const [tagCat, setTagCat] = React.useState<{ loading: boolean; error: string | null; notMigrated: boolean; kinds: TagKind[]; tags: Tag[] }>({
+    loading: true,
+    error: null,
+    notMigrated: false,
+    kinds: [],
+    tags: [],
+  });
+  React.useEffect(() => {
+    if (!canTag) {
+      setTagCat({ loading: false, error: null, notMigrated: false, kinds: [], tags: [] });
+      return;
+    }
+    let live = true;
+    loadTagCatalog()
+      .then((r) => {
+        if (!live) return;
+        setTagCat(
+          r.ok
+            ? { loading: false, error: null, notMigrated: false, kinds: r.kinds, tags: r.tags }
+            : { loading: false, error: r.message, notMigrated: r.notMigrated, kinds: [], tags: [] }
+        );
+      })
+      .catch(() => live && setTagCat({ loading: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้ จึงโหลดรายการ tag ไม่ได้", notMigrated: false, kinds: [], tags: [] }));
+    return () => {
+      live = false;
+    };
+  }, [canTag]);
+
+  /** น้ำหนักที่จะส่งจริง: ตัดของ tag ที่เอาออกแล้ว + ใส่ 100% ให้ project อันเดียว (เปิดเผยในช่อง ไม่ใช่เดา) */
+  const tagWeightsEffective = React.useMemo(() => {
+    const chosen = tagCat.tags.filter((t) => draft.tagIds.includes(t.id));
+    return withSoleTagWeight(chosen, tagCat.kinds, pruneWeights(draft.tagIds, draft.tagWeights));
+  }, [tagCat.tags, tagCat.kinds, draft.tagIds, draft.tagWeights]);
+
+  /** ตัวตรวจตัวเดียวกับที่ server action เรียก — ปุ่มบันทึกถามตัวนี้ ไม่ใช่ถามรายการช่องที่ฟอร์มรู้จัก */
+  const tagCheck = React.useMemo<SelectionCheck>(() => {
+    if (draft.tagIds.length === 0) return { ok: true, labelTagIds: [], tagWeights: {}, groups: [] };
+    if (tagCat.loading || tagCat.error) {
+      return { ok: false, issues: [tagCat.error ?? "กำลังโหลดรายการ tag — รอสักครู่"] };
+    }
+    return checkTagSelection({ tagIds: draft.tagIds, weights: tagWeightsEffective }, { kinds: tagCat.kinds, tags: tagCat.tags });
+  }, [draft.tagIds, tagWeightsEffective, tagCat]);
+
+  /** กดบันทึกได้ก็ต่อเมื่อกรอกครบ **และ** engine ยอมรับ **และ** ชุด tag + น้ำหนักผ่านตัวตรวจ */
+  const canSubmit = missing.length === 0 && !postingError && !notWired && !clearNoSource && canPost && refState.ok && !submitting && tagCheck.ok;
 
   /** ยอดสุทธิที่แผงขายทรัพย์คำนวณได้ ต้องเป็นจำนวนเงินของรายการเสมอ */
   const setDerivedAmount = React.useCallback((n: number) => {
@@ -651,6 +706,8 @@ export function useTxForm() {
         fx: fxKind ? fxChoiceOf(draft.fx) : undefined,
         // หมวดที่ไม่มีเงินเคลื่อนไม่ส่งวันที่เงิน (cash_date ต้องเป็น null) · ค้างรับ-ค้างจ่ายก็ไม่ส่ง
         cashDate: moneyMoved ? draft.cashDate : "",
+        // ส่งเมื่อเลือก tag เท่านั้น · น้ำหนักที่ส่งคือชุดเดียวกับที่ตัวตรวจเพิ่งผ่าน (server ตรวจซ้ำอีกรอบ)
+        tags: draft.tagIds.length > 0 ? { tagIds: draft.tagIds, weights: tagWeightsEffective } : undefined,
       });
     } catch (e) {
       // เครือข่ายขาด/เซิร์ฟเวอร์ล้มกลางทาง = ไม่รู้ว่ารายการถูกบันทึกหรือยัง ต้องบอกตรงๆ ไม่ใช่เดาว่าล้ม
@@ -664,7 +721,7 @@ export function useTxForm() {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved, reductionKey, draft.clearsSourceId, fxKind, draft.fx]);
+  }, [postingInput, canSubmit, draft.docDate, draft.cashDate, moneyMoved, reductionKey, draft.clearsSourceId, fxKind, draft.fx, draft.tagIds, tagWeightsEffective]);
 
   return {
     referenceState: refState,
@@ -711,6 +768,10 @@ export function useTxForm() {
     postingError,
     canSubmit,
     setDerivedAmount,
+    canTag,
+    tagCatalog: tagCat,
+    tagWeightsEffective,
+    tagCheck,
   };
 }
 

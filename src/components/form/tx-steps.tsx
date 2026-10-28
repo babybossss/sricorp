@@ -19,6 +19,7 @@ import { LoanTermsDialog } from "./loan-terms-dialog";
 import { DisposalPanel, RepaymentPanel } from "./disposal-panel";
 import { BalanceMovePanel } from "./balance-move-panel";
 import { FxPanel } from "./fx-panel";
+import { TagSection, TagSummary } from "./tag-section";
 import { JournalPreview } from "./journal-preview";
 import { INTERCOMPANY_RULES } from "@/lib/rules/intercompany";
 import { coa } from "@/lib/rules/coa";
@@ -368,6 +369,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       <Field label="หมายเหตุ" hint="ไม่จำเป็นต้องกรอก">
         <Input value={draft.note} onChange={(e) => patch({ note: e.target.value })} placeholder="ไม่จำเป็นต้องกรอก" />
       </Field>
+
+      {/* tag + สัดส่วน (ADR 0003) — ไม่เปลี่ยนคู่บัญชี ไม่เปลี่ยนตัวเลขในงบ */}
+      <TagSection api={api} />
 
       {/* สรุปว่าจะลงบัญชีอย่างไร อยู่ล่างสุดเสมอ — อ่านหลังกรอกครบ ไม่ใช่คั่นกลางฟอร์ม */}
       {sub ? <ImpactPreview subCode={sub.code} accrued={draft.notYetPaid} /> : null}
@@ -806,6 +810,16 @@ export function StepConfirm({ api }: { api: TxFormApi }) {
 
       {/* บรรทัดบัญชีที่จะถูกบันทึกจริง — มาจาก engine ตัวเดียวกับที่ post */}
       <JournalPreview input={api.postingInput} showSummary />
+
+      {/* tag + ส่วนแบ่ง ที่จะถูกบันทึกพร้อมรายการ (โชว์เมื่อผ่านตัวตรวจแล้ว) */}
+      <TagSummary api={api} />
+
+      {/* ชุด tag ที่ตัวตรวจไม่รับ — บอกในขั้นยืนยันด้วย ไม่ให้ไปเจอแค่ปุ่มกดไม่ได้โดยไม่รู้เหตุ */}
+      {draft.tagIds.length > 0 && !api.tagCheck.ok ? (
+        <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+          ยังบันทึกไม่ได้ เพราะ tag: {api.tagCheck.issues.join(" · ")} — ย้อนกลับไปแก้ที่ขั้น “รายละเอียด”
+        </div>
+      ) : null}
 
       {missing.length ? (
         <div className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">

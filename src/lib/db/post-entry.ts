@@ -54,6 +54,13 @@ export type PostEntryPayload = {
   wht_rate?: number;
   wht_amount?: number;
   wht_certificate_no?: string;
+  /**
+   * tag ของใบ (ADR 0002/0003) — **ส่งเมื่อผู้ใช้เลือก tag เท่านั้น** (ไม่เลือก = ไม่มีคีย์ ไม่ใช่อาร์เรย์ว่าง)
+   * `tag_ids` = ชนิดที่ไม่ถ่วงน้ำหนัก · `tag_weights` = {tag_id: สัดส่วน} ของชนิดที่ถ่วงน้ำหนัก (Σ = 1 พอดีต่อชนิด)
+   * ประตูที่ยังไม่รู้จักสองช่องนี้ปฏิเสธทั้งใบ ("มีช่องที่ยังไม่รู้จัก") → แอปแปลเป็น "ยังไม่ได้ลง migration"
+   */
+  tag_ids?: string[];
+  tag_weights?: Record<string, number>;
   /** `import` = ยอดตั้งต้นที่นำเข้าจากไฟล์ (`fn_reimport_opening`) · ที่เหลือ (ฟอร์ม) เป็น `manual` เสมอ */
   source: "manual" | "import";
   transactions: PostEntryTransaction[];

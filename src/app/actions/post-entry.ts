@@ -26,6 +26,10 @@ import { disposalFor } from "@/lib/db/disposal-context";
 import { readDisposalContext } from "@/lib/db/disposal-context-server";
 import { movesWholeBalance } from "@/lib/db/balance-move";
 import { readBalanceMove } from "@/lib/db/balance-move-server";
+import { readTagCatalog } from "@/lib/db/tag-catalog-server";
+import { NOT_MIGRATED_MESSAGE, isUnknownTagField } from "@/lib/tags/db-errors";
+import { checkTagSelection } from "@/lib/tags/selection";
+import type { TagWeights } from "@/components/tags/types";
 
 /**
  * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
@@ -58,6 +62,12 @@ export type PostEntryRequest = {
    * ไม่ส่งมาทั้งที่หมวดต้องใช้ = ปฏิเสธ (ไม่เดา)
    */
   fx?: FxChoice;
+  /**
+   * tag ของใบนี้ (ADR 0002/0003) — `weights` เป็นสัดส่วน (0.6 = 60%) ของ tag ในชนิดที่ถ่วงน้ำหนัก
+   * server ตรวจซ้ำทั้งชุดด้วยตัวตรวจเดียวกับปุ่มบันทึก (Σ = 1 พอดี · ไม่ส่งน้ำหนักมา = ปฏิเสธ ไม่เดาเป็น 100%)
+   * tag ไม่เปลี่ยนคู่บัญชี: ส่วนนี้ไม่ผ่าน `buildPosting()` และ `buildPosting()` ไม่รู้จัก tag
+   */
+  tags?: { tagIds: string[]; weights?: TagWeights };
 };
 
 export type PostEntryOutcome =
@@ -265,8 +275,29 @@ export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }
-  const { data, error } = await supabase.rpc("fn_post_entry", { p_payload: payload });
-  if (error) return fail(humanizeDbError(error));
+
+  // ---- tag + น้ำหนัก (ถ้าเลือก): ตรวจกับแค็ตตาล็อกสด ก่อนเขียนอะไร ----
+  let tagFields: Pick<typeof payload, "tag_ids" | "tag_weights"> = {};
+  const wantedTags = req.tags;
+  if (wantedTags !== undefined && wantedTags !== null) {
+    const ids = Array.isArray(wantedTags.tagIds) ? wantedTags.tagIds.filter((x): x is string => typeof x === "string") : [];
+    const hasWeights = !!wantedTags.weights && typeof wantedTags.weights === "object" && Object.keys(wantedTags.weights).length > 0;
+    if (ids.length > 0 || hasWeights) {
+      if (!access.permissions.has("tag.assign")) return fail("บัญชีนี้ติด tag ให้รายการไม่ได้ — ไม่มีสิทธิ์ติด/ถอด tag · ยังไม่ได้บันทึกอะไร");
+      const cat = await readTagCatalog(supabase, { includeInactive: true });
+      if (!cat.ok) return fail(cat.message);
+      const checked = checkTagSelection({ tagIds: ids, weights: wantedTags.weights }, cat.catalog);
+      if (!checked.ok) return fail(`${checked.issues.join(" · ")} · ยังไม่ได้บันทึกอะไร`);
+      tagFields = {
+        ...(checked.labelTagIds.length > 0 ? { tag_ids: checked.labelTagIds } : {}),
+        ...(Object.keys(checked.tagWeights).length > 0 ? { tag_weights: checked.tagWeights } : {}),
+      };
+    }
+  }
+  const sentTags = Object.keys(tagFields).length > 0;
+
+  const { data, error } = await supabase.rpc("fn_post_entry", { p_payload: sentTags ? { ...payload, ...tagFields } : payload });
+  if (error) return fail(sentTags && isUnknownTagField(error) ? NOT_MIGRATED_MESSAGE : humanizeDbError(error));
 
   const read = readPostResult(data, payload.transactions.length);
   if (!read.ok) return fail(read.message);
