@@ -11,7 +11,7 @@ import { DB_SCHEMA, readSupabaseEnv } from "./env";
  */
 
 /** เส้นทางที่เข้าได้โดยไม่ต้องล็อกอิน */
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/auth/status"];
 
 const isPublic = (path: string) => PUBLIC_PATHS.some((p) => path === p || path.startsWith(p + "/"));
 

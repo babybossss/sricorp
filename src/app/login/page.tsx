@@ -53,6 +53,13 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         {/* ลิงก์เข้าอีเมลยังไม่ได้ต่อ auth จริง (รอบนี้ทำ Google อย่างเดียว) — คงหน้าตาไว้ แต่กดไม่ได้
             ดีกว่าให้กดแล้วเข้าระบบโดยไม่ล็อกอิน */}
         <Button variant="secondary" disabled>ส่งลิงก์เข้าอีเมล (เร็วๆ นี้)</Button>
+        {/* ทางเข้าหน้าตรวจสาเหตุ สำหรับตอน "ล็อกอินไม่ติด" หรือ "ต้องล็อกอินใหม่ทุกรอบ" */}
+        <a
+          href="/auth/status"
+          className="text-center text-sm text-ink-600 underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600/40"
+        >
+          ต้องล็อกอินใหม่ทุกรอบ? กดตรวจสาเหตุ
+        </a>
       </div>
       <div className="flex flex-col items-center gap-1.5 text-center">
         <div className="text-sm text-ink-400">“ Sustainable Generational Wealth and Happiness ”</div>
