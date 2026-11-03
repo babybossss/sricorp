@@ -234,6 +234,24 @@ describe("ปฏิเสธทั้งไฟล์: ผู้ถือ/บั�
     expect(has(parseBad(wb), TK, 27, re)).toBe(true);
   });
 
+  // คู่ตรงข้ามของเคสข้างบน — เคสที่ "กรอกครบเสมอ" ไม่เคยแตะเส้นทางแถวที่ยังไม่ได้กรอก
+  // เทมเพลตถูก generate จาก BS_LAYOUT ซึ่งมีบรรทัด 3400/3410 ติดมาทุกชีทอยู่แล้ว
+  // ถ้าปฏิเสธเพราะ "มีบรรทัด" เทมเพลตเปล่าจะอัปโหลดไม่ได้เลยทั้ง 6 ชีท
+  it.each([
+    ["ช่องว่าง", null],
+    ["เลขศูนย์", 0],
+  ])("รหัสที่ห้ามใส่ แต่ยอดเป็น%s → ข้ามเงียบๆ ไม่ใช่ปฏิเสธไฟล์", (_label, value) => {
+    for (const code of ["3200", "3400", "3410"]) {
+      const wb = loadFixture();
+      setCell(wb, TK, 27, "A", code);
+      setCell(wb, TK, 27, "E", value);
+      const parsed = parseOk(wb);
+      // ข้ามแล้วต้องไม่โผล่เป็นยอดของผู้ถือด้วย (ข้ามเงียบๆ ≠ เก็บเป็น 0)
+      const lines = parsed.journals.find((j) => j.ownerId === "o-thanakorn")!.lines;
+      expect(lines.some((l) => l.coaCode === code)).toBe(false);
+    }
+  });
+
   it("ตัวเลขอ่านไม่ออก → ปฏิเสธ ระบุแถว (ไม่เดา ไม่ปัดเป็น 0)", () => {
     const wb = loadFixture();
     setCell(wb, TK, 7, "E", "ยี่สิบพัน");

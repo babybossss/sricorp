@@ -252,25 +252,33 @@ function readOwnerSheet(sheet: Sheet, owner: OwnerRef, ctx: ParseContext, issues
       issues.push({ ...where, message: `${where.label}: ไม่มีรหัสนี้ในผังบัญชี` });
       continue;
     }
-    if (forbidden.has(code)) {
-      issues.push({ ...where, message: `${where.label}: ใส่ในยอดตั้งต้นไม่ได้ — ${forbidden.get(code)}` });
-      continue;
-    }
     if (!allowed.has(code)) {
       issues.push({ ...where, message: `${where.label}: ไม่ใช่บัญชีงบดุล (รายได้/ค่าใช้จ่ายไม่มียอดตั้งต้น) — ยอดสะสมของปีก่อนอยู่ในกำไรสะสม 3300` });
+      continue;
+    }
+    // อ่านยอดก่อนตัดสินเรื่องรหัส — เพราะ "แถวที่ไม่ได้กรอก" ต้องข้ามเงียบๆ ทุกกรณี
+    //
+    // เทมเพลตถูก generate จาก BS_LAYOUT ซึ่งมีบรรทัด 3400/3410 อยู่ทุกชีท
+    // ถ้าเช็ค forbidden ก่อนอ่านยอด เทมเพลต**เปล่า**จะถูกปฏิเสธทันทีทั้ง 6 ชีท
+    // พร้อมข้อความที่บอกให้เอาราคาประเมินออกจากช่องที่ยังว่างอยู่ — หาสาเหตุไม่ได้เลย
+    // ตัวที่ต้องห้ามคือ "การกรอกตัวเลขลงรหัสนั้น" ไม่ใช่ "การมีบรรทัดนั้นอยู่ในไฟล์"
+    const amount = amountFrom(cellAt(sheet, r, "E"), { ...where, label: `${where.label} ยอดตั้งต้น` }, issues);
+    if (amount === null) continue;
+    // ว่างหรือ 0 = ยังไม่ได้กรอก → ไม่ใช่ข้อผิด และไม่ต้องเก็บเป็นยอด
+    if (amount === 0) continue;
+
+    if (forbidden.has(code)) {
+      issues.push({ ...where, message: `${where.label}: ใส่ในยอดตั้งต้นไม่ได้ — ${forbidden.get(code)}` });
       continue;
     }
     if (out.amounts.has(code)) {
       issues.push({ ...where, message: `${where.label}: ซ้ำกับแถว ${out.amounts.get(code)!.row} — หนึ่งรหัสมีบรรทัดเดียว` });
       continue;
     }
-    const amount = amountFrom(cellAt(sheet, r, "E"), { ...where, label: `${where.label} ยอดตั้งต้น` }, issues);
-    if (amount === null) continue;
     if (amount < 0 && code !== "3300") {
       issues.push({ ...where, message: `${where.label}: ยอดติดลบไม่ได้ (ใส่จำนวนบวกเสมอ — ระบบรู้เดบิต/เครดิตจากประเภทบัญชี) ยกเว้น 3300 กำไรสะสมที่ขาดทุนสะสมได้` });
       continue;
     }
-    if (amount === 0) continue;
     out.amounts.set(code, { amount, row: r });
     out.hasAnything = true;
   }
