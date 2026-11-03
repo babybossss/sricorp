@@ -6,6 +6,7 @@ import { Table, Th, Td } from "@/components/ui/table";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/field";
@@ -289,12 +290,11 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
           />
         </Td>
         <Td className="p-[12px_14px]">
-          <Input
+          <DateInput
             aria-label={`วันที่เงินเข้า-ออกจริง ${r.name}`}
             value={draft.date}
-            onChange={(e) => patch(r, { date: e.target.value })}
-            inputMode="numeric"
-            className="w-36"
+            onChange={(date) => patch(r, { date })}
+            className="w-44"
           />
         </Td>
         <Td className="p-[12px_14px]">
@@ -383,7 +383,7 @@ export function ConfirmTab({ pending }: { pending: PendingAccrualsState }) {
                 <Th>วันที่เอกสาร</Th>
                 <Th align="right">ยอดค้าง</Th>
                 <Th align="right">ยอดที่ยืนยันครั้งนี้ (แก้ได้)</Th>
-                <Th>วันที่จริง (วว/ดด/ปปปป)</Th>
+                <Th>วันที่จริง</Th>
                 <Th>บัญชีที่เงินเข้า/ออกจริง</Th>
                 <Th>สลิป</Th>
                 <Th align="center">ยืนยัน</Th>

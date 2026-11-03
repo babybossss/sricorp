@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { Table, TableShell, Td, Th } from "@/components/ui/table";
 import { Notice } from "@/components/reports/parts";
@@ -182,8 +183,8 @@ function AddForm({ onDone }: { onDone: (text: string) => void }) {
             ))}
           </Select>
         </Field>
-        <Field label="วันที่ของอัตรา (วว/ดด/ปปปป ปี ค.ศ.)" required error={errors.rateDate} hint="เป็นวันที่เกิดขึ้นแล้วเท่านั้น (วันในอนาคตใช้ไม่ได้) · ใช้ได้ทีละสกุลต่อวัน">
-          <Input value={v.rateDate} onChange={set("rateDate")} inputMode="numeric" placeholder="30/11/2026" autoComplete="off" />
+        <Field label="วันที่ของอัตรา" required error={errors.rateDate} hint="กดเลือกจากปฏิทิน · เป็นวันที่เกิดขึ้นแล้วเท่านั้น (ปฏิทินปิดวันในอนาคตให้) · ใช้ได้ทีละสกุลต่อวัน">
+          <DateInput value={v.rateDate} onChange={(rateDate) => setV((x) => ({ ...x, rateDate }))} max={todayDmy()} />
         </Field>
         <Field label="อัตรา (บาทต่อ 1 หน่วยเงินตรา)" required error={errors.rate} hint="เช่น ดอลลาร์ 36.50 บาท พิมพ์ 36.50 · เยนมักต่ำกว่า 1 เช่น 0.2350 · ทศนิยมได้ไม่เกิน 8 ตำแหน่ง">
           <Input value={v.rate} onChange={set("rate")} inputMode="decimal" className="tabular-nums" autoComplete="off" />

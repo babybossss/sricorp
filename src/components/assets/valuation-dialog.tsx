@@ -9,6 +9,7 @@ import { METHOD_LABEL, VALUATION_METHODS, VALUE_NOT_ACCOUNTING, type AssetView }
 import { recordValuation } from "@/app/assets/actions";
 import { Button } from "./tall-button";
 import { Input, Select } from "./fields";
+import { DateInput } from "@/components/ui/date-input";
 import { SheetHeader } from "./draft-parts";
 import { Notice, WillSave } from "./asset-parts";
 
@@ -56,8 +57,8 @@ export function ValuationDialog({ asset, onClose }: { asset: AssetView; onClose:
             <>
               <Notice tone="info">{VALUE_NOT_ACCOUNTING}</Notice>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="วันที่ตีราคา (วว/ดด/ปปปป ค.ศ.)" required error={asOf && !iso ? "วันที่ไม่ถูกต้อง" : undefined}>
-                  <Input value={asOf} onChange={(e) => setAsOf(e.target.value)} inputMode="numeric" autoComplete="off" />
+                <Field label="วันที่ตีราคา" required error={asOf && !iso ? "วันที่ไม่ถูกต้อง" : undefined}>
+                  <DateInput value={asOf} onChange={setAsOf} />
                 </Field>
                 <Field label="มูลค่าที่ประเมิน (บาท)" required error={value && amount === null ? "ต้องเป็นตัวเลข" : undefined}>
                   <Input value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" autoComplete="off" />

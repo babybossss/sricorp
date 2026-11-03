@@ -4,6 +4,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Table, TableShell, Td, Th } from "@/components/ui/table";
 import { Amount, Notice, Section, m } from "@/components/reports/parts";
 import {
@@ -90,8 +91,8 @@ export function OpeningImport() {
       </Notice>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4 rounded-card border border-line bg-surface p-4 shadow-card">
-        <Field label="วันตัดยอด (วว/ดด/ปปปป)" hint="เว้นว่างได้ — ระบบอ่านจากหัวชีทให้ (ต้องเป็นวันเดียวกันทุกชีท) · ถ้ากรอกเองแล้วไม่ตรงกับในไฟล์ จะไม่นำเข้า">
-          <Input name="cutoff" inputMode="numeric" autoComplete="off" placeholder="เช่น 31/10/2026 (เว้นว่างให้ระบบอ่านจากไฟล์)" />
+        <Field label="วันตัดยอด" hint="กดเลือกจากปฏิทิน · เว้นว่างได้ — ระบบอ่านจากหัวชีทให้ (ต้องเป็นวันเดียวกันทุกชีท) · ถ้ากรอกเองแล้วไม่ตรงกับในไฟล์ จะไม่นำเข้า">
+          <DateInput name="cutoff" />
         </Field>
         <Field label="ไฟล์ Excel ยอดตั้งต้น (.xlsx)" hint="ไฟล์ที่กรอกจากเทมเพลต “ยอดตั้งต้นงบดุล” ขนาดไม่เกิน 10 MB" required>
           <Input name="file" type="file" accept=".xlsx" required className="py-3" />

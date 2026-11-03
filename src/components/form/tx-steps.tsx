@@ -7,6 +7,7 @@ import type { RefBank, RefOwner, Reference } from "@/lib/db/reference-types";
 import { prepareImageForUpload, uploadAttachmentFromBrowser } from "@/lib/storage/browser";
 import { Field } from "@/components/ui/field";
 import { Input, AmountInput } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pill } from "@/components/ui/pill";
@@ -171,10 +172,10 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
       <div className={cn("grid gap-4", narrow ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
         <Field
           label="วันที่เอกสาร"
-          hint="พิมพ์เป็น วว/ดด/ปปปป ปี ค.ศ. เช่น 24/10/2026"
+          hint="กดที่ช่องแล้วเลือกจากปฏิทิน หรือพิมพ์เองก็ได้ (ปี ค.ศ.)"
           error={draft.docDate && !dmyToIso(draft.docDate) ? "อ่านเป็นวันที่ไม่ได้ — ต้องเป็น วว/ดด/ปปปป ปี ค.ศ." : undefined}
         >
-          <Input value={draft.docDate} onChange={(e) => patch({ docDate: e.target.value })} inputMode="numeric" />
+          <DateInput value={draft.docDate} onChange={(docDate) => patch({ docDate })} />
         </Field>
         {/*
           วันที่เงินเข้า-ออก **ไม่มีสำหรับรายการที่ไม่มีเงินเคลื่อน**
@@ -185,10 +186,10 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         {usesBank ? (
           <Field
             label={draft.notYetPaid && api.canAccrue ? "วันที่ครบกำหนด (ไม่บันทึกลงสมุด)" : "วันที่เงินเข้า/ออกจริง"}
-            hint="พิมพ์เป็น วว/ดด/ปปปป ปี ค.ศ."
+            hint="กดที่ช่องแล้วเลือกจากปฏิทิน หรือพิมพ์เองก็ได้ (ปี ค.ศ.)"
             error={api.moneyMoved && !dmyToIso(draft.cashDate) ? "อ่านเป็นวันที่ไม่ได้ — ต้องเป็น วว/ดด/ปปปป ปี ค.ศ." : undefined}
           >
-            <Input value={draft.cashDate} onChange={(e) => patch({ cashDate: e.target.value })} inputMode="numeric" />
+            <DateInput value={draft.cashDate} onChange={(cashDate) => patch({ cashDate })} />
           </Field>
         ) : (
           <Field label="วันที่เงินเข้า/ออกจริง" hint="ไม่มี — รายการปรับปรุงทางบัญชีไม่มีเงินเคลื่อน">
