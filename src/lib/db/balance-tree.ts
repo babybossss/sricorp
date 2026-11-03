@@ -9,7 +9,7 @@
  */
 
 import { BS_SIDE_TH, type BsSide } from "@/lib/rules/statements";
-import { buildBalanceSheet, type BalanceSheet, type StmtLine } from "./statements";
+import { buildBalanceSheet, type BalanceSheet, type StmtLine, periodRange } from "./statements";
 
 export type BalanceNode = {
   id: string;
@@ -55,10 +55,12 @@ export type OwnerNav = {
 const cents = (n: number) => Math.round(n * 100);
 
 /** NAV รายผู้ถือ — งบรายคนจาก `buildBalanceSheet()` แล้วลบกันที่หน่วยสตางค์ */
-export function navByOwner(lines: StmtLine[], ownerIds: string[], year: number): OwnerNav[] {
-  const end = `${String(year).padStart(4, "0")}-12-31`;
+export function navByOwner(lines: StmtLine[], ownerIds: string[], year: number, month?: number | null): OwnerNav[] {
+  // วันสิ้นงวดต้องมาจาก periodRange ไม่ใช่เขียน -12-31 ตายตัว
+  // ไม่งั้นดูงบเดือน ก.พ. แล้ว NAV รายคนยังเป็นยอดสิ้นปี = ตัวเลขคนละงวดกับงบที่แสดงอยู่
+  const { end } = periodRange(year, month);
   return ownerIds.map((ownerId) => {
-    const bs = buildBalanceSheet(lines, { year, ownerIds: [ownerId] });
+    const bs = buildBalanceSheet(lines, { year, month, ownerIds: [ownerId] });
     return {
       ownerId,
       nav: (cents(bs.totalAssets) - cents(bs.totalLiabilities)) / 100,
@@ -78,9 +80,9 @@ export function allocation(bs: BalanceSheet): { name: string; value: number; pct
     .map((g) => ({ name: g.group, value: g.total, pct: (cents(g.total) / cents(bs.totalAssets)) * 100 }));
 }
 
-/** มีรายการในสมุดของผู้ถือที่เลือกถึงสิ้นปีหรือไม่ */
-export function hasLedgerData(lines: StmtLine[], ownerIds: string[], year: number): boolean {
-  const end = `${String(year).padStart(4, "0")}-12-31`;
+/** มีรายการในสมุดของผู้ถือที่เลือกถึงสิ้นงวดหรือไม่ */
+export function hasLedgerData(lines: StmtLine[], ownerIds: string[], year: number, month?: number | null): boolean {
+  const { end } = periodRange(year, month);
   const set = new Set(ownerIds);
   return lines.some((l) => set.has(l.ownerId) && l.docDate <= end);
 }

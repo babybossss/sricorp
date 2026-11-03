@@ -15,6 +15,8 @@ import path from "node:path";
  * ซึ่งมาจากการคำนวณชุดเดียวกัน ป้ายจึงหลุดจากตัวเลขไม่ได้
  */
 const VIEWS = path.join(__dirname, "..");
+/** หน้าที่แสดงงบ — อยู่คนละที่กับคอมโพเนนต์ แต่พลาดแบบเดียวกันได้ */
+const PAGES = path.join(__dirname, "..", "..", "..", "app");
 
 /** คำที่บอก "งวด" แบบตายตัว — ห้ามมีในไฟล์หน้างบ */
 const BANNED: { re: RegExp; why: string }[] = [
@@ -26,9 +28,16 @@ const BANNED: { re: RegExp; why: string }[] = [
 ];
 
 describe("หน้างบห้ามเขียนงวดตายตัว", () => {
-  const files = readdirSync(VIEWS)
-    .filter((f) => f.endsWith(".tsx") && !statSync(path.join(VIEWS, f)).isDirectory())
-    .map((f) => ({ f, src: readFileSync(path.join(VIEWS, f), "utf8") }));
+  const files = [
+    ...readdirSync(VIEWS)
+      .filter((f) => f.endsWith(".tsx") && !statSync(path.join(VIEWS, f)).isDirectory())
+      .map((f) => ({ f, src: readFileSync(path.join(VIEWS, f), "utf8") })),
+    // หน้าที่แสดงงบโดยตรง — /balance เคยเขียน "ณ วันที่ 31 ธ.ค." ตายตัวเหมือนกัน
+    ...["balance", "reports"].map((d) => ({
+      f: `app/${d}/page.tsx`,
+      src: readFileSync(path.join(PAGES, d, "page.tsx"), "utf8"),
+    })),
+  ];
 
   it("มีไฟล์หน้างบให้ตรวจจริง (กันด่านที่วนชุดว่างแล้วผ่าน)", () => {
     expect(files.map((x) => x.f)).toEqual(expect.arrayContaining(["balance-sheet-view.tsx", "profit-loss-view.tsx", "cash-flow-view.tsx"]));

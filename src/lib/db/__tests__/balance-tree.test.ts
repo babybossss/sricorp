@@ -90,3 +90,41 @@ describe("allocation · สัดส่วนสินทรัพย์", () =>
     expect(allocation(buildBalanceSheet([], { year: 2026, ownerIds: ["tk"] }))).toEqual([]);
   });
 });
+
+/* ================================================================== *
+ * มุมมองรายเดือน — ตัวช่วยของหน้างบดุลเคยเขียนวันสิ้นงวดตายตัวเป็น -12-31
+ * ทำให้ดูงบเดือน ก.พ. แล้ว NAV รายคนยังเป็นยอดสิ้นปี = ตัวเลขคนละงวดกับงบที่แสดง
+ * ================================================================== */
+
+describe("navByOwner / hasLedgerData รายเดือน", () => {
+  it("NAV ของ ธนากร เดินตามงวดที่เลือก ไม่ใช่ยอดสิ้นปีเสมอ", () => {
+    // ม.ค.: ทุน 5,000,000 เป็นเงินสด → NAV 5,000,000
+    expect(navByOwner(LINES, ["tk"], 2026, 1)[0].nav).toBe(5_000_000);
+    // ก.พ.: ซื้อคอนโด + รีโนเวท (ย้ายเงินสดเป็นทรัพย์) → NAV ยังเท่าเดิม
+    expect(navByOwner(LINES, ["tk"], 2026, 2)[0].nav).toBe(5_000_000);
+    // มี.ค.: กู้ธนาคาร 1,000,000 → สินทรัพย์เพิ่ม แต่หนี้สินเพิ่มเท่ากัน NAV เท่าเดิม
+    const mar = navByOwner(LINES, ["tk"], 2026, 3)[0];
+    expect(mar.nav).toBe(5_000_000);
+    expect(mar.totalLiabilities).toBe(1_000_000);
+    // ก.พ. ยังไม่มีหนี้ — ยืนยันว่าเดือนต่างกันได้ตัวเลขต่างกันจริง
+    expect(navByOwner(LINES, ["tk"], 2026, 2)[0].totalLiabilities).toBe(0);
+  });
+
+  it("NAV สิ้น ธ.ค. ของมุมมองรายเดือน = NAV ทั้งปี", () => {
+    expect(navByOwner(LINES, ["tk"], 2026, 12)[0]).toEqual(navByOwner(LINES, ["tk"], 2026)[0]);
+  });
+
+  it("ไม่ส่งเดือนมา = ทั้งปีเหมือนเดิมเป๊ะ (ผู้เรียกเดิมไม่กระทบ)", () => {
+    expect(navByOwner(LINES, ["tk", "st"], 2026)).toEqual(navByOwner(LINES, ["tk", "st"], 2026, null));
+    expect(hasLedgerData(LINES, ["tk"], 2026)).toBe(hasLedgerData(LINES, ["tk"], 2026, null));
+  });
+
+  it("hasLedgerData ดูถึงสิ้นงวดที่เลือก ไม่ใช่สิ้นปีเสมอ", () => {
+    // สุธีมีรายการแรก 05/01/2026 เท่านั้น
+    expect(hasLedgerData(LINES, ["st"], 2026, 1)).toBe(true);
+    // ธนากรก็มีรายการใน ม.ค. เช่นกัน
+    expect(hasLedgerData(LINES, ["tk"], 2026, 1)).toBe(true);
+    // ปี 2025 ยังไม่มีใครมีรายการเลย ไม่ว่าเดือนไหน
+    for (const m of [1, 6, 12]) expect(hasLedgerData(LINES, ["tk"], 2025, m)).toBe(false);
+  });
+});

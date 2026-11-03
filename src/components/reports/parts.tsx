@@ -1,5 +1,5 @@
 import * as React from "react";
-import { THAI_MONTHS_SHORT } from "@/lib/format";
+import { PeriodBar } from "./period-bar";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { money } from "@/lib/format";
@@ -119,38 +119,7 @@ export function ReportControls({
           </Link>
         ))}
       </nav>
-      {/* ช่วงเวลา — กดครั้งเดียวเปลี่ยนทันที ไม่ต้องกดปุ่มยืนยัน
-          "ทั้งปี" อยู่ซ้ายสุดเพื่อให้กดกลับไปดูทั้งปีได้ตลอด */}
-      <nav aria-label="เลือกช่วงเวลา" className="flex gap-2 overflow-x-auto pb-1">
-        <Link
-          href={reportHref(tab, year, null, owner)}
-          aria-current={month === null ? "page" : undefined}
-          className={cn(
-            "flex min-h-control flex-none items-center rounded border px-4 text-base font-semibold no-underline hover:no-underline",
-            "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600",
-            month === null ? "border-brand-600 bg-brand-50 text-brand-600" : "border-line bg-surface text-ink-600 hover:border-ink-400"
-          )}
-        >
-          ทั้งปี {year}
-        </Link>
-        {THAI_MONTHS_SHORT.map((label, i) => {
-          const m = i + 1;
-          return (
-            <Link
-              key={m}
-              href={reportHref(tab, year, m, owner)}
-              aria-current={month === m ? "page" : undefined}
-              className={cn(
-                "flex min-h-control flex-none items-center rounded border px-3 text-base no-underline hover:no-underline",
-                "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600",
-                month === m ? "border-brand-600 bg-brand-50 font-semibold text-brand-600" : "border-line bg-surface text-ink-600 hover:border-ink-400"
-              )}
-            >
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
+      <PeriodBar basePath="/reports" year={year} month={month} params={{ tab, owner }} />
       <form method="get" action="/reports" className="flex flex-wrap items-end gap-3 rounded-card border border-line bg-surface p-4 shadow-card">
         <input type="hidden" name="tab" value={tab} />
         {/* เปลี่ยนปี/ผู้ถือแล้วต้องยังอยู่เดือนเดิม */}

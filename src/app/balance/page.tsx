@@ -4,9 +4,10 @@ import { BalanceTree } from "@/components/balance/balance-tree";
 import { Notice, m } from "@/components/reports/parts";
 import { gateRoute } from "@/lib/auth/gate";
 import { loadStatementData } from "@/lib/db/statements-server";
-import { buildBalanceSheet, ownersInView, parseFiscalYear } from "@/lib/db/statements";
+import { buildBalanceSheet, ownersInView, parseFiscalYear, parseMonth } from "@/lib/db/statements";
+import { PeriodBar } from "@/components/reports/period-bar";
 import { allocation, buildBalanceTree, hasLedgerData, navByOwner } from "@/lib/db/balance-tree";
-import { todayDmy } from "@/lib/format";
+import { todayDmy, thaiDate } from "@/lib/format";
 
 /**
  * งบดุล & ทรัพย์สิน — ต้นไม้ของงบแสดงฐานะการเงินที่คำนวณสดจากสมุด (`v_ledger_posted`) ด้วย `buildBalanceSheet()` ตัวเดียวกับ /reports
@@ -21,6 +22,8 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
   const one = (k: string) => (Array.isArray(sp[k]) ? (sp[k] as string[])[0] : (sp[k] as string | undefined));
   const thisYear = Number(todayDmy().slice(6));
   const year = parseFiscalYear(one("year")) ?? thisYear;
+  // เดือนที่ไม่ใช่ 1-12 (หรือไม่ส่งมา) = ดูทั้งปี ไม่ใช่เดือนมั่ว
+  const month = parseMonth(one("month"));
   const ownerParam = one("owner") ?? "family";
 
   const data = await loadStatementData();
@@ -46,18 +49,21 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
   const firstYear = data.lines.reduce((min, l) => Math.min(min, Number(l.docDate.slice(0, 4))), thisYear);
   const years = Array.from({ length: Math.max(lastYear, year) - Math.min(firstYear, year) + 1 }, (_, i) => Math.max(lastYear, year) - i);
 
-  const bs = buildBalanceSheet(data.lines, { year, ownerIds });
+  const bs = buildBalanceSheet(data.lines, { year, month, ownerIds });
   const tree = buildBalanceTree(bs);
-  const nav = navByOwner(data.lines, visible.map((o) => o.id), year);
+  const nav = navByOwner(data.lines, visible.map((o) => o.id), year, month);
   const shares = allocation(bs);
-  const has = hasLedgerData(data.lines, ownerIds, year);
+  const has = hasLedgerData(data.lines, ownerIds, year, month);
   const sel =
     "min-h-control w-full rounded border border-line bg-surface px-3 text-base text-ink-900 focus-visible:outline-none focus-visible:border-brand-600 focus-visible:ring-[3px] focus-visible:ring-brand-600";
 
   return (
     <PageShell title="งบดุล & ทรัพย์สิน">
       <div className="flex min-w-0 flex-col gap-4">
+        <PeriodBar basePath="/balance" year={year} month={month} params={{ owner: view }} />
         <form method="get" action="/balance" className="flex flex-wrap items-end gap-3 rounded-card border border-line bg-surface p-4 shadow-card">
+          {/* เปลี่ยนปี/ผู้ถือแล้วต้องยังอยู่เดือนเดิม */}
+          {month === null ? null : <input type="hidden" name="month" value={month} />}
           <label className="flex min-w-[220px] flex-1 flex-col gap-1.5">
             <span className="text-base text-ink-600">ผู้ถือกรรมสิทธิ์</span>
             <select name="owner" defaultValue={view} className={sel}>
@@ -85,7 +91,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
           >
             แสดงทรัพย์สิน
           </button>
-          <Link href={`/reports?tab=bs&year=${year}&owner=${encodeURIComponent(view)}`} className="inline-flex min-h-control items-center text-base">
+          <Link href={`/reports?tab=bs&year=${year}${month === null ? "" : `&month=${month}`}&owner=${encodeURIComponent(view)}`} className="inline-flex min-h-control items-center text-base">
             เปิดงบแสดงฐานะการเงินฉบับเต็ม
           </Link>
         </form>
@@ -94,7 +100,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
 
         {!has ? (
           <Notice tone="info">
-            ยังไม่มีรายการในสมุดบัญชีของ {ownerLabel} ถึงสิ้นปี {year} — ไม่มีตัวเลขให้แสดง (ไม่ใช่ว่ามียอดเป็นศูนย์) · ลงรายการหรือนำเข้ายอดตั้งต้นก่อน
+            ยังไม่มีรายการในสมุดบัญชีของ {ownerLabel} ถึง {thaiDate(bs.asOf)} — ไม่มีตัวเลขให้แสดง (ไม่ใช่ว่ามียอดเป็นศูนย์) · ลงรายการหรือนำเข้ายอดตั้งต้นก่อน
           </Notice>
         ) : (
           <>
@@ -110,11 +116,12 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
               </Notice>
             ))}
             <div className="text-base text-ink-600">
-              {ownerLabel} · ณ วันที่ 31 ธ.ค. {year}
+              {/* งบดุลลงวันที่เดียว (วันสิ้นงวด) — อ่านจาก bs.asOf ไม่ใช่เขียน 31 ธ.ค. ตายตัว */}
+              {ownerLabel} · ณ วันที่ {thaiDate(bs.asOf)}
               {bs.consolidated ? " · งบรวม (ตัดรายการระหว่างกันที่หักกันได้พอดี)" : ""}
             </div>
             <div className="grid items-start gap-4 xl:[grid-template-columns:minmax(0,1fr)_340px]">
-              <BalanceTree key={`${view}-${year}`} nodes={tree} />
+              <BalanceTree key={`${view}-${year}-${month ?? "all"}`} nodes={tree} />
               <div className="flex min-w-0 flex-col gap-4">
                 <div className="rounded-card border border-line bg-surface p-[18px_20px] shadow-card">
                   <div className="text-lg font-semibold">มูลค่าสุทธิ (NAV)</div>
