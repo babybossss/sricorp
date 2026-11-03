@@ -3,14 +3,22 @@
 import * as React from "react";
 import Link from "next/link";
 import { EntitySwitcher } from "./entity-switcher";
-import { MonthPicker } from "./month-picker";
 import { Button } from "@/components/ui/button";
 import { TxFormDialog } from "@/components/form/tx-form-dialog";
 import { useApp } from "@/lib/store";
 import { usePermissions } from "@/components/auth/permissions-provider";
 import { canOpen } from "@/lib/auth/routes";
 
-export function Topbar({ title, user }: { title: string; user: { name: string; role: string } }) {
+export function Topbar({
+  title,
+  user,
+  pendingApprovals,
+}: {
+  title: string;
+  user: { name: string; role: string };
+  /** จำนวนร่างที่รออนุมัติจริง · `null` = อ่านไม่ได้ → ไม่แสดงป้าย (ห้ามแสดง 0 แทน "ไม่รู้") */
+  pendingApprovals: number | null;
+}) {
   const [formOpen, setFormOpen] = React.useState(false);
   const largeText = useApp((s) => s.largeText);
   const permissions = usePermissions();
@@ -29,7 +37,6 @@ export function Topbar({ title, user }: { title: string; user: { name: string; r
         <div className="mr-auto text-h2 font-semibold">{title}</div>
 
         <EntitySwitcher />
-        <MonthPicker />
 
         {canCreate ? (
         <Button onClick={() => setFormOpen(true)}>
@@ -49,7 +56,12 @@ export function Topbar({ title, user }: { title: string; user: { name: string; r
               <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
             </svg>
             แจ้งเตือน
-            <span className="inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-pill bg-neg px-[7px] text-sm font-bold text-white">7</span>
+            {/* ป้ายขึ้นเฉพาะเมื่อมีของรออนุมัติจริง — เคยฮาร์ดโค้ด "7" ไว้ ซึ่งเป็นตัวเลขปลอมที่ผู้ใช้เห็น */}
+            {pendingApprovals !== null && pendingApprovals > 0 ? (
+              <span className="inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-pill bg-neg px-[7px] text-sm font-bold text-white tabular-nums">
+                {pendingApprovals}
+              </span>
+            ) : null}
           </Link>
         </Button>
         ) : null}

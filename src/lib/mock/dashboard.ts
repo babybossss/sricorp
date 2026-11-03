@@ -55,4 +55,3 @@ export const SETTINGS_MENU = [
   { label: "นำเข้า / ส่งออก" },
 ];
 
-export const COMING_SOON = ["บริหารทรัพย์", "บอร์ดงาน / Ticket", "เบิกจ่าย", "HR", "Broker Portal", "Investment Tips"];

@@ -9,13 +9,19 @@ import path from "node:path";
 describe("PageShell · ถามขนานกัน", () => {
   const src = readFileSync(path.join(__dirname, "..", "page-shell.tsx"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-  it("getAccess() กับ loadReference() อยู่ใน Promise.all เดียวกัน", () => {
-    expect(src).toMatch(/Promise\.all\(\s*\[\s*getAccess\(\)\s*,\s*loadReference\(\)\s*\]\s*\)/);
+  /** ทุกตัวที่ PageShell ต้องถาม DB — เพิ่มตัวใหม่ต้องมาต่อท้ายรายการนี้ ไม่ใช่ไป await เดี่ยว */
+  const MUST_BE_PARALLEL = ["getAccess", "loadReference", "countPendingApprovals"];
+
+  it("ทุกการถาม DB อยู่ใน Promise.all ก้อนเดียวกัน", () => {
+    // จับ argument ของ Promise.all แล้วตรวจว่ามีครบ — ไม่ผูกกับลำดับ เพราะเจตนาของด่านนี้
+    // คือ "ขนานกัน" ไม่ใช่ "เรียงแบบนี้" แต่ยังต้องอยู่ใน Promise.all **ก้อนเดียว** จริงๆ
+    const calls = [...src.matchAll(/Promise\.all\(\s*\[([\s\S]*?)\]\s*\)/g)].map((m) => m[1]);
+    expect(calls.length).toBe(1);
+    for (const fn of MUST_BE_PARALLEL) expect(calls[0]).toContain(`${fn}()`);
   });
 
-  it("ไม่มี await getAccess() / await loadReference() เดี่ยวๆ ต่อกัน", () => {
-    expect(src).not.toMatch(/await\s+getAccess\(\)/);
-    expect(src).not.toMatch(/await\s+loadReference\(\)/);
+  it("ไม่มี await เดี่ยวๆ ของตัวใดต่อกัน", () => {
+    for (const fn of MUST_BE_PARALLEL) expect(src).not.toMatch(new RegExp(`await\\s+${fn}\\(\\)`));
   });
 });
 

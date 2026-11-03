@@ -13,9 +13,6 @@ type AppState = {
   setEntityId: (id: string) => void;
 
   /** เดือนที่กำลังดู 0-11 */
-  month: number;
-  setMonth: (m: number) => void;
-  stepMonth: (delta: number) => void;
 
   /** โหมดตัวใหญ่ +2px สำหรับผู้สูงอายุ */
   largeText: boolean;
@@ -40,9 +37,6 @@ export const useApp = create<AppState>((set, get) => ({
   entityId: "family",
   setEntityId: (entityId) => set({ entityId }),
 
-  month: 8, // ก.ย.
-  setMonth: (month) => set({ month }),
-  stepMonth: (delta) => set((s) => ({ month: (s.month + delta + 12) % 12 })),
 
   largeText: false,
   toggleLargeText: () => set((s) => ({ largeText: !s.largeText })),

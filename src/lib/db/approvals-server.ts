@@ -69,3 +69,26 @@ export async function loadApprovals(): Promise<ApprovalData> {
   }
   return loadApprovalsFrom(db, refState.ref);
 }
+
+/**
+ * จำนวนร่างที่รออนุมัติ — สำหรับป้ายตัวเลขบนเมนูและปุ่มแจ้งเตือน
+ *
+ * คืน `null` เมื่ออ่านไม่ได้ **ห้ามคืน 0** เพราะ 0 แปลว่า "ไม่มีอะไรรออนุมัติ"
+ * ซึ่งเป็นคำพูดที่ต่างจาก "ยังไม่รู้" คนละเรื่องกัน ผู้เรียกต้องซ่อนป้ายเมื่อได้ null
+ *
+ * นับจากแถวจริงทุกครั้ง (`count: "exact"` + `head: true` ไม่ดึงตัวแถวมา)
+ * ใครเห็นร่างไหนให้ RLS ตัดสิน — ตัวนับจึงตรงกับจำนวนที่ผู้ใช้คนนั้นเปิดดูได้จริง
+ */
+export async function countPendingApprovals(): Promise<number | null> {
+  try {
+    const db = await createClient();
+    const { count, error } = await db
+      .from("draft_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (error || count === null || count === undefined) return null;
+    return count;
+  } catch {
+    return null;
+  }
+}
