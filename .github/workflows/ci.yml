@@ -1,0 +1,94 @@
+name: CI
+
+# กันโค้ดพังเข้า main — รันทุก push และทุก PR
+#
+# **ข้อสำคัญที่สุดของไฟล์นี้: SRI_REQUIRE_PG=1**
+# เทสต์ที่แตะเงินกับ Postgres จริงใช้ `describe.skipIf(!pgAvailable)`
+# ถ้า CI ไม่มี Postgres มันจะ "ข้ามเงียบๆ แล้วขึ้นเขียว" ทั้งที่ไม่ได้ตรวจอะไรเลย
+# SRI_REQUIRE_PG=1 สั่งให้ pg-harness พังทันทีถ้าต่อ Postgres ไม่ได้
+# เขียวจากการข้ามเทสต์กฎเงิน อันตรายกว่าแดง
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ด่านเร็ว: ไม่ต้องมี DB — ถ้าพังตรงนี้ไม่ต้องเสียเวลารันด่านถัดไป
+  static:
+    name: typecheck · lint · ตารางกฎตรงกับ migration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      # กันตารางกฎในโค้ดกับสำเนาใน migration ไม่ตรงกัน (อ่าน migration ไม่ออก = พัง ไม่ผ่านด้วยชุดว่าง)
+      - run: npm run check:sync
+
+  test:
+    name: เทสต์ทั้งชุด (บังคับมี Postgres จริง)
+    runs-on: ubuntu-latest
+    needs: static
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    env:
+      # psql · createdb · dropdb ของ pg-harness อ่านค่าจาก env ชุดนี้
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # ห้ามข้ามเทสต์ที่แตะเงิน — ไม่มี Postgres = พัง ไม่ใช่เขียว
+      SRI_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+      # pg-harness เรียก psql/createdb/dropdb เป็นคำสั่ง ต้องมี client ตรงรุ่นกับ server
+      - name: ติดตั้ง postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: ยืนยันว่าต่อ Postgres ได้จริงก่อนรันเทสต์
+        run: psql -v ON_ERROR_STOP=1 -c "select version();"
+      - run: npm ci
+      - run: npx vitest run
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: static
+    env:
+      # ค่าหลอกสำหรับ build เท่านั้น — หน้าทุกหน้าเป็น dynamic อ่าน env ตอนมี request
+      # ไม่ได้ฝังค่าลงหน้า static (ดู export const dynamic = "force-dynamic")
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_build_only
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
