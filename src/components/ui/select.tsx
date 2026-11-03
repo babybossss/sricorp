@@ -11,7 +11,7 @@ const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HT
       ref={ref}
       className={cn(
         "min-h-control w-full rounded border border-line bg-surface px-3 text-base text-ink-900",
-        "focus-visible:outline-none focus-visible:border-brand-600 focus-visible:ring-[3px] focus-visible:ring-brand-100",
+        "focus-visible:outline-none focus-visible:border-brand-600 focus-visible:ring-[3px] focus-visible:ring-brand-600",
         "disabled:bg-canvas disabled:text-ink-400",
         className
       )}

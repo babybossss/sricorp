@@ -282,6 +282,9 @@ export function StepDetail({ api, contactLayer = 1, narrow }: { api: TxFormApi; 
         hint={draft.typeKey ? `เลือกได้เฉพาะหมวดที่อยู่ใต้ประเภท “${TX_TYPES.find((t) => t.key === draft.typeKey)?.label}” เท่านั้น` : "เลือกประเภทรายการก่อน"}
       >
         <Select value={draft.subCode} onChange={(e) => api.pickSub(e.target.value)} disabled={!draft.typeKey}>
+          {/* ระบบไม่เลือกหมวดย่อยให้เอง (หมวดย่อยตัดสินคู่บัญชี) จึงต้องมีตัวเลือกว่าง
+              ที่ "พูดได้" ไม่งั้นช่องจะว่างเปล่าโดยผู้ใช้ไม่รู้ว่าต้องเลือกอะไร */}
+          <option value="">— เลือกหมวดย่อย —</option>
           {subs.map((s) => (
             <option key={s.code} value={s.code}>
               {s.label}

@@ -12,11 +12,11 @@ type AppState = {
   entityId: string;
   setEntityId: (id: string) => void;
 
-  /** เดือนที่กำลังดู 0-11 */
-
-  /** โหมดตัวใหญ่ +2px สำหรับผู้สูงอายุ */
+  /** โหมดตัวใหญ่ +2px สำหรับผู้สูงอายุ — จำค่าไว้ข้ามการรีเฟรช */
   largeText: boolean;
   toggleLargeText: () => void;
+  /** อ่านค่าที่จำไว้จาก localStorage — **ต้องเรียกใน effect หลัง mount เท่านั้น** */
+  hydrateLargeText: () => void;
 
   /** ผู้ติดต่อ — สร้างเพิ่มได้จากในฟอร์ม (Backlog ข้อ 3) */
 
@@ -33,13 +33,41 @@ type AppState = {
 };
 
 
+/** คีย์ใน localStorage ของโหมดตัวใหญ่ — ประกาศที่เดียว ห้ามพิมพ์ซ้ำที่อื่น */
+const LARGE_TEXT_KEY = "sri-os:large-text";
+
 export const useApp = create<AppState>((set, get) => ({
   entityId: "family",
   setEntityId: (entityId) => set({ entityId }),
 
 
+  /**
+   * ตั้งต้นเป็น false เสมอ **ห้ามอ่าน localStorage ตรงนี้**
+   *
+   * ค่าตั้งต้นของ store ถูกใช้ตอน server render ด้วย ถ้าอ่านค่าที่จำไว้มาใส่ที่นี่
+   * ฝั่ง server จะได้ false (ไม่มี localStorage) แต่ฝั่ง client ได้ true
+   * → React hydration ไม่ตรงกันในทุกคอมโพเนนต์ที่ render ตามค่านี้ (เช่นป้ายปุ่มในเมนู)
+   * จึงอ่านทีหลังผ่าน `hydrateLargeText()` ใน effect ซึ่งรันหลัง hydrate เสร็จ
+   */
   largeText: false,
-  toggleLargeText: () => set((s) => ({ largeText: !s.largeText })),
+  toggleLargeText: () =>
+    set((s) => {
+      const largeText = !s.largeText;
+      try {
+        window.localStorage.setItem(LARGE_TEXT_KEY, largeText ? "1" : "0");
+      } catch {
+        // โหมดส่วนตัวหรือปิด site data → จำไม่ได้ แต่สลับในรอบนี้ต้องยังใช้ได้
+      }
+      return { largeText };
+    }),
+  hydrateLargeText: () => {
+    try {
+      const saved = window.localStorage.getItem(LARGE_TEXT_KEY);
+      if (saved !== null) set({ largeText: saved === "1" });
+    } catch {
+      // อ่านไม่ได้ = ใช้ค่าตั้งต้น ไม่ใช่พัง
+    }
+  },
 
 
   bankOrder: BANKS.map((b) => b.id),

@@ -1,5 +1,6 @@
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { MobileNav } from "./mobile-nav";
 import { Toast } from "./toast";
 import { PermissionsProvider } from "@/components/auth/permissions-provider";
 import { ReferenceProvider } from "@/components/reference/reference-provider";
@@ -35,7 +36,9 @@ export async function PageShell({ title, children }: { title: string; children: 
                 role: access.profile?.roleLabel ?? access.profile?.roleKey ?? "ยังไม่ได้ลงทะเบียน",
               }}
             />
-            <main className="w-full max-w-[1368px] p-6">{children}</main>
+            {/* จอแคบกว่า lg: Sidebar ถูกซ่อน เมนูนี้แทนที่ (รายการเดียวกัน กรองสิทธิ์เดียวกัน) */}
+            <MobileNav pendingApprovals={pendingApprovals} />
+            <main className="w-full max-w-[1368px] p-4 sm:p-6">{children}</main>
           </div>
           <Toast />
         </div>

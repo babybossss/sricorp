@@ -10,7 +10,7 @@ import { usePermissions } from "@/components/auth/permissions-provider";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { canOpen } from "@/lib/auth/routes";
 
-type NavItem = { href: string; label: string; icon: React.ReactNode; match?: (p: string) => boolean };
+export type NavItem = { href: string; label: string; icon: React.ReactNode; match?: (p: string) => boolean };
 
 const icon = (...paths: string[]) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[22px] w-[22px] flex-none">
@@ -20,7 +20,8 @@ const icon = (...paths: string[]) => (
   </svg>
 );
 
-const NAV: NavItem[] = [
+/** รายการเมนูชุดเดียวของทั้งระบบ — เมนูมือถือใช้ตัวนี้ด้วย ห้ามทำรายการที่สอง */
+export const NAV: NavItem[] = [
   { href: "/dashboard", label: "หน้าแรก", icon: icon("m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10") },
   { href: "/ledger", label: "สมุดบัญชี", icon: icon("M12 7v14", "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z") },
   { href: "/reports", label: "งบการเงิน", icon: icon("M3 3v18h18", "M7 14l4-4 3 3 5-6") },
@@ -44,7 +45,9 @@ export function Sidebar({ pendingApprovals }: { pendingApprovals: number | null 
   const showMobileNew = canOpen(permissions, "/m/new");
 
   return (
-    <nav className="sticky top-0 flex min-h-screen w-64 flex-none flex-col gap-1 border-r border-line bg-surface p-[16px_12px_24px]">
+    // จอแคบกว่า lg ซ่อนไว้ แล้วใช้ MobileNav แทน — ของเดิมกว้าง 256px ตายตัว
+    // ที่จอ 390px จึงเหลือที่ให้เนื้อหาแค่ 134px อ่านอะไรไม่ได้เลย
+    <nav className="sticky top-0 hidden min-h-screen w-64 flex-none flex-col gap-1 border-r border-line bg-surface p-[16px_12px_24px] lg:flex">
       <Link href="/dashboard" className="flex items-center gap-2.5 p-[8px_10px_18px] no-underline hover:no-underline">
         <Image src="/sri-logo.png" alt="SRI" width={40} height={40} className="h-10 w-10 object-contain" priority />
         <span>

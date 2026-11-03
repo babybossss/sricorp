@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans_Thai } from "next/font/google";
 import "@/styles/globals.css";
+import { LargeTextBoot } from "@/components/layout/large-text-boot";
 
 const plexThai = IBM_Plex_Sans_Thai({
   subsets: ["thai", "latin"],
@@ -19,7 +20,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="th" className={plexThai.variable}>
-      <body>{children}</body>
+      <body>
+        {/* โหมดตัวใหญ่ต้องมีผลทุกหน้ารวมหน้ามือถือ จึงติดที่ layout ราก ไม่ใช่ใน Topbar */}
+        <LargeTextBoot />
+        {children}
+      </body>
     </html>
   );
 }

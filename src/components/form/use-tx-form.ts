@@ -137,7 +137,7 @@ const DEFAULT_NOT_YET_PAID = freshDraft().notYetPaid;
  * ไม่งั้นแค่แวะหมวดที่ตั้งค้างไม่ได้ครั้งเดียว รายการที่เหลือทั้งวันจะกลายเป็น
  * "รับเงินแล้ว" เงียบๆ ทั้งที่ผู้ใช้ไม่เคยติ๊กอะไรเลย
  */
-function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
+export function accrualFlagFor(nextSub: string, prevSub: string, current: boolean): boolean {
   const accruable = (code: string) => {
     const s = findSub(code)?.sub;
     return !!s && canAccrueFromForm(s);

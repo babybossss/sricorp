@@ -5,7 +5,6 @@ import Link from "next/link";
 import { EntitySwitcher } from "./entity-switcher";
 import { Button } from "@/components/ui/button";
 import { TxFormDialog } from "@/components/form/tx-form-dialog";
-import { useApp } from "@/lib/store";
 import { usePermissions } from "@/components/auth/permissions-provider";
 import { canOpen } from "@/lib/auth/routes";
 
@@ -20,16 +19,10 @@ export function Topbar({
   pendingApprovals: number | null;
 }) {
   const [formOpen, setFormOpen] = React.useState(false);
-  const largeText = useApp((s) => s.largeText);
   const permissions = usePermissions();
   // ปุ่มบันทึกรายการ: ไม่มีสิทธิ์สร้างรายการ = ไม่โชว์ (DB ก็ไม่ยอมให้ insert อยู่แล้ว)
   const canCreate = permissions.has("txn.create");
   const canSeeApprovals = canOpen(permissions, "/approvals");
-
-  // โหมดตัวใหญ่ตั้งที่ <html> เพื่อให้มีผลทุกหน้าและทุก portal
-  React.useEffect(() => {
-    document.documentElement.dataset.largeText = String(largeText);
-  }, [largeText]);
 
   return (
     <>
