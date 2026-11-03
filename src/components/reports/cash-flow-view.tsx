@@ -1,4 +1,5 @@
 import type { CashFlowReport } from "@/lib/db/statements";
+import { thaiDate } from "@/lib/format";
 import { Amount, Notice, Row, Section, m } from "./parts";
 
 /** งบกระแสเงินสด (วิธีตรง) — นับตาม cash_date · รายการที่ยังไม่รับ/จ่ายเงิน (cash_date ว่าง) ไม่อยู่ในงบนี้ */
@@ -7,7 +8,7 @@ export function CashFlowView({ cf, ownerLabel }: { cf: CashFlowReport; ownerLabe
   return (
     <div className="flex flex-col gap-4">
       <div className="text-base text-ink-600">
-        {ownerLabel} · 1 ม.ค. – 31 ธ.ค. {cf.year} · นับตามวันที่เงินเข้า/ออกจริง
+        {ownerLabel} · {thaiDate(cf.periodStart)} – {thaiDate(cf.periodEnd)} · นับตามวันที่เงินเข้า/ออกจริง
       </div>
 
       {s.reconciled ? (
@@ -41,7 +42,11 @@ export function CashFlowView({ cf, ownerLabel }: { cf: CashFlowReport; ownerLabe
       ))}
 
       <Section title="สรุปเงินสด">
-        <Row label="เงินสดและเงินฝากต้นงวด" value={s.openingCash} note="คำนวณจากทุกรายการที่บันทึกก่อน 1 ม.ค." />
+        <Row
+          label="เงินสดและเงินฝากต้นงวด"
+          value={s.openingCash}
+          note={`คำนวณจากทุกรายการที่บันทึกก่อน ${thaiDate(cf.periodStart)}`}
+        />
         <Row label="เงินสดสุทธิจากทั้งสามกิจกรรม" value={s.netChange} />
         <Row
           label="ผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด"
@@ -50,7 +55,7 @@ export function CashFlowView({ cf, ownerLabel }: { cf: CashFlowReport; ownerLabe
         />
         <Row label="เงินสดและเงินฝากปลายงวด" value={s.closingCash} strong />
         <Row
-          label="เงินสดในงบแสดงฐานะการเงิน ณ 31 ธ.ค."
+          label={`เงินสดในงบแสดงฐานะการเงิน ณ ${thaiDate(cf.periodEnd)}`}
           value={cf.balanceSheetCash}
           note={
             cf.tiesOut
@@ -61,9 +66,10 @@ export function CashFlowView({ cf, ownerLabel }: { cf: CashFlowReport; ownerLabe
         {!cf.tiesOut ? (
           <div className="border-t border-line py-3">
             <Notice tone="warn">
-              เงินสดระหว่างทาง <Amount value={cf.cashInTransit} /> บาท — มีรายการที่ <b>วันที่เอกสาร</b> อยู่ในปีนี้แต่
-              <b>วันที่เงินเข้า/ออกจริง</b> อยู่คนละปี งบแสดงฐานะการเงินนับตามวันที่เอกสาร งบกระแสเงินสดนับตามวันที่เงินจริง
+              เงินสดระหว่างทาง <Amount value={cf.cashInTransit} /> บาท — มีรายการที่ <b>วันที่เอกสาร</b> อยู่ในงวดนี้แต่
+              <b>วันที่เงินเข้า/ออกจริง</b> อยู่คนละงวด งบแสดงฐานะการเงินนับตามวันที่เอกสาร งบกระแสเงินสดนับตามวันที่เงินจริง
               ส่วนต่างนี้คือยอดเหล่านั้น (ตรวจวันที่ของรายการในสมุดบัญชี)
+              {cf.month === null ? "" : " · ดูรายเดือนจะเจอบ่อยกว่าดูทั้งปี เพราะรายการที่คร่อมสิ้นเดือนนับเป็นคนละงวดทันที ไม่ได้แปลว่าลงผิด"}
             </Notice>
           </div>
         ) : null}

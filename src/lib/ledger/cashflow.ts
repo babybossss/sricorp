@@ -670,15 +670,29 @@ export function buildCashflow(input: CashflowInput): CashflowStatement {
       const sub = findSub(t.subCode)?.sub;
       return sub ? isOpeningBalanceSub(sub) : false;
     })();
+
+    /* วันที่ยอดเงินสดในงบดุลขยับจริง — ใช้ทั้งเส้นทางยอดยกมาและเส้นทางกระทบยอด
+       `cashDate ?? docDate` จึงจับใบที่มีบรรทัดเงินสดแต่ลืม `cashDate` ได้ */
+    const bookDate = t.cashDate ?? t.docDate;
+
     if (openingSub) {
-      computedOpeningSatang += cashSatang;
+      /**
+       * ยอดยกมา **ต้องยังไม่นับถ้ายังไม่ถึงวันของมัน**
+       *
+       * เคยบวกเข้าเงินสดต้นงวดโดยไม่ดูวันที่เลย ตอนที่ดูได้แต่ทั้งปีจึงแทบไม่เห็นปัญหา
+       * พอดูรายเดือนได้ รูนี้กดถึงด้วยคลิกเดียว: ใบตั้งต้นลงวันตัดยอด 30/09
+       * แล้วเปิดดูเดือน ม.ค. → งบกระแสเงินสดโชว์เงินสดต้น/ปลายงวดเป็นยอดตั้งต้นทั้งก้อน
+       * ทั้งที่ยังไม่มีเงินนั้นอยู่จริง ขณะที่งบดุลเดือนเดียวกันโชว์ 0 ถูกต้อง
+       * = งบสองใบของงวดเดียวกันขัดกันเอง และฝั่งที่ผิดคือฝั่งที่ตัวเลขใหญ่
+       *
+       * ยังไม่นับเป็นกระแสเงินสด**ของงวด** เหมือนเดิม (ดูเหตุผลข้างบน) —
+       * ที่เพิ่มคือเงื่อนไขว่าต้องถึงวันของมันแล้วเท่านั้น
+       */
+      if (bookDate <= periodEnd) computedOpeningSatang += cashSatang;
       continue;
     }
 
-    /* ---- เส้นทางกระทบยอด: บรรทัด 11xx ทั้งหมด ไม่สนใจ cfCategory/subCode ----
-       ลงวันที่ด้วย `cashDate ?? docDate` = วันที่ยอดเงินสดในงบดุลขยับจริง
-       จึงจับใบที่มีบรรทัดเงินสดแต่ลืม `cashDate` ได้ */
-    const bookDate = t.cashDate ?? t.docDate;
+    /* ---- เส้นทางกระทบยอด: บรรทัด 11xx ทั้งหมด ไม่สนใจ cfCategory/subCode ---- */
     if (bookDate < periodStart) computedOpeningSatang += cashSatang;
     else if (bookDate <= periodEnd) inPeriodSatang += cashSatang;
 

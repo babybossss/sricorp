@@ -1,4 +1,5 @@
 import { BS_SIDE_TH } from "@/lib/rules/statements";
+import { thaiDate } from "@/lib/format";
 import type { BalanceSheet } from "@/lib/db/statements";
 import { Amount, Notice, Row, Section, m } from "./parts";
 
@@ -9,7 +10,9 @@ export function BalanceSheetView({ bs, ownerLabel }: { bs: BalanceSheet; ownerLa
   return (
     <div className="flex flex-col gap-4">
       <div className="text-base text-ink-600">
-        {ownerLabel} · ณ วันที่ 31 ธ.ค. {bs.year}
+        {/* งบดุลลงวันที่เดียว (วันสิ้นงวด) — ต้องอ่านจาก bs.asOf ไม่ใช่เขียน 31 ธ.ค. ตายตัว
+            ไม่งั้นดูงบเดือน ก.พ. แล้วหัวงบบอกว่า ณ 31 ธ.ค. = เอกสารการเงินลงวันที่ผิด */}
+        {ownerLabel} · ณ วันที่ {thaiDate(bs.asOf)}
         {bs.consolidated ? " · งบรวม (ตัดรายการระหว่างกันที่หักกันได้พอดี)" : ""}
       </div>
 

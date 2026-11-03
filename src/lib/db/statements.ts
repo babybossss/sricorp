@@ -115,6 +115,12 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
  */
 export const periodRange = (year: number, month?: number | null): { start: string; end: string } => {
   if (month === null || month === undefined) return { start: `${pad4(year)}-01-01`, end: `${pad4(year)}-12-31` };
+  // เดือนนอกช่วงต้อง **ดังทันที** ไม่ใช่คืนวันที่ประหลาดอย่าง "2026-13-01"
+  // ทางเข้าจาก URL กรองด้วย parseMonth อยู่แล้ว ด่านนี้กันผู้เรียกที่ข้าม parseMonth ไป
+  // (วันที่เพี้ยนจะทำให้ช่วงของงบผิดโดยหน้าจอยังดูปกติ ซึ่งมองไม่ออกเลย)
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    throw new Error(`เดือนต้องเป็นจำนวนเต็ม 1-12 หรือ null (ทั้งปี) แต่ได้ ${String(month)}`);
+  }
   // Date.UTC(year, month, 0) = วันสุดท้ายของเดือน `month` (เดือนนับจาก 1)
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return { start: `${pad4(year)}-${pad2(month)}-01`, end: `${pad4(year)}-${pad2(month)}-${pad2(lastDay)}` };
@@ -184,6 +190,10 @@ export type PlLineOut = { line: string; codes: string[]; amount: number };
 export type PlSectionOut = { kind: "revenue" | "expense"; section: string; lines: PlLineOut[]; total: number };
 export type ProfitLoss = {
   year: number;
+  /** `null` = ทั้งปี */
+  month: number | null;
+  /** ป้ายงวดสำหรับแสดงบนหัวงบ — มาจากตัวเลขชุดเดียวกับที่คำนวณ ป้ายจึงหลุดจากตัวเลขไม่ได้ */
+  periodLabel: string;
   periodStart: string;
   periodEnd: string;
   ownerIds: string[];
@@ -241,6 +251,8 @@ export function buildProfitLoss(lines: StmtLine[], opts: { year: number; month?:
 
   return {
     year: opts.year,
+    month: opts.month ?? null,
+    periodLabel: periodLabel(opts.year, opts.month),
     periodStart: start,
     periodEnd: end,
     ownerIds: [...owners],
@@ -266,7 +278,16 @@ export type UnrealisedRow = {
   /** ยอด ณ สิ้นปี — ยอดเดียวกับบรรทัดส่วนของเจ้าของในงบแสดงฐานะการเงิน */
   closing: number;
 };
-export type UnrealisedBox = { year: number; rows: UnrealisedRow[]; total: number };
+export type UnrealisedBox = {
+  year: number;
+  /** `null` = ทั้งปี */
+  month: number | null;
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  rows: UnrealisedRow[];
+  total: number;
+};
 
 export function buildUnrealised(lines: StmtLine[], opts: { year: number; month?: number | null; ownerIds: string[] }): UnrealisedBox {
   const { start, end } = periodRange(opts.year, opts.month);
@@ -279,7 +300,15 @@ export function buildUnrealised(lines: StmtLine[], opts: { year: number; month?:
     const closing = natural(upto, code);
     return { code, name: coa(code).nameTh, opening: baht(opening), movement: baht(closing - opening), closing: baht(closing) };
   });
-  return { year: opts.year, rows, total: baht(rows.reduce((t, r) => t + satang(r.closing), 0)) };
+  return {
+    year: opts.year,
+    month: opts.month ?? null,
+    periodLabel: periodLabel(opts.year, opts.month),
+    periodStart: start,
+    periodEnd: end,
+    rows,
+    total: baht(rows.reduce((t, r) => t + satang(r.closing), 0)),
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -297,6 +326,11 @@ export type BsLineOut = {
 export type BsGroupOut = { side: BsSide; group: string; lines: BsLineOut[]; total: number };
 export type BalanceSheet = {
   year: number;
+  /** `null` = ทั้งปี */
+  month: number | null;
+  /** ป้ายงวด — หัวงบดุลต้องใช้ `asOf` เป็นหลัก เพราะงบดุลลงวันที่เดียว ไม่ใช่ช่วง */
+  periodLabel: string;
+  /** วันที่ของงบดุล = วันสิ้นงวด */
   asOf: string;
   ownerIds: string[];
   consolidated: boolean;
@@ -413,6 +447,8 @@ export function buildBalanceSheet(lines: StmtLine[], opts: { year: number; month
 
   return {
     year: opts.year,
+    month: opts.month ?? null,
+    periodLabel: periodLabel(opts.year, opts.month),
     asOf: end,
     ownerIds: [...owners],
     consolidated,
@@ -452,6 +488,11 @@ const CF_VALUES: CashflowSection[] = ["operating", "investing", "financing", "no
 
 export type CashFlowReport = {
   year: number;
+  /** `null` = ทั้งปี */
+  month: number | null;
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
   statement: CashflowStatement;
   /** ยอดเงินสดในงบแสดงฐานะการเงิน ณ สิ้นปี */
   balanceSheetCash: number;
@@ -511,7 +552,17 @@ export function buildCashFlowReport(
 
   const bsCash = balanceSheetCash(opts.balanceSheet);
   const cashInTransit = baht(satang(bsCash) - satang(statement.closingCash));
-  return { year: opts.year, statement, balanceSheetCash: bsCash, cashInTransit, tiesOut: cashInTransit === 0 };
+  return {
+    year: opts.year,
+    month: opts.month ?? null,
+    periodLabel: periodLabel(opts.year, opts.month),
+    periodStart: start,
+    periodEnd: end,
+    statement,
+    balanceSheetCash: bsCash,
+    cashInTransit,
+    tiesOut: cashInTransit === 0,
+  };
 }
 
 /** ผู้ถือที่รวมอยู่ในมุมมอง — `null`/`"family"` = ทุกผู้ถือ */

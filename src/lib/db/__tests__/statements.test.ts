@@ -361,8 +361,11 @@ describe("ตัวช่วย", () => {
 
 describe("ช่วงเวลา · periodRange", () => {
   it("ไม่ระบุเดือน = ทั้งปี ม.ค.–ธ.ค. (เท่ากับ fiscalYear เดิมทุกประการ)", () => {
+    // เทียบกับค่าที่เขียนไว้ตรงๆ **ไม่ใช่เทียบกับ fiscalYear** เพราะ fiscalYear เรียก
+    // periodRange เอง การเทียบกันจึงเป็นจริงเสมอไม่ว่าทั้งคู่จะผิดแค่ไหน
     expect(periodRange(2026, null)).toEqual({ start: "2026-01-01", end: "2026-12-31" });
-    expect(periodRange(2026)).toEqual(fiscalYear(2026));
+    expect(periodRange(2026)).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+    expect(fiscalYear(2026)).toEqual({ start: "2026-01-01", end: "2026-12-31" });
   });
 
   it("ระบุเดือน = เดือนนั้นเดือนเดียว และวันสิ้นเดือนมาจากปฏิทินจริง", () => {
@@ -459,5 +462,82 @@ describe("งบรายเดือนต้องได้ความหม�
     const explicitNull = buildBalanceSheet(L, { year: YEAR, month: null, ownerIds: ALL });
     expect(withoutMonth).toEqual(explicitNull);
     expect(buildProfitLoss(L, { year: YEAR, ownerIds: ALL })).toEqual(pl(null));
+  });
+});
+
+/* ================================================================== *
+ * งบกระแสเงินสดรายเดือน — ช่องที่ผู้ตรวจชี้ว่ายังไม่มีเทสต์เลย
+ * ================================================================== */
+
+describe("งบกระแสเงินสดรายเดือน", () => {
+  /** สมุดเล็กที่คุมได้: ยอดยกมาลงวันตัดยอดกลางปี + รายการคร่อมสิ้นเดือน */
+  function book(): StmtLine[] {
+    return [
+      // ยอดยกมา 5,000,000 ลงวันตัดยอด 30/06/2026
+      ...post(
+        { typeKey: "opening", subCode: "opn.cash", amount: 5_000_000, ownerId: TK, bankAccountId: "b4" },
+        { docDate: "2026-06-30", cashDate: "2026-06-30", source: "import" }
+      ),
+      // คร่อมสิ้นเดือน: เอกสาร 31/07 แต่เงินเข้า 02/08
+      ...post({ ...rentBase, amount: 10_000, bankAccountId: "b4" }, { docDate: "2026-07-31", cashDate: "2026-08-02" }),
+    ];
+  }
+
+  const cfOf = (L: StmtLine[], month: number | null) => {
+    const bs = buildBalanceSheet(L, { year: YEAR, month, ownerIds: [TK] });
+    return { bs, cf: buildCashFlowReport(L, { year: YEAR, month, ownerIds: [TK], balanceSheet: bs }) };
+  };
+
+  it("ดูเดือนก่อนวันตัดยอด → ยังไม่มีเงินสด (ยอดยกมาต้องยังไม่ถูกนับ)", () => {
+    // นี่คือรูที่ผู้ตรวจจับได้: ของเดิมบวกยอดยกมาเข้าเงินสดต้นงวดโดยไม่ดูวันที่
+    // ดู ม.ค. แล้ว CF โชว์เงิน 5,000,000 ที่ยังไม่มี ขณะที่งบดุลโชว์ 0 ถูกต้อง
+    for (const m of [1, 2, 3, 4, 5]) {
+      const { bs, cf } = cfOf(book(), m);
+      expect({ m, opening: cf.statement.openingCash }).toEqual({ m, opening: 0 });
+      expect({ m, closing: cf.statement.closingCash }).toEqual({ m, closing: 0 });
+      // งบสองใบของงวดเดียวกันต้องไม่ขัดกันเอง
+      expect({ m, bsCash: balanceSheetCash(bs) }).toEqual({ m, bsCash: 0 });
+    }
+  });
+
+  it("เดือนหลังวันตัดยอด → เงินสดต้นงวดคือยอดยกมา และกระทบยอดลงตัว", () => {
+    const { bs, cf } = cfOf(book(), 9); // ก.ย. — หลังทั้งยอดยกมาและรายการคร่อมเดือน
+    expect(cf.statement.openingCash).toBe(5_010_000);
+    expect(cf.statement.reconciled).toBe(true);
+    expect(cf.statement.closingCash).toBe(balanceSheetCash(bs));
+    expect(cf.cashInTransit).toBe(0);
+  });
+
+  it("รายการคร่อมสิ้นเดือน → เงินสดระหว่างทางดังตามจริง และบอกเป็น 'งวด' ไม่ใช่ 'ปี'", () => {
+    // ก.ค.: เอกสารอยู่ใน ก.ค. (งบดุลนับ) แต่เงินเข้า ส.ค. (งบ CF นับ) → ต้องไม่ tie
+    const jul = cfOf(book(), 7);
+    expect(jul.cf.tiesOut).toBe(false);
+    expect(jul.cf.cashInTransit).toBe(10_000);
+    // ทั้งปีไม่คร่อม จึง tie ตามปกติ — ยืนยันว่าอาการนี้เป็นของ "งวด" ไม่ใช่ความผิดของสมุด
+    const year = cfOf(book(), null);
+    expect(year.cf.tiesOut).toBe(true);
+    expect(year.cf.cashInTransit).toBe(0);
+  });
+
+  it("ป้ายงวดบนรายงานมาจากตัวเลขชุดเดียวกับที่คำนวณ", () => {
+    const { cf } = cfOf(book(), 7);
+    expect({ start: cf.periodStart, end: cf.periodEnd, label: cf.periodLabel, month: cf.month }).toEqual({
+      start: "2026-07-01",
+      end: "2026-07-31",
+      label: "เดือนกรกฎาคม 2026",
+      month: 7,
+    });
+  });
+
+  it("ทุกรายงานพกงวดของตัวเองมา และตรงกันทั้งสี่ใบ", () => {
+    const L = book();
+    const opts = { year: YEAR, month: 7, ownerIds: [TK] };
+    const bs = buildBalanceSheet(L, opts);
+    const pl = buildProfitLoss(L, opts);
+    const un = buildUnrealised(L, opts);
+    const cf = buildCashFlowReport(L, { ...opts, balanceSheet: bs });
+    expect(bs.asOf).toBe("2026-07-31");
+    for (const r of [bs, pl, un, cf]) expect(r.periodLabel).toBe("เดือนกรกฎาคม 2026");
+    for (const r of [pl, un, cf]) expect({ s: r.periodStart, e: r.periodEnd }).toEqual({ s: "2026-07-01", e: "2026-07-31" });
   });
 });

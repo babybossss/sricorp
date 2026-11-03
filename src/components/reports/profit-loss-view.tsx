@@ -1,4 +1,5 @@
 import type { ProfitLoss, UnrealisedBox } from "@/lib/db/statements";
+import { thaiDate } from "@/lib/format";
 import { Notice, Row, Section, m } from "./parts";
 
 /**
@@ -11,7 +12,8 @@ export function ProfitLossView({ pl, unrealised, ownerLabel }: { pl: ProfitLoss;
   return (
     <div className="flex flex-col gap-4">
       <div className="text-base text-ink-600">
-        {ownerLabel} · 1 ม.ค. – 31 ธ.ค. {pl.year} · นับตามวันที่เอกสาร (รวมรายการที่ยังไม่ได้รับ-จ่ายเงิน)
+        {/* ช่วงงวดมาจากตัวเลขชุดเดียวกับที่คำนวณ ป้ายจึงหลุดจากตัวเลขไม่ได้ */}
+        {ownerLabel} · {thaiDate(pl.periodStart)} – {thaiDate(pl.periodEnd)} · นับตามวันที่เอกสาร (รวมรายการที่ยังไม่ได้รับ-จ่ายเงิน)
       </div>
 
       {pl.unmapped.length ? (
@@ -32,7 +34,7 @@ export function ProfitLossView({ pl, unrealised, ownerLabel }: { pl: ProfitLoss;
       <Section title="กำไร(ขาดทุน)สุทธิ">
         <Row label="รวมรายได้" value={pl.totalRevenue} />
         <Row label="หัก รวมค่าใช้จ่ายทั้งหมด" value={pl.totalExpense} />
-        <Row label={`กำไร(ขาดทุน)สุทธิปี ${pl.year}`} value={pl.netProfit} strong />
+        <Row label={`กำไร(ขาดทุน)สุทธิ${pl.periodLabel}`} value={pl.netProfit} strong />
       </Section>
 
       <Section title="กำไร/ขาดทุนที่ยังไม่เกิดขึ้นจริง — ไม่รวมในกำไรขาดทุนข้างบน" tone="separate">
@@ -45,7 +47,7 @@ export function ProfitLossView({ pl, unrealised, ownerLabel }: { pl: ProfitLoss;
             key={r.code}
             label={`${r.code} ${r.name}`}
             value={r.closing}
-            note={`ยกมาต้นปี ${m(r.opening)} · เปลี่ยนแปลงในปี ${m(r.movement)} · ยอดสิ้นปีคือตัวเลขทางขวา`}
+            note={`ยกมาต้นงวด ${m(r.opening)} · เปลี่ยนแปลงในงวด ${m(r.movement)} · ยอดสิ้นงวดคือตัวเลขทางขวา`}
           />
         ))}
         <Row label="รวมที่ยังไม่เกิดขึ้นจริง (ไม่บวกกับกำไรสุทธิ)" value={unrealised.total} strong />

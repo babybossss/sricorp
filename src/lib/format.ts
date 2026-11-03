@@ -142,3 +142,10 @@ export const THAI_MONTHS_SHORT = [
   "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
   "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
 ] as const;
+
+/** `2026-02-28` → `28 ก.พ. 2026` — ใช้บนหัวงบที่ต้องบอกวันชัดเจน */
+export function thaiDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${Number(m[3])} ${THAI_MONTHS_SHORT[Number(m[2]) - 1]} ${m[1]}`;
+}
