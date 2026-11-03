@@ -18,6 +18,7 @@
 import { COA, FX_TRANSLATION_DIFF_COA, REVALUATION_SURPLUS_COA, coa, isCashAccount, type CoaType } from "@/lib/rules/coa";
 import { BS_LAYOUT, PL_LAYOUT, type BsSide } from "@/lib/rules/statements";
 import { buildCashflow, type CashflowStatement, type CashflowTxn } from "@/lib/ledger/cashflow";
+import { THAI_MONTHS } from "@/lib/format";
 import { PostingError } from "@/lib/ledger/types";
 import type { CashflowSection } from "@/lib/rules/tx-rules";
 
@@ -96,15 +97,47 @@ const baht = (s: number) => Math.round(s) / 100;
  */
 export const unrealisedEquityCodes = (): string[] => [REVALUATION_SURPLUS_COA, FX_TRANSLATION_DIFF_COA];
 
-export const fiscalYear = (year: number): { start: string; end: string } => ({
-  start: `${String(year).padStart(4, "0")}-01-01`,
-  end: `${String(year).padStart(4, "0")}-12-31`,
-});
+const pad4 = (n: number) => String(n).padStart(4, "0");
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * ช่วงเวลาของงบ — ทั้งปี หรือเดือนเดียว
+ *
+ * `month` เป็น `null`/ไม่ส่ง = ทั้งปี ม.ค.–ธ.ค. (พฤติกรรมเดิมของระบบ)
+ * `month` 1-12 = เดือนนั้นเดือนเดียว
+ *
+ * **ความหมายของ start/end ต่างกันตามงบ และต้องไม่สลับกัน**
+ * - งบกำไรขาดทุน · งบกระแสเงินสด = รายการ **ในช่วง** start..end
+ * - งบดุล = ยอด **ณ วันสิ้นช่วง** (สะสมตั้งแต่เปิดกิจการถึง end) ไม่ใช่เฉพาะที่เกิดในช่วง
+ *   ถ้าเผลอกรองงบดุลด้วย start ด้วย ยอดยกมาจะหายทั้งก้อนและงบจะไม่ดุล
+ *
+ * วันสิ้นเดือนคำนวณจากปฏิทินจริง (ก.พ. 28/29 วัน) ไม่ใช่สมมติ 31 วัน
+ */
+export const periodRange = (year: number, month?: number | null): { start: string; end: string } => {
+  if (month === null || month === undefined) return { start: `${pad4(year)}-01-01`, end: `${pad4(year)}-12-31` };
+  // Date.UTC(year, month, 0) = วันสุดท้ายของเดือน `month` (เดือนนับจาก 1)
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { start: `${pad4(year)}-${pad2(month)}-01`, end: `${pad4(year)}-${pad2(month)}-${pad2(lastDay)}` };
+};
+
+/** ปีบัญชีแบบเต็ม ม.ค.–ธ.ค. — คงไว้เพื่อให้ผู้เรียกเดิมใช้ได้เหมือนเดิม */
+export const fiscalYear = (year: number): { start: string; end: string } => periodRange(year, null);
 
 /** ปีบัญชีแบบเต็ม ม.ค.–ธ.ค. · ปีต้องเป็นจำนวนเต็มสี่หลัก */
 export function parseFiscalYear(raw: unknown): number | null {
   const n = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : NaN;
   return Number.isInteger(n) && n >= 1900 && n <= 2399 ? n : null;
+}
+
+/** เลขเดือนจาก URL — ค่าที่ไม่ใช่ 1-12 ถือว่า "ทั้งปี" ไม่ใช่เดือนมั่ว */
+export function parseMonth(raw: unknown): number | null {
+  const n = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= 12 ? n : null;
+}
+
+/** ป้ายกำกับช่วงเวลาสำหรับแสดงบนงบ เช่น "ปี 2026" หรือ "เดือนตุลาคม 2026" */
+export function periodLabel(year: number, month?: number | null): string {
+  return month === null || month === undefined ? `ปี ${year}` : `เดือน${THAI_MONTHS[month - 1]} ${year}`;
 }
 
 const typeOf = (code: string): CoaType | null => {
@@ -186,8 +219,8 @@ function netProfitSatang(sums: Sums): number {
   return n;
 }
 
-export function buildProfitLoss(lines: StmtLine[], opts: { year: number; ownerIds: string[] }): ProfitLoss {
-  const { start, end } = fiscalYear(opts.year);
+export function buildProfitLoss(lines: StmtLine[], opts: { year: number; month?: number | null; ownerIds: string[] }): ProfitLoss {
+  const { start, end } = periodRange(opts.year, opts.month);
   const owners = new Set(opts.ownerIds);
   const { sums } = plBetween(lines, owners, start, end);
 
@@ -235,8 +268,8 @@ export type UnrealisedRow = {
 };
 export type UnrealisedBox = { year: number; rows: UnrealisedRow[]; total: number };
 
-export function buildUnrealised(lines: StmtLine[], opts: { year: number; ownerIds: string[] }): UnrealisedBox {
-  const { start, end } = fiscalYear(opts.year);
+export function buildUnrealised(lines: StmtLine[], opts: { year: number; month?: number | null; ownerIds: string[] }): UnrealisedBox {
+  const { start, end } = periodRange(opts.year, opts.month);
   const scope = inScope(new Set(opts.ownerIds));
   const codes = unrealisedEquityCodes();
   const before = sumByCode(lines, (l) => scope(l) && l.docDate < start && codes.includes(l.coaCode));
@@ -294,8 +327,10 @@ export type BalanceSheet = {
 
 const INTERCOMPANY_BS_GROUP = "รายการระหว่างกัน (ตัดออกในงบรวม)";
 
-export function buildBalanceSheet(lines: StmtLine[], opts: { year: number; ownerIds: string[] }): BalanceSheet {
-  const { start, end } = fiscalYear(opts.year);
+export function buildBalanceSheet(lines: StmtLine[], opts: { year: number; month?: number | null; ownerIds: string[] }): BalanceSheet {
+  // end = วันสิ้นช่วง · งบดุลสะสมถึง end (ไม่กรองด้วย start)
+  // start ใช้อย่างเดียวคือแยก "กำไรงวดนี้" ออกจาก "กำไรสะสมก่อนงวด"
+  const { start, end } = periodRange(opts.year, opts.month);
   const owners = new Set(opts.ownerIds);
   const scope = inScope(owners);
   const consolidated = owners.size > 1;
@@ -341,18 +376,21 @@ export function buildBalanceSheet(lines: StmtLine[], opts: { year: number; owner
       // กำไรสะสม: เติมกำไรสุทธิที่ยังไม่ได้ปิดบัญชีไว้ใต้บรรทัด 3300 โดยบอกที่มาตรงๆ
       if (g.side === "equity" && l.codes.includes("3300")) {
         out.push({
-          line: "กำไร(ขาดทุน)สุทธิสะสมของปีก่อนๆ ที่ยังไม่ปิดบัญชี",
+          line: `กำไร(ขาดทุน)สุทธิสะสมของ${opts.month == null ? "ปีก่อนๆ" : "งวดก่อนๆ"} ที่ยังไม่ปิดบัญชี`,
           codes: [],
           amount: baht(priorNp),
           contra: false,
-          note: "รวมกำไรสุทธิทุกปีก่อนหน้า (ตัวเลขเดียวกับงบกำไรขาดทุนของแต่ละปี)",
+          note:
+            opts.month == null
+              ? "รวมกำไรสุทธิทุกปีก่อนหน้า (ตัวเลขเดียวกับงบกำไรขาดทุนของแต่ละปี)"
+              : "รวมกำไรสุทธิทุกงวดก่อนหน้า (ตั้งแต่เปิดกิจการถึงก่อนต้นเดือนนี้)",
         });
         out.push({
-          line: `กำไร(ขาดทุน)สุทธิปี ${opts.year}`,
+          line: `กำไร(ขาดทุน)สุทธิ${periodLabel(opts.year, opts.month)}`,
           codes: [],
           amount: baht(currentNp),
           contra: false,
-          note: "ตรงกับกำไรสุทธิในงบกำไรขาดทุนของปีเดียวกัน (ไม่รวมกำไรที่ยังไม่เกิดขึ้นจริง)",
+          note: "ตรงกับกำไรสุทธิในงบกำไรขาดทุนของงวดเดียวกัน (ไม่รวมกำไรที่ยังไม่เกิดขึ้นจริง)",
         });
       }
     }
@@ -428,9 +466,9 @@ export type CashFlowReport = {
 
 export function buildCashFlowReport(
   lines: StmtLine[],
-  opts: { year: number; ownerIds: string[]; balanceSheet: BalanceSheet }
+  opts: { year: number; month?: number | null; ownerIds: string[]; balanceSheet: BalanceSheet }
 ): CashFlowReport {
-  const { start, end } = fiscalYear(opts.year);
+  const { start, end } = periodRange(opts.year, opts.month);
   const owners = new Set(opts.ownerIds);
 
   const byTxn = new Map<string, StmtLine[]>();

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { THAI_MONTHS_SHORT } from "@/lib/format";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { money } from "@/lib/format";
@@ -70,20 +71,30 @@ export const TABS = [
 ] as const;
 export type ReportTab = (typeof TABS)[number]["key"];
 
-export function tabHref(tab: ReportTab, year: number, owner: string) {
-  return `/reports?tab=${tab}&year=${year}&owner=${encodeURIComponent(owner)}`;
+/**
+ * ลิงก์ของหน้างบ — เก็บ "ช่วงเวลา" ไว้ใน URL ทั้งหมด
+ *
+ * `month` เป็น `null` = ทั้งปี · ไม่ใส่พารามิเตอร์ `month` ลงไปเลย
+ * (ค่า `month` ที่ไม่ใช่ 1-12 ฝั่ง server ถือว่าทั้งปีอยู่แล้ว แต่ไม่ใส่ไว้ URL จะอ่านง่ายกว่า)
+ */
+export function reportHref(tab: ReportTab, year: number, month: number | null, owner: string) {
+  const m = month === null ? "" : `&month=${month}`;
+  return `/reports?tab=${tab}&year=${year}${m}&owner=${encodeURIComponent(owner)}`;
 }
 
 /** แท็บ + ตัวเลือกผู้ถือ/ปี — เป็นลิงก์และฟอร์ม GET ล้วน ไม่ต้องมี JavaScript ฝั่ง browser */
 export function ReportControls({
   tab,
   year,
+  month,
   owner,
   years,
   owners,
 }: {
   tab: ReportTab;
   year: number;
+  /** `null` = ดูทั้งปี */
+  month: number | null;
   owner: string;
   years: number[];
   owners: { id: string; name: string }[];
@@ -96,7 +107,7 @@ export function ReportControls({
         {TABS.map((t) => (
           <Link
             key={t.key}
-            href={tabHref(t.key, year, owner)}
+            href={reportHref(t.key, year, month, owner)}
             aria-current={tab === t.key ? "page" : undefined}
             className={cn(
               "inline-flex min-h-control items-center rounded border px-4 text-base font-semibold no-underline hover:no-underline",
@@ -108,8 +119,42 @@ export function ReportControls({
           </Link>
         ))}
       </nav>
+      {/* ช่วงเวลา — กดครั้งเดียวเปลี่ยนทันที ไม่ต้องกดปุ่มยืนยัน
+          "ทั้งปี" อยู่ซ้ายสุดเพื่อให้กดกลับไปดูทั้งปีได้ตลอด */}
+      <nav aria-label="เลือกช่วงเวลา" className="flex gap-2 overflow-x-auto pb-1">
+        <Link
+          href={reportHref(tab, year, null, owner)}
+          aria-current={month === null ? "page" : undefined}
+          className={cn(
+            "flex min-h-control flex-none items-center rounded border px-4 text-base font-semibold no-underline hover:no-underline",
+            "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600",
+            month === null ? "border-brand-600 bg-brand-50 text-brand-600" : "border-line bg-surface text-ink-600 hover:border-ink-400"
+          )}
+        >
+          ทั้งปี {year}
+        </Link>
+        {THAI_MONTHS_SHORT.map((label, i) => {
+          const m = i + 1;
+          return (
+            <Link
+              key={m}
+              href={reportHref(tab, year, m, owner)}
+              aria-current={month === m ? "page" : undefined}
+              className={cn(
+                "flex min-h-control flex-none items-center rounded border px-3 text-base no-underline hover:no-underline",
+                "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-600",
+                month === m ? "border-brand-600 bg-brand-50 font-semibold text-brand-600" : "border-line bg-surface text-ink-600 hover:border-ink-400"
+              )}
+            >
+              {label}
+            </Link>
+          );
+        })}
+      </nav>
       <form method="get" action="/reports" className="flex flex-wrap items-end gap-3 rounded-card border border-line bg-surface p-4 shadow-card">
         <input type="hidden" name="tab" value={tab} />
+        {/* เปลี่ยนปี/ผู้ถือแล้วต้องยังอยู่เดือนเดิม */}
+        {month === null ? null : <input type="hidden" name="month" value={month} />}
         <label className="flex min-w-[220px] flex-1 flex-col gap-1.5">
           <span className="text-sm text-ink-600">ผู้ถือกรรมสิทธิ์</span>
           <select name="owner" defaultValue={owner} className={sel}>

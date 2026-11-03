@@ -12,6 +12,7 @@ import {
   buildUnrealised,
   ownersInView,
   parseFiscalYear,
+  parseMonth,
 } from "@/lib/db/statements";
 import { todayDmy } from "@/lib/format";
 
@@ -27,6 +28,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const one = (k: string) => (Array.isArray(sp[k]) ? (sp[k] as string[])[0] : (sp[k] as string | undefined));
   const thisYear = Number(todayDmy().slice(6));
   const year = parseFiscalYear(one("year")) ?? thisYear;
+  // เดือนที่ไม่ใช่ 1-12 (หรือไม่ส่งมา) = ดูทั้งปี ไม่ใช่เดือนมั่ว
+  const month = parseMonth(one("month"));
   const tab: ReportTab = (TABS.find((t) => t.key === one("tab"))?.key ?? "bs") as ReportTab;
   const ownerParam = one("owner") ?? "family";
 
@@ -40,7 +43,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <div className="mt-1 text-sm">ลองโหลดหน้านี้ใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ</div>
         </Notice>
       ) : (
-        <Statements data={data} tab={tab} year={year} ownerParam={ownerParam} thisYear={thisYear} />
+        <Statements data={data} tab={tab} year={year} month={month} ownerParam={ownerParam} thisYear={thisYear} />
       )}
     </PageShell>
   );
@@ -50,12 +53,15 @@ function Statements({
   data,
   tab,
   year,
+  month,
   ownerParam,
   thisYear,
 }: {
   data: Extract<Awaited<ReturnType<typeof loadStatementData>>, { ok: true }>;
   tab: ReportTab;
   year: number;
+  /** `null` = ดูทั้งปี */
+  month: number | null;
   ownerParam: string;
   thisYear: number;
 }) {
@@ -70,12 +76,14 @@ function Statements({
   const lastYear = data.lines.reduce((max, l) => Math.max(max, Number(l.docDate.slice(0, 4))), thisYear);
   const years = Array.from({ length: Math.max(lastYear, year) - Math.min(firstYear, year) + 1 }, (_, i) => Math.max(lastYear, year) - i);
 
-  const opts = { year, ownerIds };
+  // ช่วงเวลาชุดเดียวส่งให้ทุกงบ — งบกำไรขาดทุน/กระแสเงินสดนับ "ในช่วง"
+  // ส่วนงบดุลนับ "ณ วันสิ้นช่วง" ซึ่ง buildBalanceSheet จัดการให้แล้ว
+  const opts = { year, month, ownerIds };
   const bs = buildBalanceSheet(data.lines, opts);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <ReportControls tab={tab} year={year} owner={view} years={years} owners={visible.map((o) => ({ id: o.id, name: o.name }))} />
+      <ReportControls tab={tab} year={year} month={month} owner={view} years={years} owners={visible.map((o) => ({ id: o.id, name: o.name }))} />
       {!ownerKnown ? <Notice tone="warn">ไม่พบผู้ถือที่เลือก จึงแสดงมุมมองรวมทุกชื่อแทน</Notice> : null}
       {tab === "bs" ? <BalanceSheetView bs={bs} ownerLabel={ownerLabel} /> : null}
       {tab === "pl" ? (
@@ -93,7 +101,7 @@ function CashFlowSafe({
   ownerLabel,
 }: {
   lines: Parameters<typeof buildCashFlowReport>[0];
-  opts: { year: number; ownerIds: string[] };
+  opts: { year: number; month: number | null; ownerIds: string[] };
   bs: ReturnType<typeof buildBalanceSheet>;
   ownerLabel: string;
 }) {

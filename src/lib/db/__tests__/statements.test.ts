@@ -15,6 +15,9 @@ import {
   fiscalYear,
   ownersInView,
   parseFiscalYear,
+  parseMonth,
+  periodLabel,
+  periodRange,
   unrealisedEquityCodes,
   type StmtLine,
 } from "../statements";
@@ -346,5 +349,115 @@ describe("ตัวช่วย", () => {
     expect(r.ok && r.rows.length).toBe(2350);
     const tooMany = await fetchAllPages<number>(build, { maxRows: 2000 });
     expect(tooMany.ok).toBe(false);
+  });
+});
+
+/* ================================================================== *
+ * มุมมองรายเดือน — ดูทีละเดือน หรือกดดูทั้งปีได้
+ *
+ * กับดักที่ต้องกันให้ได้: **งบดุลเป็นยอด ณ วันสิ้นงวด ไม่ใช่เฉพาะรายการในงวด**
+ * ถ้าเผลอกรองงบดุลด้วยวันต้นงวดด้วย ยอดยกมาจะหายทั้งก้อนและงบจะไม่ดุล
+ * ================================================================== */
+
+describe("ช่วงเวลา · periodRange", () => {
+  it("ไม่ระบุเดือน = ทั้งปี ม.ค.–ธ.ค. (เท่ากับ fiscalYear เดิมทุกประการ)", () => {
+    expect(periodRange(2026, null)).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+    expect(periodRange(2026)).toEqual(fiscalYear(2026));
+  });
+
+  it("ระบุเดือน = เดือนนั้นเดือนเดียว และวันสิ้นเดือนมาจากปฏิทินจริง", () => {
+    expect(periodRange(2026, 1)).toEqual({ start: "2026-01-01", end: "2026-01-31" });
+    expect(periodRange(2026, 2)).toEqual({ start: "2026-02-01", end: "2026-02-28" });
+    expect(periodRange(2026, 4)).toEqual({ start: "2026-04-01", end: "2026-04-30" });
+    expect(periodRange(2026, 12)).toEqual({ start: "2026-12-01", end: "2026-12-31" });
+  });
+
+  it("ปีอธิกสุรทิน ก.พ. มี 29 วัน (ไม่ใช่สมมติ 28 หรือ 31)", () => {
+    expect(periodRange(2024, 2).end).toBe("2024-02-29");
+    expect(periodRange(2100, 2).end).toBe("2100-02-28"); // หาร 100 ลงตัวแต่ไม่หาร 400 = ไม่ใช่อธิกสุรทิน
+  });
+
+  it("parseMonth รับแค่ 1-12 · ค่าอื่นถือว่าทั้งปี ไม่ใช่เดือนมั่ว", () => {
+    for (const ok of ["1", "12", 6]) expect(parseMonth(ok)).toBe(Number(ok));
+    for (const bad of ["0", "13", "-1", "1.5", "ธันวาคม", "", null, undefined, NaN]) expect(parseMonth(bad)).toBeNull();
+  });
+
+  it("periodLabel บอกงวดตามจริง", () => {
+    expect(periodLabel(2026, null)).toBe("ปี 2026");
+    expect(periodLabel(2026, 10)).toBe("เดือนตุลาคม 2026");
+  });
+});
+
+describe("งบรายเดือนต้องได้ความหมายที่ถูก", () => {
+  const L = ledger();
+  const pl = (month: number | null) => buildProfitLoss(L, { year: YEAR, month, ownerIds: ALL });
+
+  it("งบกำไรขาดทุนนับเฉพาะรายการในเดือนนั้น", () => {
+    // มี.ค. = ค่าเช่า 12,000 (รับเงินแล้ว) + 20,000 (ค้างรับ) = รายได้ 32,000 ไม่มีค่าใช้จ่าย
+    expect(pl(3).netProfit).toBe(32_000);
+    // เม.ย. = ค่าซ่อม 3,000 อย่างเดียว
+    expect(pl(4).netProfit).toBe(-3_000);
+    // ม.ค. ไม่มีรายได้/ค่าใช้จ่าย (เพิ่มทุนไม่ใช่รายได้)
+    expect(pl(1).netProfit).toBe(0);
+  });
+
+  it("กำไรรวม 12 เดือน = กำไรทั้งปี (ไม่มีรายการไหนตกหล่นหรือถูกนับซ้ำ)", () => {
+    const sum = Array.from({ length: 12 }, (_, i) => pl(i + 1).netProfit).reduce((a, b) => a + b, 0);
+    expect(sum).toBe(pl(null).netProfit);
+    expect(sum).toBe(29_000); // 32,000 − 3,000
+  });
+
+  it("งบดุลเป็นยอด ณ สิ้นเดือน — ยอดจากเดือนก่อนต้องยังอยู่", () => {
+    // ก.พ. ซื้ออสังหาฯ 800,000 ด้วยเงินที่เพิ่มทุนมาใน ม.ค.
+    // ถ้ากรองงบดุลด้วยต้นงวดด้วย เงินเพิ่มทุนของ ม.ค. จะหาย แล้วงบจะไม่ดุล
+    const feb = buildBalanceSheet(L, { year: YEAR, month: 2, ownerIds: ALL });
+    expect(feb.balanced).toBe(true);
+    expect(feb.totalAssets).toBe(feb.totalLiabilitiesAndEquity);
+    // ยอดจากงวดก่อนต้องยังอยู่ครบ:
+    //   เงินค่าเช่าที่รับมาปี 2025   50,000
+    // + เงินเพิ่มทุน ม.ค. 2026   1,000,000
+    // การซื้ออสังหาฯ 800,000 ใน ก.พ. แค่ย้ายเงินสดไปเป็นทรัพย์ ยอดรวมจึงไม่เปลี่ยน
+    expect(feb.totalAssets).toBe(1_050_000);
+  });
+
+  it("งบดุลดุลทุกเดือนของปี และของทั้งปีด้วย", () => {
+    for (const m of [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const bs = buildBalanceSheet(L, { year: YEAR, month: m, ownerIds: ALL });
+      expect({ m, diff: bs.difference, balanced: bs.balanced }).toEqual({ m, diff: 0, balanced: true });
+    }
+  });
+
+  it("งบดุลสิ้น ธ.ค. ของมุมมองรายเดือน = งบดุลทั้งปี (ปลายช่วงวันเดียวกัน)", () => {
+    const dec = buildBalanceSheet(L, { year: YEAR, month: 12, ownerIds: ALL });
+    const year = buildBalanceSheet(L, { year: YEAR, month: null, ownerIds: ALL });
+    expect(dec.totalAssets).toBe(year.totalAssets);
+    expect(dec.totalLiabilitiesAndEquity).toBe(year.totalLiabilitiesAndEquity);
+  });
+
+  it("บรรทัดกำไรในงบดุลบอกงวดตามจริง ไม่ใช่ 'ปี' เสมอ", () => {
+    const mar = buildBalanceSheet(L, { year: YEAR, month: 3, ownerIds: ALL });
+    const lines = mar.groups.flatMap((g) => g.lines.map((l) => l.line));
+    expect(lines).toContain("กำไร(ขาดทุน)สุทธิเดือนมีนาคม 2026");
+    // บรรทัดกำไรสะสมก็ต้องบอกว่าเป็น "งวดก่อนๆ" ไม่ใช่ "ปีก่อนๆ" เวลาดูรายเดือน
+    expect(lines).toContain("กำไร(ขาดทุน)สุทธิสะสมของงวดก่อนๆ ที่ยังไม่ปิดบัญชี");
+    const year = buildBalanceSheet(L, { year: YEAR, month: null, ownerIds: ALL });
+    expect(year.groups.flatMap((g) => g.lines.map((l) => l.line))).toContain("กำไร(ขาดทุน)สุทธิปี 2026");
+  });
+
+  it("กำไรงวดนี้ในงบดุล = กำไรสุทธิของงบกำไรขาดทุนงวดเดียวกัน", () => {
+    for (const m of [3, 4, null]) {
+      const bs = buildBalanceSheet(L, { year: YEAR, month: m, ownerIds: ALL });
+      // ต้องเจาะจงบรรทัด "กำไรงวดนี้" — บรรทัด "กำไรสะสมของงวดก่อนๆ" ขึ้นต้นเหมือนกัน
+      const want = `กำไร(ขาดทุน)สุทธิ${periodLabel(YEAR, m)}`;
+      const line = bs.groups.flatMap((g) => g.lines).find((l) => l.line === want);
+      expect({ m, amount: line?.amount }).toEqual({ m, amount: pl(m).netProfit });
+    }
+  });
+
+  it("ไม่ส่ง month มาเลย = ทั้งปี (ผู้เรียกเดิมทุกที่ต้องได้ผลเหมือนเดิมเป๊ะ)", () => {
+    const withoutMonth = buildBalanceSheet(L, { year: YEAR, ownerIds: ALL });
+    const explicitNull = buildBalanceSheet(L, { year: YEAR, month: null, ownerIds: ALL });
+    expect(withoutMonth).toEqual(explicitNull);
+    expect(buildProfitLoss(L, { year: YEAR, ownerIds: ALL })).toEqual(pl(null));
   });
 });
