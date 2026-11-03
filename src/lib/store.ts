@@ -1,0 +1,115 @@
+"use client";
+
+import { create } from "zustand";
+import { BANKS } from "@/lib/mock/banks";
+
+/**
+ * สถานะทั้งแอป — รอบนี้เป็น mock ในหน่วยความจำ ยังไม่ต่อ Supabase
+ * เมื่อต่อฐานข้อมูลจริง ให้แทนที่ตัว action ด้วย mutation แล้ว shape เดิมใช้ต่อได้
+ */
+type AppState = {
+  /** ผู้ถือกรรมสิทธิ์ที่กำลังดู (ค่าเริ่มต้นคือมุมมองรวมกองกลาง) */
+  entityId: string;
+  setEntityId: (id: string) => void;
+
+  /** โหมดตัวใหญ่ +2px สำหรับผู้สูงอายุ — จำค่าไว้ข้ามการรีเฟรช */
+  largeText: boolean;
+  toggleLargeText: () => void;
+  /** อ่านค่าที่จำไว้จาก localStorage — **ต้องเรียกใน effect หลัง mount เท่านั้น** */
+  hydrateLargeText: () => void;
+
+  /** ผู้ติดต่อ — สร้างเพิ่มได้จากในฟอร์ม (Backlog ข้อ 3) */
+
+  /** ลำดับและสถานะเปิด-ปิดบัญชีธนาคาร (ลำดับนี้คือลำดับในทุกฟอร์ม) */
+  bankOrder: string[];
+  bankOff: Record<string, boolean>;
+  moveBank: (id: string, dir: -1 | 1) => void;
+  toggleBank: (id: string) => void;
+
+  /** toast แจ้งผล */
+  toast: string | null;
+  showToast: (msg: string) => void;
+  clearToast: () => void;
+};
+
+
+/** คีย์ใน localStorage ของโหมดตัวใหญ่ — ประกาศที่เดียว ห้ามพิมพ์ซ้ำที่อื่น */
+const LARGE_TEXT_KEY = "sri-os:large-text";
+
+export const useApp = create<AppState>((set, get) => ({
+  entityId: "family",
+  setEntityId: (entityId) => set({ entityId }),
+
+
+  /**
+   * ตั้งต้นเป็น false เสมอ **ห้ามอ่าน localStorage ตรงนี้**
+   *
+   * ค่าตั้งต้นของ store ถูกใช้ตอน server render ด้วย ถ้าอ่านค่าที่จำไว้มาใส่ที่นี่
+   * ฝั่ง server จะได้ false (ไม่มี localStorage) แต่ฝั่ง client ได้ true
+   * → React hydration ไม่ตรงกันในทุกคอมโพเนนต์ที่ render ตามค่านี้ (เช่นป้ายปุ่มในเมนู)
+   * จึงอ่านทีหลังผ่าน `hydrateLargeText()` ใน effect ซึ่งรันหลัง hydrate เสร็จ
+   */
+  largeText: false,
+  toggleLargeText: () =>
+    set((s) => {
+      const largeText = !s.largeText;
+      try {
+        window.localStorage.setItem(LARGE_TEXT_KEY, largeText ? "1" : "0");
+      } catch {
+        // โหมดส่วนตัวหรือปิด site data → จำไม่ได้ แต่สลับในรอบนี้ต้องยังใช้ได้
+      }
+      return { largeText };
+    }),
+  hydrateLargeText: () => {
+    try {
+      const saved = window.localStorage.getItem(LARGE_TEXT_KEY);
+      if (saved !== null) set({ largeText: saved === "1" });
+    } catch {
+      // อ่านไม่ได้ = ใช้ค่าตั้งต้น ไม่ใช่พัง
+    }
+  },
+
+
+  bankOrder: BANKS.map((b) => b.id),
+  bankOff: Object.fromEntries(BANKS.map((b) => [b.id, b.off])),
+  moveBank: (id, dir) => {
+    const order = [...get().bankOrder];
+    const i = order.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    set({ bankOrder: order });
+  },
+  toggleBank: (id) => set((s) => ({ bankOff: { ...s.bankOff, [id]: !s.bankOff[id] } })),
+
+  toast: null,
+  showToast: (toast) => set({ toast }),
+  clearToast: () => set({ toast: null }),
+}));
+
+/**
+ * บัญชีนี้ยังเปิดใช้งานอยู่ไหม — **ค่าสด** อ่านตอนถูกเรียก ไม่ใช่ค่าที่แช่ไว้ตอน import
+ *
+ * นี่คือแหล่งความจริงเดียวของสถานะปิด-เปิด ทั้งหน้าจอ (`useOrderedBanks`) และ
+ * เครื่องยนต์ (ผ่าน `MOCK_RESOLVER`) ต้องอ่านจากที่นี่ที่เดียว —
+ * `BANKS[].off` เป็นแค่ค่า **seed** ตอนตั้งต้น store ห้ามใช้ตัดสินอะไรหลังจากนั้น
+ *
+ * เคยมีรู: หน้าจออ่าน `bankOff` แต่ resolver อ่าน `BANKS[].off` ผลคือปิดบัญชีแล้ว
+ * หน้าจอซ่อนให้ แต่เครื่องยนต์ยังคิดว่าเปิด = การกันบัญชีปิด (D-092) ไม่ทำงานจริง
+ *
+ * ไม่รู้สถานะ (ไม่มีคีย์นี้ใน store) = **ถือว่าปิด** ไม่ใช่เดาว่าเปิด เพราะถ้าเดาว่าเปิด
+ * วันที่แหล่งข้อมูลลืมส่งสถานะมา การกันบัญชีปิดจะหายไปเงียบๆ ทั้งระบบ
+ */
+export function isBankActive(id: string): boolean {
+  const off = useApp.getState().bankOff;
+  if (!(id in off)) return false;
+  return !off[id];
+}
+
+/** บัญชีธนาคารเรียงตามลำดับที่ตั้งไว้ใน Config */
+export function useOrderedBanks(onlyActive = false) {
+  const order = useApp((s) => s.bankOrder);
+  const off = useApp((s) => s.bankOff);
+  const list = order.map((id) => BANKS.find((b) => b.id === id)!).filter(Boolean);
+  return onlyActive ? list.filter((b) => !off[b.id]) : list;
+}

@@ -1,0 +1,315 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { getAccess } from "@/lib/auth/session";
+import { loadReference } from "@/lib/db/reference";
+import { makeResolver } from "@/lib/db/resolver";
+import {
+  PayloadError,
+  humanizeDbError,
+  notWiredReason,
+  readPostResult,
+  refuseInactiveOwners,
+  toPostEntryPayload,
+} from "@/lib/db/post-entry";
+import { buildPosting } from "@/lib/ledger/posting";
+import { PostingError, type PostingInput } from "@/lib/ledger/types";
+import { findSub } from "@/lib/rules/tx-rules";
+import { dmyToIso } from "@/lib/format";
+import { MANY_OPEN_MESSAGE, accrualReductionsOf, openSourcesFor, type AccrualReduction } from "@/lib/db/clearing-link";
+import { clearingRefFor } from "@/lib/db/pending-accruals";
+import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
+import { fxInputFor, fxKindOf, type FxChoice } from "@/lib/db/fx-input";
+import { readFxContext } from "@/lib/db/fx-context-server";
+import { disposalFor } from "@/lib/db/disposal-context";
+import { readDisposalContext } from "@/lib/db/disposal-context-server";
+import { movesWholeBalance } from "@/lib/db/balance-move";
+import { readBalanceMove } from "@/lib/db/balance-move-server";
+import { readTagCatalog } from "@/lib/db/tag-catalog-server";
+import { readAcceptedTagKinds } from "@/lib/db/tag-gate-server";
+import { hiddenKindsMessage, refusedKinds } from "@/lib/tags/acceptance";
+import { NOT_MIGRATED_MESSAGE, isUnknownTagField } from "@/lib/tags/db-errors";
+import { checkTagSelection } from "@/lib/tags/selection";
+import type { TagWeights } from "@/components/tags/types";
+
+/**
+ * ปุ่มบันทึก → `sri_os.fn_post_entry` (D-091) · เส้นทางเดียวที่เขียนรายการเงินลง DB จากหน้าจอ
+ *
+ * ลำดับที่ตั้งใจ (ห้ามสลับ):
+ *   1. โหลดผู้ถือ/บัญชี **สดจาก DB ตอนนี้** — ไม่เชื่อสแนปช็อตในหน้าจอ (สถานะบัญชีที่ปิดเก่าได้)
+ *   2. `buildPosting()` ตัวจริง (ไม่ใช่ `buildPostingDraft()`) บังคับกติกาเอกสารของนิติบุคคลครบ
+ *      — เราไม่รับบรรทัดบัญชีจาก browser เลย รับแค่ `PostingInput` แล้วให้ engine ฝั่ง server คิดใหม่
+ *      เพื่อไม่ให้ client ที่ถูกแก้ส่งคู่บัญชีเองมาได้ (DB ตรวจซ้ำอีกชั้นที่ประตู)
+ *   3. ส่ง `transactions` ที่ engine คืนมา **ครบทุกก้อน** (ข้ามผู้ถือ = สองก้อน) ผ่าน RPC ครั้งเดียว
+ *   4. error จาก DB ส่งกลับเป็นข้อความอ่านรู้เรื่อง · ห้ามกลืนแล้วตอบว่าสำเร็จ
+ *
+ * ใช้ session ของผู้ใช้เอง (RLS บังคับ) · ไม่มี service-role
+ */
+
+export type PostEntryRequest = {
+  input: PostingInput;
+  /** วันที่เอกสาร รูป วว/ดด/ปปปป ตามที่ผู้ใช้พิมพ์ — แปลงและตรวจที่ server */
+  docDate: string;
+  /** วันที่เงินเข้า/ออกจริง — ใช้เฉพาะเมื่อ engine ส่งบรรทัดเงินสดมา */
+  cashDate: string;
+  /**
+   * ใบค้างที่รายการนี้ชำระ (id ของรายการต้นทาง) — **ต้องส่งเมื่อรายการนี้ลดลูกหนี้/เจ้าหนี้และผู้ถือมีของค้างเปิดอยู่หลายใบ**
+   * ค้างใบเดียว = ไม่ต้องส่ง (server ผูกให้เอง) · ไม่ต้องส่งเลขอ้างอิงรูปใบล้าง: server ประกอบเองจากประวัติใน DB
+   */
+  clearsSourceId?: string;
+  /**
+   * **หมวดแปลงค่า/แลกเงินตราเท่านั้น** — สิ่งที่ผู้ใช้เลือก: วันของอัตราจากตารางอัตรา · จำนวนเงินตราที่แลก
+   * ยอดเงินตราคงเหลือ · อัตราที่ยอดบาทตั้งอยู่ · ผลต่างที่ค้างใน 3410 **ไม่รับจาก browser** — server อ่านจากสมุดเอง (D-115)
+   * ไม่ส่งมาทั้งที่หมวดต้องใช้ = ปฏิเสธ (ไม่เดา)
+   */
+  fx?: FxChoice;
+  /**
+   * tag ของใบนี้ (ADR 0002/0003) — `weights` เป็นสัดส่วน (0.6 = 60%) ของ tag ในชนิดที่ถ่วงน้ำหนัก
+   * server ตรวจซ้ำทั้งชุดด้วยตัวตรวจเดียวกับปุ่มบันทึก (Σ = 1 พอดี · ไม่ส่งน้ำหนักมา = ปฏิเสธ ไม่เดาเป็น 100%)
+   * tag ไม่เปลี่ยนคู่บัญชี: ส่วนนี้ไม่ผ่าน `buildPosting()` และ `buildPosting()` ไม่รู้จัก tag
+   */
+  tags?: { tagIds: string[]; weights?: TagWeights };
+};
+
+export type PostEntryOutcome =
+  | { ok: true; transactionIds: string[]; replayed: boolean }
+  | { ok: false; message: string };
+
+const fail = (message: string): PostEntryOutcome => ({ ok: false, message });
+
+/**
+ * หาว่ารายการที่ลดบัญชีพักนี้ล้างของใบไหน — อ่านยอดค้างคงเหลือสดจาก DB (ไม่คำนวณในหน้าจอ)
+ *   - ผู้ใช้เลือกใบมา → ต้องเป็นใบที่ยังค้างจริงของผู้ถือและบัญชีพักเดียวกัน และยอดไม่เกิน
+ *   - ไม่ได้เลือก + เปิดอยู่ใบเดียว → ผูกให้เอง (ไม่เพิ่มขั้นตอนให้ผู้ใช้)
+ *   - ไม่ได้เลือก + เปิดหลายใบ → ปฏิเสธ (นี่คือรูเดิม: ใบหนึ่งติดลบโดยอีกใบคลุมยอดรวมไว้)
+ *   - ไม่มีของค้างเลย → ปฏิเสธ
+ */
+async function resolveClearedSource(
+  r: AccrualReduction,
+  chosen: string | undefined,
+  coaCodeById: Record<string, string>
+): Promise<{ ok: true; sourceRef: string } | { ok: false; message: string }> {
+  let supabase;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+  const read = await readPendingAccruals(supabase, coaCodeById);
+  if (!read.ok) return { ok: false, message: `${read.error} — ยังไม่ได้บันทึกอะไร` };
+  const open = openSourcesFor(read.items, r.ownerId, r.account);
+
+  let target = chosen ? open.find((p) => p.id.toLowerCase() === String(chosen).toLowerCase()) : undefined;
+  if (chosen && !target) {
+    return { ok: false, message: "รายการค้างที่เลือกไม่มียอดค้างเหลือแล้ว (อาจถูกชำระไปแล้ว) — โหลดหน้าใหม่แล้วเลือกใหม่ · ยังไม่ได้บันทึกอะไร" };
+  }
+  if (!target) {
+    if (open.length === 0) {
+      return {
+        ok: false,
+        message:
+          "รายการนี้ลดลูกหนี้/เจ้าหนี้ แต่ผู้ถือนี้ไม่มีของค้างเหลืออยู่เลย — ถ้ารับเงินที่ยังไม่เคยตั้งค้างไว้ ให้ลงเป็นรายได้ตรงๆ · ยังไม่ได้บันทึกอะไร",
+      };
+    }
+    if (open.length > 1) return { ok: false, message: `${MANY_OPEN_MESSAGE} · ยังไม่ได้บันทึกอะไร` };
+    target = open[0];
+  }
+  if (r.amount > target.outstanding + 0.005) {
+    return {
+      ok: false,
+      message:
+        `ยอดที่ชำระ ${r.amount.toLocaleString("en-US")} บาท เกินยอดค้างคงเหลือของรายการนี้ (${target.outstanding.toLocaleString("en-US")} บาท) — ` +
+        "ถ้าได้รับมากกว่าที่ค้าง ส่วนเกินคือเงินรับล่วงหน้า ต้องลงเป็นรายการของตัวเอง · ยังไม่ได้บันทึกอะไร",
+    };
+  }
+  return { ok: true, sourceRef: clearingRefFor(target.id, target.postedClearings.length + 1) };
+}
+
+export async function postEntry(req: PostEntryRequest): Promise<PostEntryOutcome> {
+  // ---- ผู้ใช้ + สิทธิ์ (ความสะดวก · ด่านจริงคือ RLS `txn_insert` ที่ต้องมี ledger.approve) ----
+  const access = await getAccess();
+  if (!access.user) return fail("เข้าสู่ระบบหมดอายุ — ให้เข้าสู่ระบบใหม่แล้วบันทึกอีกครั้ง");
+  if (access.error) return fail(`ตรวจสิทธิ์ไม่สำเร็จ ยังไม่ได้บันทึกอะไร (${access.error})`);
+  if (!access.permissions.has("ledger.approve")) {
+    return fail(
+      "บัญชีนี้ลงสมุดบัญชีโดยตรงไม่ได้ — ต้องมีสิทธิ์อนุมัติเข้าสมุด (ส่วนการส่งร่างให้ผู้อนุมัติยังไม่ได้ต่อกับฐานข้อมูล)"
+    );
+  }
+
+  if (!req || typeof req !== "object" || !req.input) return fail("ไม่ได้รับข้อมูลรายการ — ยังไม่ได้บันทึกอะไร");
+
+  // เส้นทางนี้คือการบันทึกรายการใหม่ (source = manual) เท่านั้น — ธง `reversal` ปลดการกันบัญชีที่ปิดใช้งาน (D-092)
+  // และต้องมาจากเส้นทางกลับรายการที่ส่ง reverses_id ด้วย · browser ส่งธงนี้มาเองไม่ได้ จึงตัดทิ้งเสมอ
+  // และข้อมูลเงินตราที่ต้องอ่านจากสมุด (`fxTranslation` / `fxConversion` / `fxAcquisition`) ก็ตัดทิ้งเสมอ — ผู้เรียกกรอกได้ ด่านเชื่อไม่ได้
+  // ค่าที่ใช้จริงถูกประกอบใหม่ด้านล่างจากสมุดที่ post แล้ว (เฉพาะหมวดที่ตารางกฎบอกว่าเกี่ยวกับอัตราแลกเปลี่ยน)
+  // `balanceMove` (ยอดคงเหลือของทรัพย์ที่จะย้ายวัตถุประสงค์) ก็ตัดทิ้งเสมอเช่นกัน — ประกอบใหม่จากสมุดด้านล่างเท่านั้น
+  let input: PostingInput = {
+    ...req.input,
+    reversal: undefined,
+    fxTranslation: undefined,
+    fxConversion: undefined,
+    fxAcquisition: undefined,
+    balanceMove: undefined,
+  };
+
+  // ---- หมวดที่เส้นทางนี้ยังต่อไม่ครบ ต้องปฏิเสธ ไม่ใช่บันทึกครึ่งเดียว ----
+  const blocked = notWiredReason(findSub(input.subCode)?.sub);
+  if (blocked) return fail(blocked);
+
+  // ---- วันที่ ----
+  const docDate = dmyToIso(String(req.docDate ?? ""));
+  if (!docDate) return fail("วันที่เอกสารอ่านไม่ออก — ให้พิมพ์เป็น วว/ดด/ปปปป เป็นปี ค.ศ. (เช่น 24/10/2026)");
+  const cashRaw = String(req.cashDate ?? "").trim();
+  const cashDate = cashRaw === "" ? null : dmyToIso(cashRaw);
+  if (cashRaw !== "" && !cashDate) {
+    return fail("วันที่เงินเข้า/ออกจริงอ่านไม่ออก — ให้พิมพ์เป็น วว/ดด/ปปปป เป็นปี ค.ศ. (เช่น 24/10/2026)");
+  }
+
+  // ---- ข้อมูลอ้างอิงสด ----
+  const refState = await loadReference();
+  if (!refState.ok) return fail(`โหลดข้อมูลผู้ถือและบัญชีจากฐานข้อมูลไม่ได้ ยังไม่ได้บันทึกอะไร (${refState.error})`);
+
+  // ---- หมวดแปลงค่า/แลกเงินตรา: อ่านยอดเงินตรา อัตรา และผลต่างที่ค้างจากสมุดสด (ไม่เชื่อค่าจาก browser) ----
+  const fxKind = fxKindOf(findSub(input.subCode)?.sub);
+  if (fxKind) {
+    const sub = findSub(input.subCode)!.sub;
+    if (!req.fx) {
+      return fail(`หมวด "${sub.label}" ต้องเลือกอัตราจากตารางอัตราแลกเปลี่ยน — ไม่ได้ส่งอัตราที่เลือกมา ยังไม่ได้บันทึกอะไร`);
+    }
+    // ซื้อเงินตรา: บัญชีที่ใช้อ่านสมุด/สกุลคือบัญชี **ปลายทาง** (FCD) · แปลงค่า/แลก: บัญชีเงินตราที่เลือก
+    const fcdAccountId = fxKind === "acquisition" ? input.transferToBankAccountId : input.bankAccountId;
+    if (!input.bankAccountId) return fail(fxKind === "acquisition" ? "เลือกบัญชีบาทที่จ่ายก่อน — ยังไม่ได้บันทึกอะไร" : "เลือกบัญชีเงินตราที่จะ" + (fxKind === "translation" ? "แปลงค่า" : "แลก") + "ก่อน — ยังไม่ได้บันทึกอะไร");
+    if (!fcdAccountId) return fail("เลือกบัญชีสกุลต่างประเทศที่เงินตราเข้าก่อน — ยังไม่ได้บันทึกอะไร");
+    let fxDb;
+    try {
+      fxDb = await createClient();
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    const read = await readFxContext(fxDb, refState.ref, { ownerId: input.ownerId, bankAccountId: fcdAccountId });
+    if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+    const built = fxInputFor(sub, read.ctx, req.fx);
+    if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
+    // แปลงค่า/แลก: `amount` ใช้ตามที่ผู้ใช้เห็นและกรอก (ไม่ทับ) — สมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
+    // ซื้อเงินตรา: ผู้ใช้ไม่มีช่องยอดบาท (ยอด = จำนวนเงินตรา × อัตรา) → server คิดเองและทับค่าที่ส่งมา
+    input = { ...input, ...built.patch, ...(fxKind === "acquisition" ? { amount: built.amount } : {}) };
+  }
+
+  // ---- ย้ายวัตถุประสงค์ทรัพย์ (ธง wholeBalanceMove): ยอดคงเหลือของทรัพย์ในบัญชีต้นทางอ่านจากสมุดสด — ย้ายทั้งก้อนเท่านั้น ----
+  {
+    const moved = findSub(input.subCode)?.sub;
+    if (moved && movesWholeBalance(moved)) {
+      if (!input.assetId) {
+        return fail(`หมวด "${moved.label}" ต้องเลือกทรัพย์ที่จะย้าย — ระบบอ่านยอดคงเหลือของทรัพย์ชิ้นนั้นจากสมุดเอง ไม่รับยอดที่พิมพ์ · ยังไม่ได้บันทึกอะไร`);
+      }
+      let moveDb;
+      try {
+        moveDb = await createClient();
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : String(e));
+      }
+      const read = await readBalanceMove(moveDb, refState.ref, moved, { ownerId: input.ownerId, assetId: input.assetId });
+      if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+      // `amount` ใช้ตามที่ผู้ใช้เห็นในฟอร์ม (ไม่ทับ) — สมุดขยับระหว่างเปิดฟอร์ม engine จะปฏิเสธพร้อมบอกยอดที่ถูก
+      input = { ...input, balanceMove: read.balanceMove };
+    }
+  }
+
+  // ---- ขายทรัพย์: ต้นทุน · ค่ารีโนเวทสะสม · ส่วนเกินทุนที่ค้าง อ่านจากสมุดสด (ผู้ใช้กรอกได้แค่ราคาขายกับค่าใช้จ่ายในการขาย) ----
+  {
+    const sold = findSub(input.subCode)?.sub;
+    if (sold?.requires?.includes("capitalGain")) {
+      if (!input.assetId) return fail(`หมวด "${sold.label}" ต้องเลือกทรัพย์ที่ขาย — ระบบอ่านต้นทุนจากสมุดของทรัพย์ชิ้นนั้น ไม่รับต้นทุนที่พิมพ์เอง · ยังไม่ได้บันทึกอะไร`);
+      let saleDb;
+      try {
+        saleDb = await createClient();
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : String(e));
+      }
+      const read = await readDisposalContext(saleDb, refState.ref, { ownerId: input.ownerId, assetId: input.assetId });
+      if (!read.ok) return fail(`${read.message} — ยังไม่ได้บันทึกอะไร`);
+      // เอาเฉพาะราคาขายกับค่าใช้จ่ายในการขายจากผู้ใช้ — ต้นทุน/รีโนเวท/ส่วนเกินทุนที่ผู้เรียกส่งมาถูกทิ้งทั้งหมด
+      const built = disposalFor(read.ctx, { salePrice: input.disposal?.salePrice, sellingCosts: input.disposal?.sellingCosts });
+      if (!built.ok) return fail(`${built.message} — ยังไม่ได้บันทึกอะไร`);
+      input = { ...input, disposal: built.disposal };
+    }
+  }
+
+  // ---- engine ตัวจริง ----
+  let payload;
+  try {
+    const result = buildPosting(input, makeResolver(refState.ref));
+
+    // ---- ใบที่ลดลูกหนี้/เจ้าหนี้ ต้องบอกได้ว่าล้างของใบไหน (ด่าน DB · 20261025000007) ----
+    let sourceRef: string | undefined;
+    const reductions = accrualReductionsOf(result.transactions);
+    if (reductions.length > 1) {
+      return fail("รายการเดียวลดลูกหนี้/เจ้าหนี้หลายบัญชีพร้อมกัน — แยกเป็นรายการละบัญชี เพื่อให้ตรวจยอดค้างของแต่ละใบได้ · ยังไม่ได้บันทึกอะไร");
+    }
+    if (reductions.length === 1) {
+      const linked = await resolveClearedSource(reductions[0], req.clearsSourceId, refState.ref.coaCodeById);
+      if (!linked.ok) return fail(linked.message);
+      sourceRef = linked.sourceRef;
+    }
+
+    payload = toPostEntryPayload(input, result, { docDate, cashDate, sourceRef });
+  } catch (e) {
+    if (e instanceof PostingError || e instanceof PayloadError) return fail(e.message);
+    // ข้อผิดพลาดที่ไม่ได้คาดไว้ ห้ามกลืน — แต่ไม่ปล่อยข้อความดิบให้ผู้ใช้
+    console.error("postEntry: unexpected error while building the posting", e);
+    return fail("ระบบประกอบรายการบัญชีไม่สำเร็จด้วยเหตุที่ไม่คาดคิด ยังไม่ได้บันทึกอะไร — แจ้งผู้ดูแลระบบ");
+  }
+
+  // ---- ตั้งค้างรับ-ค้างจ่าย (cash_date ว่าง) ----
+  // ปล่อยผ่านได้เพราะหน้า "ยืนยันรับ-จ่าย" อ่านยอดค้างจาก DB และล้างผ่าน `confirmCash()` แล้ว
+  // (ทดสอบ: src/app/actions/__tests__/confirm-cash.test.ts — ตั้งค้าง → ล้าง → ลูกหนี้เป็นศูนย์ รายได้นับครั้งเดียว)
+  // ถ้าวันหนึ่งทางล้างพัง ให้คืนด่านนี้: ปฏิเสธเมื่อ `payload.cash_date === null`
+
+  // ---- ผู้ถือที่ยังไม่จดทะเบียนหรือปิดไปแล้ว ห้ามเป็นเจ้าของรายการ (ทั้ง owner_id และ counter_owner_id) ----
+  const refused = refuseInactiveOwners(payload, refState.ref.owners);
+  if (refused) return fail(refused);
+
+  // ---- เขียนลง DB ด้วย RPC ตัวเดียว ----
+  let supabase;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+
+  // ---- tag + น้ำหนัก (ถ้าเลือก): ตรวจกับแค็ตตาล็อกสด ก่อนเขียนอะไร ----
+  let tagFields: Pick<typeof payload, "tag_ids" | "tag_weights"> = {};
+  const wantedTags = req.tags;
+  if (wantedTags !== undefined && wantedTags !== null) {
+    const ids = Array.isArray(wantedTags.tagIds) ? wantedTags.tagIds.filter((x): x is string => typeof x === "string") : [];
+    const hasWeights = !!wantedTags.weights && typeof wantedTags.weights === "object" && Object.keys(wantedTags.weights).length > 0;
+    if (ids.length > 0 || hasWeights) {
+      if (!access.permissions.has("tag.assign")) return fail("บัญชีนี้ติด tag ให้รายการไม่ได้ — ไม่มีสิทธิ์ติด/ถอด tag · ยังไม่ได้บันทึกอะไร");
+      const cat = await readTagCatalog(supabase, { includeInactive: true });
+      if (!cat.ok) return fail(cat.message);
+      const checked = checkTagSelection({ tagIds: ids, weights: wantedTags.weights }, cat.catalog);
+      if (!checked.ok) return fail(`${checked.issues.join(" · ")} · ยังไม่ได้บันทึกอะไร`);
+      // ชนิดที่ประตูยังรับไม่ได้ → ปฏิเสธที่นี่ด้วยข้อความที่อ่านรู้เรื่อง (ฟอร์มซ่อนอยู่แล้ว · นี่คือด่านสำรองถ้ามีใครส่งตรงมา)
+      const refusedByGate = refusedKinds(ids, cat.catalog, await readAcceptedTagKinds(supabase));
+      if (refusedByGate.length > 0) return fail(`${hiddenKindsMessage(refusedByGate)} · ยังไม่ได้บันทึกอะไร`);
+      tagFields = {
+        ...(checked.labelTagIds.length > 0 ? { tag_ids: checked.labelTagIds } : {}),
+        ...(Object.keys(checked.tagWeights).length > 0 ? { tag_weights: checked.tagWeights } : {}),
+      };
+    }
+  }
+  const sentTags = Object.keys(tagFields).length > 0;
+
+  const { data, error } = await supabase.rpc("fn_post_entry", { p_payload: sentTags ? { ...payload, ...tagFields } : payload });
+  if (error) return fail(sentTags && isUnknownTagField(error) ? NOT_MIGRATED_MESSAGE : humanizeDbError(error));
+
+  const read = readPostResult(data, payload.transactions.length);
+  if (!read.ok) return fail(read.message);
+  const ids = read.transactionIds;
+  const out = { replayed: read.replayed };
+
+  revalidatePath("/ledger");
+  revalidatePath("/dashboard");
+  return { ok: true, transactionIds: ids, replayed: out.replayed };
+}

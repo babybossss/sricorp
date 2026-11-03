@@ -1,0 +1,38 @@
+export type BankAccount = {
+  id: string;
+  name: string;
+  bank: string;
+  last4: string;
+  ownerId: string;
+  opening: string;
+  short: string;
+  color: string;
+  /**
+   * ค่า **seed** ของสถานะปิดใช้งานตอนตั้งต้น store เท่านั้น
+   *
+   * สถานะจริงหลังจากนั้นอยู่ที่ `bankOff` ใน `lib/store` และต้องอ่านผ่าน `isBankActive()`
+   * ทั้งหน้าจอและเครื่องยนต์ — **ห้ามอ่านฟิลด์นี้เพื่อตัดสินว่าบัญชีเปิดอยู่ไหม**
+   * เคยทำแล้วเกิดรูนี้: ผู้ใช้ปิดบัญชีในหน้าตั้งค่า หน้าจอซ่อนให้ แต่ `MOCK_RESOLVER`
+   * ยังอ่านค่านี้ซึ่งไม่เคยเปลี่ยน → การกันบัญชีปิด (D-092) ไม่ทำงานจริงในแอป
+   *
+   * ปิดใช้งาน = ซ่อนจากตัวเลือกในฟอร์ม และลงรายการใหม่ไม่ได้
+   * แต่ยังอยู่ในรายงานย้อนหลังและกลับรายการได้
+   */
+  off: boolean;
+};
+
+export const BANKS: BankAccount[] = [
+  { id: "b1", name: "SRI - SCB", bank: "ไทยพาณิชย์", last4: "4412", ownerId: "corp", opening: "฿ 3,800,000.00", short: "SCB", color: "#4E2A84", off: false },
+  { id: "b2", name: "SRI - BBL", bank: "กรุงเทพ", last4: "7781", ownerId: "corp", opening: "฿ 0.00", short: "BBL", color: "#1E4598", off: true },
+  { id: "b3", name: "SRI - BAY", bank: "กรุงศรีอยุธยา", last4: "2093", ownerId: "corp", opening: "฿ 0.00", short: "BAY", color: "#8a6200", off: true },
+  { id: "b4", name: "ธนากร - BBL 888", bank: "กรุงเทพ", last4: "8888", ownerId: "thanakorn", opening: "฿ 1,200,000.00", short: "BBL", color: "#1E4598", off: false },
+  // บัญชีที่สองของธนากร — คนหนึ่งมีหลายบัญชี ใช้ทดสอบการโอนภายในผู้ถือเดียวกัน
+  { id: "b4b", name: "ธนากร - SCB", bank: "ไทยพาณิชย์", last4: "3021", ownerId: "thanakorn", opening: "฿ 0.00", short: "SCB", color: "#4E2A84", off: false },
+  { id: "b5", name: "ธนวินท์ - KBANK", bank: "กสิกรไทย", last4: "5520", ownerId: "thanawin", opening: "฿ 600,000.00", short: "KB", color: "#0A8F3C", off: false },
+  { id: "b6", name: "ธนวินท์ - BBL", bank: "กรุงเทพ", last4: "3317", ownerId: "thanawin", opening: "฿ 150,000.00", short: "BBL", color: "#1E4598", off: false },
+  { id: "b7", name: "เบ็ญจพร - BBL", bank: "กรุงเทพ", last4: "6045", ownerId: "benjaporn", opening: "฿ 300,000.00", short: "BBL", color: "#1E4598", off: false },
+  { id: "b8", name: "สุธี - TTB", bank: "ทหารไทยธนชาต", last4: "1174", ownerId: "sutee", opening: "฿ 850,000.00", short: "TTB", color: "#0A4FA0", off: false },
+  { id: "b9", name: "สุดจิตต์ - BAY", bank: "กรุงศรีอยุธยา", last4: "7702", ownerId: "sudjit", opening: "฿ 420,000.00", short: "BAY", color: "#8a6200", off: false },
+  // กระเป๋าเงินสดที่มีตัวตน — Money Invariant 2 ยอมให้ผูกได้เหมือนบัญชีธนาคาร
+  { id: "b10", name: "เงินสดในมือ SRI", bank: "เงินสดในมือ", last4: "—", ownerId: "corp", opening: "฿ 50,000.00", short: "CASH", color: "#425466", off: false },
+];

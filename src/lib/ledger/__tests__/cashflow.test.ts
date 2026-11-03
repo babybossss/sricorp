@@ -1,0 +1,901 @@
+import { describe, it, expect } from "vitest";
+import {
+  buildCashflow,
+  type CashflowInput,
+  type CashflowSourceLine,
+  type CashflowTxn,
+} from "../cashflow";
+import { PostingError } from "../types";
+import { CF_LAYOUT } from "@/lib/rules/statements";
+import type { CashflowSection } from "@/lib/rules/tx-rules";
+
+/**
+ * งบกระแสเงินสด **วิธีตรง** — เทสต์ชุดนี้กันเจ็ดเรื่องที่ถ้าผิดแล้วตัวเลขผิดเงียบๆ
+ *
+ *  1. ใช้ `cashDate` ไม่ใช่ `docDate`
+ *  2. `void` ไม่นับ · **ใบกลับรายการนับ** (D-097/D-098)
+ *  3. ส่วนมาจาก `cfCategory` ที่เก็บไว้ ไม่ใช่คำนวณใหม่จากตารางกฎ
+ *  4. เงินก้อนเดียวอยู่บรรทัดเดียว ห้ามแบ่งตามบัญชีคู่
+ *  5. งบรวมตัดรายการระหว่างกัน **เฉพาะเมื่ออีกฝ่ายอยู่ในชุดที่รวม**
+ *  6. ด่านกระทบยอดกับบัญชี 11xx ต้องจับรูได้ ไม่ใช่โยนงบทิ้ง
+ *  7. ข้อมูลขาดต้องดัง — throw หรือเข้า `anomalies` ห้ามเงียบ
+ */
+
+const CASH = "1100";
+const CORP = "sri-corp";
+const THANAKORN = "thanakorn";
+
+const PERIOD = { periodStart: "2026-01-01", periodEnd: "2026-01-31" };
+
+const ln = (
+  coaCode: string,
+  debit: number,
+  credit: number,
+  cfCategory: CashflowSection,
+  /** สกุลเงินของบรรทัด — ค่าตั้งต้นคือบรรทัดบาท (`null`) เหมือนรายการเดิมทุกใบ */
+  currency: string | null = null
+): CashflowSourceLine => ({ coaCode, debit, credit, cfCategory, currency });
+
+const tx = (over: Partial<CashflowTxn> = {}): CashflowTxn => ({
+  txnId: "t-1",
+  ownerId: CORP,
+  status: "posted",
+  source: "manual",
+  subCode: "inc.rent",
+  docDate: "2026-01-05",
+  cashDate: "2026-01-05",
+  counterOwnerId: null,
+  intercompanyNature: null,
+  lines: [],
+  ...over,
+});
+
+const run = (txns: CashflowTxn[], over: Partial<CashflowInput> = {}) =>
+  buildCashflow({ txns, ownerIds: [CORP], ...PERIOD, ...over });
+
+const section = (st: ReturnType<typeof buildCashflow>, s: "operating" | "investing" | "financing") =>
+  st.sections.find((x) => x.section === s)!;
+
+const lineAmount = (
+  st: ReturnType<typeof buildCashflow>,
+  s: "operating" | "investing" | "financing",
+  name: string
+) => section(st, s).lines.find((l) => l.line === name)?.amount;
+
+/** ค่าเช่าเข้า 50,000 · เงินเข้าเป็นบวก */
+const rentIn = (over: Partial<CashflowTxn> = {}) =>
+  tx({
+    subCode: "inc.rent",
+    lines: [ln(CASH, 50_000, 0, "operating"), ln("4200", 0, 50_000, "operating")],
+    ...over,
+  });
+
+/** ค่าน้ำค่าไฟออก 8,000 · เงินออกเป็นลบ */
+const utilityOut = (over: Partial<CashflowTxn> = {}) =>
+  tx({
+    txnId: "t-2",
+    subCode: "exp.utilities",
+    lines: [ln("5110", 8_000, 0, "operating"), ln(CASH, 0, 8_000, "operating")],
+    ...over,
+  });
+
+describe("ดำเนินงาน — เครื่องหมายและยอด", () => {
+  it("ค่าเช่าเข้าเป็นบวก ค่าใช้จ่ายออกเป็นลบ และรวมกันเป็นสุทธิ", () => {
+    const st = run([rentIn(), utilityOut()]);
+
+    expect(lineAmount(st, "operating", "เงินสดรับจากค่าเช่าและค่าเช่าซื้อ")).toBe(50_000);
+    expect(lineAmount(st, "operating", "เงินสดจ่ายค่าใช้จ่ายเกี่ยวกับทรัพย์สิน")).toBe(-8_000);
+    expect(section(st, "operating").total).toBe(42_000);
+    expect(section(st, "investing").total).toBe(0);
+    expect(section(st, "financing").total).toBe(0);
+    expect(st.netChange).toBe(42_000);
+    expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("เงินกู้รับเข้ากิจกรรมจัดหาเงิน ไม่ใช่รายได้", () => {
+    const st = run([
+      tx({
+        subCode: "fin.loan_bank",
+        lines: [ln(CASH, 3_000_000, 0, "financing"), ln("2410", 0, 3_000_000, "financing")],
+      }),
+    ]);
+    expect(lineAmount(st, "financing", "เงินกู้รับ")).toBe(3_000_000);
+    expect(section(st, "operating").total).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("เศษสตางค์: ปัดยอดรวม ไม่ใช่ปัดทีละบรรทัดแล้วบวก", () => {
+    const st = run([
+      rentIn({ txnId: "a", lines: [ln(CASH, 0.1, 0, "operating"), ln("4200", 0, 0.1, "operating")] }),
+      rentIn({ txnId: "b", lines: [ln(CASH, 0.1, 0, "operating"), ln("4200", 0, 0.1, "operating")] }),
+      rentIn({ txnId: "c", lines: [ln(CASH, 0.1, 0, "operating"), ln("4200", 0, 0.1, "operating")] }),
+    ]);
+    expect(lineAmount(st, "operating", "เงินสดรับจากค่าเช่าและค่าเช่าซื้อ")).toBe(0.3);
+    expect(st.netChange).toBe(0.3);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("เงินก้อนเดียวอยู่บรรทัดเดียว", () => {
+  it("ขายอสังหา 8 ล้าน (ตัดทรัพย์ 6 + กำไร 2) = ลงทุน 8 ล้านทั้งก้อน", () => {
+    const st = run([
+      tx({
+        subCode: "inv.sell_re",
+        lines: [
+          ln(CASH, 8_000_000, 0, "investing"),
+          ln("1500", 0, 6_000_000, "investing"),
+          ln("4300", 0, 2_000_000, "investing"),
+        ],
+      }),
+    ]);
+
+    expect(lineAmount(st, "investing", "ขายอสังหาริมทรัพย์")).toBe(8_000_000);
+    expect(section(st, "investing").total).toBe(8_000_000);
+    // กำไร 2 ล้าน **ห้าม** ไปโผล่ฝั่งดำเนินงาน
+    expect(section(st, "operating").total).toBe(0);
+    expect(st.netChange).toBe(8_000_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("วันที่ที่ใช้ตัดสินคือ cashDate", () => {
+  it("เอกสารปีก่อน เงินเข้าในงวด → เข้างบ", () => {
+    const st = run([rentIn({ docDate: "2025-12-28", cashDate: "2026-01-03" })]);
+    expect(section(st, "operating").total).toBe(50_000);
+  });
+
+  it("เอกสารในงวด เงินเข้างวดถัดไป → ไม่เข้างบ", () => {
+    const st = run([rentIn({ docDate: "2026-01-28", cashDate: "2026-02-03" })]);
+    expect(section(st, "operating").total).toBe(0);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("รายการค้างรับ (cashDate null · ไม่มีบรรทัดเงินสด) ไม่เข้างบเลย", () => {
+    const st = run([
+      tx({
+        subCode: "inc.rent",
+        cashDate: null,
+        lines: [ln("1200", 50_000, 0, "none"), ln("4200", 0, 50_000, "none")],
+      }),
+    ]);
+    expect(st.netChange).toBe(0);
+    expect(section(st, "operating").total).toBe(0);
+    expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
+  });
+});
+
+describe("void ไม่นับ · ใบกลับรายการนับ", () => {
+  it("รายการที่ void ตัดออกจากงบ (D-098)", () => {
+    const st = run([rentIn({ txnId: "v-1", status: "void" })]);
+    expect(section(st, "operating").total).toBe(0);
+    expect(st.closingCash).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ใบกลับรายการ (source = reverse) นับในงบ", () => {
+    const st = run([
+      tx({
+        txnId: "r-1",
+        source: "reverse",
+        subCode: "inc.rent",
+        cashDate: "2026-01-20",
+        docDate: "2026-01-20",
+        lines: [ln(CASH, 0, 50_000, "operating"), ln("4200", 50_000, 0, "operating")],
+      }),
+    ]);
+    expect(section(st, "operating").total).toBe(-50_000);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ต้นฉบับ + ใบกลับรายการ = ศูนย์", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "r-1",
+        source: "reverse",
+        subCode: "inc.rent",
+        cashDate: "2026-01-20",
+        docDate: "2026-01-20",
+        lines: [ln(CASH, 0, 50_000, "operating"), ln("4200", 50_000, 0, "operating")],
+      }),
+    ]);
+    expect(lineAmount(st, "operating", "เงินสดรับจากค่าเช่าและค่าเช่าซื้อ")).toBe(0);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("โอนระหว่างบัญชีตัวเอง", () => {
+  it("cfCategory none และหักกันเป็นศูนย์ → ไม่เข้างบและไม่ใช่ความผิดปกติ", () => {
+    const st = run([
+      tx({
+        subCode: "trf.internal",
+        lines: [ln(CASH, 100_000, 0, "none"), ln(CASH, 0, 100_000, "none")],
+      }),
+    ]);
+    expect(st.netChange).toBe(0);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("บรรทัดเงินสด cfCategory none ที่ไม่หักกันเป็นศูนย์ → ดังทั้งสองด่าน", () => {
+    const st = run([
+      tx({
+        subCode: "trf.internal",
+        lines: [ln(CASH, 100_000, 0, "none"), ln("1200", 0, 100_000, "none")],
+      }),
+    ]);
+    expect(st.netChange).toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.reconciled).toBe(false);
+    expect(st.difference).toBe(-100_000);
+  });
+});
+
+/** ขาคู่กันของรายการข้ามผู้ถือ — กู้ยืมระหว่างกัน 1 ล้าน (บัญชีคู่ 1310/2310) */
+const icPayer = tx({
+  txnId: "ic-pay",
+  ownerId: CORP,
+  counterOwnerId: THANAKORN,
+  intercompanyNature: "loan",
+  subCode: "trf.internal",
+  lines: [ln("1310", 1_000_000, 0, "investing"), ln(CASH, 0, 1_000_000, "investing")],
+});
+
+const icReceiver = tx({
+  txnId: "ic-recv",
+  ownerId: THANAKORN,
+  counterOwnerId: CORP,
+  intercompanyNature: "loan",
+  subCode: "trf.internal",
+  lines: [ln(CASH, 1_000_000, 0, "financing"), ln("2310", 0, 1_000_000, "financing")],
+});
+
+const IC_PAY_LINE = "เงินจ่ายให้กิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)";
+const IC_RECV_LINE = "เงินรับจากกิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)";
+
+describe("ข้ามผู้ถือ — สองมุมมอง", () => {
+  it("งบรายผู้ถือ: ฝ่ายจ่ายเงินออกจริง อยู่บรรทัดลงทุนของกองกลาง", () => {
+    const st = run([icPayer, icReceiver], { ownerIds: [CORP] });
+    expect(lineAmount(st, "investing", IC_PAY_LINE)).toBe(-1_000_000);
+    expect(section(st, "investing").total).toBe(-1_000_000);
+    expect(st.netChange).toBe(-1_000_000);
+    expect(st.eliminated).toEqual([]);
+    expect(st.reconciled).toBe(true);
+    // รายการข้ามผู้ถือปกติ **ห้าม** มีเสียงรบกวนใน anomalies
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("งบรายผู้ถือ: ฝ่ายรับเงินเข้าจริง อยู่บรรทัดจัดหาเงินของกองกลาง", () => {
+    const st = run([icPayer, icReceiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(st, "financing", IC_RECV_LINE)).toBe(1_000_000);
+    expect(section(st, "financing").total).toBe(1_000_000);
+    expect(st.netChange).toBe(1_000_000);
+    expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("เงินทดรอง: ฝ่ายจ่าย → ลงทุน · ฝ่ายรับ → จัดหาเงิน", () => {
+    const payer = tx({
+      txnId: "adv-pay",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "advance",
+      subCode: "trf.internal",
+      lines: [ln("1310", 200_000, 0, "investing"), ln(CASH, 0, 200_000, "investing")],
+    });
+    const receiver = tx({
+      txnId: "adv-recv",
+      ownerId: THANAKORN,
+      counterOwnerId: CORP,
+      intercompanyNature: "advance",
+      subCode: "trf.internal",
+      lines: [ln(CASH, 200_000, 0, "financing"), ln("2310", 0, 200_000, "financing")],
+    });
+
+    const stPayer = run([payer, receiver], { ownerIds: [CORP] });
+    expect(lineAmount(stPayer, "investing", IC_PAY_LINE)).toBe(-200_000);
+    expect(stPayer.anomalies).toEqual([]);
+
+    const stRecv = run([payer, receiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(stRecv, "financing", IC_RECV_LINE)).toBe(200_000);
+    expect(stRecv.anomalies).toEqual([]);
+  });
+
+  it("ปันผลระหว่างกัน: ฝ่ายจ่าย → จัดหาเงิน · ฝ่ายรับ → ดำเนินงาน คนละบรรทัดกับ inc.dividend", () => {
+    const payer = tx({
+      txnId: "div-pay",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "dividend",
+      subCode: "trf.internal",
+      lines: [ln("3200", 300_000, 0, "financing"), ln(CASH, 0, 300_000, "financing")],
+    });
+    const receiver = tx({
+      txnId: "div-recv",
+      ownerId: THANAKORN,
+      counterOwnerId: CORP,
+      intercompanyNature: "dividend",
+      subCode: "trf.internal",
+      lines: [ln(CASH, 300_000, 0, "operating"), ln("4410", 0, 300_000, "operating")],
+    });
+
+    const stPayer = run([payer, receiver], { ownerIds: [CORP] });
+    expect(lineAmount(stPayer, "financing", "จ่ายปันผลให้กิจการในกองกลาง")).toBe(-300_000);
+    expect(lineAmount(stPayer, "financing", "ถอนทุน / จ่ายปันผล")).toBe(0);
+    expect(stPayer.anomalies).toEqual([]);
+
+    const stRecv = run([payer, receiver], { ownerIds: [THANAKORN] });
+    expect(lineAmount(stRecv, "operating", "เงินปันผลรับจากกิจการในกองกลาง")).toBe(300_000);
+    // ปันผลรับจากข้างนอกกองกลางอยู่คนละบรรทัด ไม่งั้นมองไม่ออกว่ายอดไหนถูกตัดในงบรวม
+    expect(lineAmount(stRecv, "operating", "เงินสดรับจากเงินปันผล")).toBe(0);
+    expect(stRecv.anomalies).toEqual([]);
+  });
+
+  it("ใบกลับรายการของขาฝ่ายจ่าย ลงบรรทัดเดียวกับต้นฉบับ (ตัดสิน side จากบัญชีคู่)", () => {
+    // ใบกลับรายการสลับทิศเงิน: เงิน **เข้า** ทั้งที่ยังเป็นขาฝ่ายจ่าย
+    const reversePayer = tx({
+      txnId: "ic-pay-rev",
+      source: "reverse",
+      counterOwnerId: THANAKORN,
+      intercompanyNature: "loan",
+      subCode: "trf.internal",
+      docDate: "2026-01-20",
+      cashDate: "2026-01-20",
+      lines: [ln("1310", 0, 1_000_000, "investing"), ln(CASH, 1_000_000, 0, "investing")],
+    });
+
+    const st = run([icPayer, reversePayer], { ownerIds: [CORP] });
+    // ต้นฉบับ −1 ล้าน + ใบกลับ +1 ล้าน ต้องหักกันใน **บรรทัดเดียว**
+    expect(lineAmount(st, "investing", IC_PAY_LINE)).toBe(0);
+    // ห้ามไปโผล่บรรทัดของฝ่ายรับ
+    expect(lineAmount(st, "financing", IC_RECV_LINE)).toBe(0);
+    expect(section(st, "financing").total).toBe(0);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("งบรวมที่มีทั้งสองฝ่าย: ตัดออกเป็นศูนย์", () => {
+    const st = run([icPayer, icReceiver], { ownerIds: [CORP, THANAKORN] });
+    expect(st.netChange).toBe(0);
+    expect(section(st, "investing").total).toBe(0);
+    expect(section(st, "financing").total).toBe(0);
+    expect(st.eliminated.map((e) => e.txnId).sort()).toEqual(["ic-pay", "ic-recv"]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("งบรวมที่อีกฝ่าย **ไม่อยู่ในชุด** → ห้ามตัด (เงินออกจากกลุ่มจริง)", () => {
+    // รวมแค่สองนิติบุคคล แต่โอนไปบุคคลที่ไม่อยู่ในชุด
+    const st = run([icPayer, icReceiver], { ownerIds: [CORP, "sri-holding"] });
+    expect(st.eliminated).toEqual([]);
+    expect(section(st, "investing").total).toBe(-1_000_000);
+    expect(st.netChange).toBe(-1_000_000);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ตัดคู่ที่เงินสดไม่หักกันเป็นศูนย์ → ดังใน anomalies", () => {
+    // จ่ายแทนกัน: ฝ่ายจ่ายเงินออกจริง ฝ่ายรับลงค่าใช้จ่ายค้างจ่าย (ไม่มีขาเงินสด)
+    const st = run(
+      [
+        icPayer,
+        tx({
+          txnId: "ic-recv-nocash",
+          ownerId: THANAKORN,
+          counterOwnerId: CORP,
+          subCode: "trf.internal",
+          cashDate: null,
+          lines: [ln("5110", 1_000_000, 0, "none"), ln("2310", 0, 1_000_000, "none")],
+        }),
+      ],
+      { ownerIds: [CORP, THANAKORN] }
+    );
+    expect(st.anomalies.map((a) => a.kind)).toContain("intercompanyNotNetted");
+    expect(st.reconciled).toBe(false);
+    expect(st.difference).toBe(1_000_000);
+  });
+});
+
+describe("ด่านกระทบยอด", () => {
+  it("ลงตัว → reconciled true และยอดต้น-ปลายงวดถูก", () => {
+    const st = run([
+      rentIn({ txnId: "prev", docDate: "2025-12-10", cashDate: "2025-12-10" }),
+      rentIn(),
+      utilityOut(),
+    ]);
+    expect(st.openingCash).toBe(50_000);
+    expect(st.closingCash).toBe(92_000);
+    expect(st.netChange).toBe(42_000);
+    expect(st.difference).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ใบกลับรายการที่ขาด cashDate → reconciled false พร้อมส่วนต่าง ไม่ใช่โยนงบทิ้ง", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "r-nocashdate",
+        source: "reverse",
+        subCode: "inc.rent",
+        docDate: "2026-01-20",
+        cashDate: null,
+        lines: [ln(CASH, 0, 50_000, "operating"), ln("4200", 50_000, 0, "operating")],
+      }),
+    ]);
+
+    // งบยังดูได้ — ยอดที่ค้างไว้ยังอยู่ให้เห็น
+    expect(section(st, "operating").total).toBe(50_000);
+    expect(st.closingCash).toBe(0);
+    expect(st.netChange).toBe(50_000);
+    expect(st.reconciled).toBe(false);
+    expect(st.difference).toBe(50_000);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashWithoutCashDate");
+    expect(st.anomalies.map((a) => a.kind)).toContain("unreconciled");
+  });
+});
+
+describe("cfCategory ที่เก็บไว้ขัดกับโครงงบ", () => {
+  it("ยึดของที่เก็บไว้ แต่ต้องโผล่ใน anomalies ไม่ใช่เลือกข้างเงียบๆ", () => {
+    const st = run([
+      rentIn({
+        lines: [ln(CASH, 50_000, 0, "investing"), ln("4200", 0, 50_000, "investing")],
+      }),
+    ]);
+
+    // ของที่เก็บไว้ชนะ (ประวัติเปลี่ยนไม่ได้) → ยอดอยู่ฝั่งลงทุน
+    expect(section(st, "investing").total).toBe(50_000);
+    expect(section(st, "operating").total).toBe(0);
+
+    const conflict = st.anomalies.find((a) => a.kind === "sectionConflict");
+    expect(conflict).toBeDefined();
+    expect(conflict!.txnId).toBe("t-1");
+    expect(conflict!.message).toContain("inc.rent");
+    // ยอดไม่หาย → ยังกระทบยอดได้
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("บรรทัดเงินสดของรายการเดียวกันมี cfCategory ไม่ตรงกัน → ดัง", () => {
+    const st = run([
+      tx({
+        subCode: "inc.rent",
+        lines: [
+          ln(CASH, 50_000, 0, "operating"),
+          ln(CASH, 0, 20_000, "financing"),
+          ln("4200", 0, 30_000, "operating"),
+        ],
+      }),
+    ]);
+    expect(st.anomalies.map((a) => a.kind)).toContain("mixedCfCategory");
+    // เงินไม่หายไปจากงบ จึงยังกระทบยอดได้
+    expect(st.netChange).toBe(30_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("ข้อมูลขาด — ต้องชัดเจน ห้ามเงียบ", () => {
+  it("มี cashDate แต่ไม่มีบรรทัดเงินสดเลย → เข้า anomalies", () => {
+    const st = run([
+      tx({
+        subCode: "inc.rent",
+        cashDate: "2026-01-09",
+        lines: [ln("1200", 50_000, 0, "operating"), ln("4200", 0, 50_000, "operating")],
+      }),
+    ]);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashDateWithoutCashLine");
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("subCode ที่ไม่มีในโครงงบ → เข้า anomalies และยอดไม่หาย", () => {
+    const st = run([
+      tx({
+        subCode: "zzz.not_in_layout",
+        lines: [ln(CASH, 1_000, 0, "operating"), ln("4900", 0, 1_000, "operating")],
+      }),
+    ]);
+    const a = st.anomalies.find((x) => x.kind === "subCodeNotInLayout");
+    expect(a).toBeDefined();
+    expect(a!.message).toContain("zzz.not_in_layout");
+    expect(section(st, "operating").total).toBe(1_000);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ขาข้ามผู้ถือที่บัญชีคู่ไม่ตรงทั้งสองฝ่าย → เข้า anomalies ไม่ใช่เดาฝ่าย", () => {
+    const st = run([
+      tx({
+        txnId: "ic-weird",
+        counterOwnerId: THANAKORN,
+        intercompanyNature: "loan",
+        subCode: "trf.internal",
+        // 1300 ไม่ใช่ทั้ง 1310 (ฝ่ายจ่าย) และ 2310 (ฝ่ายรับ)
+        lines: [ln("1300", 500_000, 0, "investing"), ln(CASH, 0, 500_000, "investing")],
+      }),
+    ]);
+    const a = st.anomalies.find((x) => x.kind === "intercompanySideUnknown");
+    expect(a).toBeDefined();
+    expect(a!.txnId).toBe("ic-weird");
+    // ยอดไม่หาย → ยังกระทบยอดได้
+    expect(section(st, "investing").total).toBe(-500_000);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ลักษณะข้ามผู้ถือที่ไม่มีใน intercompany.ts หรือไม่มีผู้ถืออีกฝ่าย → PostingError", () => {
+    expect(() => run([tx({ intercompanyNature: "barter" as never, counterOwnerId: THANAKORN })])).toThrow(
+      PostingError
+    );
+    expect(() =>
+      run([
+        tx({
+          intercompanyNature: "loan",
+          counterOwnerId: null,
+          lines: [ln("1310", 1, 0, "investing"), ln(CASH, 0, 1, "investing")],
+        }),
+      ])
+    ).toThrow(PostingError);
+  });
+
+  it("ฟิลด์บังคับที่หายไป → PostingError ไม่ใช่เดา", () => {
+    expect(() => run([rentIn({ ownerId: "" })])).toThrow(PostingError);
+    expect(() => run([rentIn({ txnId: "" })])).toThrow(PostingError);
+    expect(() => run([rentIn({ subCode: "" })])).toThrow(PostingError);
+    expect(() => run([rentIn({ docDate: "05/01/2026" })])).toThrow(PostingError);
+    // 2026-02-30 ไม่มีจริง · `new Date()` เลื่อนเป็น 2 มี.ค. เงียบๆ → ต้องปฏิเสธ ไม่ใช่เลื่อนงวด
+    expect(() => run([rentIn({ cashDate: "2026-02-30" })])).toThrow(/ไม่ใช่วันที่ที่มีอยู่จริง/);
+    expect(() => run([rentIn({ status: "draft" as never })])).toThrow(PostingError);
+  });
+
+  it("ฟิลด์ที่ผู้เรียกเว้นไว้ (ไม่ส่งมาเลย) → PostingError ไม่ใช่ถือว่าไม่มี", () => {
+    const noCashDate = { ...rentIn() } as Record<string, unknown>;
+    delete noCashDate.cashDate;
+    expect(() => run([noCashDate as unknown as CashflowTxn])).toThrow(PostingError);
+
+    const noCounter = { ...rentIn() } as Record<string, unknown>;
+    delete noCounter.counterOwnerId;
+    expect(() => run([noCounter as unknown as CashflowTxn])).toThrow(PostingError);
+
+    const noCf = tx({ lines: [{ coaCode: CASH, debit: 10, credit: 0 } as CashflowSourceLine] });
+    expect(() => run([noCf])).toThrow(PostingError);
+  });
+
+  it("งวดและชุดผู้ถือที่ไม่สมเหตุสมผล → PostingError", () => {
+    expect(() => run([], { periodStart: "2026-02-01", periodEnd: "2026-01-31" })).toThrow(PostingError);
+    expect(() => run([], { ownerIds: [] })).toThrow(PostingError);
+    expect(() => run([], { ownerIds: [CORP, CORP] })).toThrow(PostingError);
+  });
+
+  it("ยอดเงินที่ไม่ใช่ตัวเลขหรือติดลบ → PostingError", () => {
+    expect(() => run([rentIn({ lines: [ln(CASH, Number.NaN, 0, "operating")] })])).toThrow(PostingError);
+    expect(() => run([rentIn({ lines: [ln(CASH, -5, 0, "operating")] })])).toThrow(PostingError);
+  });
+});
+
+describe("ด่านความถูกต้องของข้อมูลนำเข้า — ปฏิเสธ ไม่ใช่ anomaly", () => {
+  it("ส่งใบเดียวกันมาสองครั้ง → PostingError (ด่านกระทบยอดจับไม่ได้)", () => {
+    expect(() => run([rentIn(), rentIn()])).toThrow(PostingError);
+    expect(() => run([rentIn(), rentIn()])).toThrow(/ส่งมาซ้ำ/);
+    // ซ้ำแม้อยู่นอกชุดผู้ถือก็ต้องปฏิเสธ ไม่ใช่รอให้ตัวกรองกลืนไป
+    expect(() => run([rentIn({ ownerId: THANAKORN }), rentIn({ ownerId: THANAKORN })])).toThrow(
+      PostingError
+    );
+  });
+
+  it("ใบที่เดบิตไม่เท่าเครดิต → PostingError (บรรทัดเงินสดลอย)", () => {
+    expect(() =>
+      run([tx({ lines: [ln(CASH, 500, 0, "operating"), ln("4200", 0, 300, "operating")] })])
+    ).toThrow(/ไม่สมดุล/);
+    // บรรทัดเงินสดลอยอยู่ใบเดียวก็ไม่ผ่าน
+    expect(() => run([tx({ lines: [ln(CASH, 500, 0, "operating")] })])).toThrow(PostingError);
+  });
+});
+
+describe("เงินสดต้นงวด", () => {
+  const prev = () => rentIn({ txnId: "prev", docDate: "2025-12-10", cashDate: "2025-12-10" });
+
+  it("ไม่ส่งมา → บอกว่าเป็นค่าคำนวณ ไม่ใช่ยอดจริง", () => {
+    const st = run([rentIn()]);
+    expect(st.openingCashSource).toBe("computed");
+    expect(st.openingCash).toBe(0);
+    expect(st.computedOpeningCash).toBe(0);
+    // reconciled ตรวจแค่การเปลี่ยนแปลง ไม่ได้ยืนยันระดับยอดต้นงวด
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ส่งมาตรงกับที่คำนวณได้ → ไม่มี anomaly และใช้เป็นฐาน", () => {
+    const st = run([prev(), rentIn()], { openingCash: 50_000 });
+    expect(st.openingCashSource).toBe("provided");
+    expect(st.openingCash).toBe(50_000);
+    expect(st.computedOpeningCash).toBe(50_000);
+    expect(st.closingCash).toBe(100_000);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ส่งมาไม่ตรง → openingCashMismatch พร้อมส่วนต่าง และยึดยอดธนาคารเป็นฐาน", () => {
+    const st = run([prev(), rentIn()], { openingCash: 62_000 });
+    const a = st.anomalies.find((x) => x.kind === "openingCashMismatch");
+    expect(a).toBeDefined();
+    expect(a!.amount).toBe(12_000);
+    expect(st.openingCash).toBe(62_000);
+    expect(st.computedOpeningCash).toBe(50_000);
+    expect(st.closingCash).toBe(112_000);
+    // ด่านกระทบยอดตรวจ "การเปลี่ยนแปลง" จึงยังลงตัว — ความผิดอยู่ที่ระดับยอด
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("ติดลบได้ (เบิกเกินบัญชี) แต่ไม่ใช่ตัวเลขไม่ได้", () => {
+    const st = run([], { openingCash: -1_500 });
+    expect(st.openingCash).toBe(-1_500);
+    expect(st.closingCash).toBe(-1_500);
+    expect(() => run([], { openingCash: Number.NaN })).toThrow(PostingError);
+  });
+});
+
+describe("วิธีตรงต้องแสดงขั้นต้น ไม่ใช่สุทธิ", () => {
+  it("ใบเดียวที่รับ 1,000 และจ่าย 1,000 หมวดเดียวกัน → บรรทัดยังอยู่ และเห็นขั้นต้น", () => {
+    const st = run([
+      tx({
+        subCode: "inc.rent",
+        lines: [ln(CASH, 1_000, 0, "operating"), ln(CASH, 0, 1_000, "operating")],
+      }),
+    ]);
+
+    const line = section(st, "operating").lines.find(
+      (l) => l.line === "เงินสดรับจากค่าเช่าและค่าเช่าซื้อ"
+    )!;
+    expect(line.inflow).toBe(1_000);
+    expect(line.outflow).toBe(1_000);
+    expect(line.amount).toBe(0);
+    expect(st.totalInflow).toBe(1_000);
+    expect(st.totalOutflow).toBe(1_000);
+    expect(st.netChange).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("สองใบที่หักกลบกันในบรรทัดเดียว (มัดจำรับแล้วคืน) → ขั้นต้นยังอยู่", () => {
+    const st = run([
+      tx({
+        txnId: "dep-in",
+        subCode: "fin.deposit_received",
+        lines: [ln(CASH, 1_000, 0, "operating"), ln("2200", 0, 1_000, "operating")],
+      }),
+      tx({
+        txnId: "dep-out",
+        subCode: "fin.deposit_refund",
+        cashDate: "2026-01-25",
+        docDate: "2026-01-25",
+        lines: [ln("2200", 1_000, 0, "operating"), ln(CASH, 0, 1_000, "operating")],
+      }),
+    ]);
+
+    const line = section(st, "operating").lines.find((l) => l.line === "เงินมัดจำผู้เช่า รับและคืน")!;
+    expect(line.inflow).toBe(1_000);
+    expect(line.outflow).toBe(1_000);
+    expect(line.amount).toBe(0);
+    expect(section(st, "operating").inflow).toBe(1_000);
+    expect(section(st, "operating").outflow).toBe(1_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("งวดว่าง", () => {
+  it("ไม่มีรายการ → ทุกบรรทัดเป็น 0 · reconciled true · ไม่ throw", () => {
+    const st = run([]);
+
+    expect(st.sections).toHaveLength(CF_LAYOUT.length);
+    for (const sec of st.sections) {
+      expect(sec.total).toBe(0);
+      expect(sec.inflow).toBe(0);
+      expect(sec.outflow).toBe(0);
+      for (const l of sec.lines) {
+        expect(l.amount).toBe(0);
+        expect(l.inflow).toBe(0);
+        expect(l.outflow).toBe(0);
+      }
+    }
+    // ทุกบรรทัดของโครงงบต้องมีอยู่ ไม่ใช่หายไปเพราะยอดเป็นศูนย์
+    const names = st.sections.flatMap((s) => s.lines.map((l) => l.line));
+    for (const sec of CF_LAYOUT) for (const l of sec.lines) expect(names).toContain(l.line);
+
+    expect(st.netChange).toBe(0);
+    expect(st.openingCash).toBe(0);
+    expect(st.openingCashSource).toBe("computed");
+    expect(st.closingCash).toBe(0);
+    expect(st.reconciled).toBe(true);
+    expect(st.difference).toBe(0);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("ผู้ถือที่ไม่อยู่ในชุด ไม่เข้างบ", () => {
+    const st = run([rentIn({ ownerId: THANAKORN })], { ownerIds: [CORP] });
+    expect(st.netChange).toBe(0);
+    expect(st.closingCash).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+/**
+ * **ผลกระทบของอัตราแลกเปลี่ยนต่อเงินสด** (FCD · ลูกพี่ยืนยัน 25/10 · IAS 7.28)
+ *
+ * ยอดบาทของบัญชีเงินฝากสกุลต่างประเทศขยับได้โดยไม่มีเงินเข้าออกกิจการ
+ * → **ไม่ใช่กระแสเงินสด** (ไม่อยู่ในสามส่วน) แต่ **ต้องอยู่ในการกระทบยอด**
+ * ถ้าปล่อยเป็น anomaly งบจะไม่กระทบยอดทุกเดือนที่ค่าเงินขยับ = ปิดเดือนไม่ได้
+ * ทั้งที่ไม่มีอะไรผิด (Money Invariant 5)
+ */
+describe("ยอดยกมา (ตั้งต้นระบบ) — เป็นยอดเงินสดต้นงวด ไม่ใช่กระแสเงินสดของงวด", () => {
+  /**
+   * ใบตั้งต้นระบบลงวันเดียวกับวันตัดยอด ซึ่ง **อยู่ในงวดแรก** → ถ้านับเป็นของงวด
+   * งบจะโชว์ "เงินสดรับ" ก้อนใหญ่ที่ไม่มีอยู่จริง หรือ (ถ้าโยนเข้า cfCategory none)
+   * จะดังเป็น `cashOutsideStatement` ทุกครั้งที่นำเข้าข้อมูลตั้งต้น
+   * = ด่านที่ดังโดยไม่มีอะไรผิด แล้วคนจะเริ่มเพิกเฉยต่อ anomaly
+   */
+  const opening = (over: Partial<CashflowTxn> = {}) =>
+    tx({
+      txnId: "t-open",
+      subCode: "opn.cash",
+      docDate: "2026-01-01",
+      cashDate: "2026-01-01",
+      lines: [ln(CASH, 1_000_000, 0, "none"), ln("3300", 0, 1_000_000, "none")],
+      ...over,
+    });
+
+  it("เงินสดยกมาไปอยู่ **ยอดต้นงวด** · สามส่วนไม่ขยับ · ไม่ใช่ anomaly · กระทบยอดลง", () => {
+    const st = run([opening(), rentIn()]);
+    expect(st.netChange, "สามส่วนต้องมีแต่ค่าเช่า").toBe(50_000);
+    expect(st.openingCash, "ยอดยกมาคือเงินสดต้นงวด").toBe(1_000_000);
+    expect(st.closingCash).toBe(1_050_000);
+    expect(st.anomalies, "การนำเข้ายอดตั้งต้นไม่ใช่ความผิดปกติ").toEqual([]);
+    expect(st.reconciled).toBe(true);
+    expect(st.difference).toBe(0);
+    expect(st.fxEffect, "ไม่ใช่เรื่องอัตราแลกเปลี่ยน").toBe(0);
+  });
+
+  it("ยอดยกมาฝั่งที่ไม่มีเงินสด (ลูกหนี้/เจ้าหนี้ยกมา) ไม่กระทบงบเลย", () => {
+    const st = run([
+      opening({
+        txnId: "t-open-recv",
+        subCode: "opn.receivable_rent",
+        cashDate: null,
+        lines: [ln("1200", 80_000, 0, "none"), ln("3300", 0, 80_000, "none")],
+      }),
+      rentIn(),
+    ]);
+    expect(st.netChange).toBe(50_000);
+    expect(st.openingCash).toBe(0);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+  });
+
+  it("**MUTATION** ถ้าหมวดยอดยกมาไม่ถูกยกเว้น → งวดแรกมีเงินสดรับปลอม 1,000,000", () => {
+    // จำลองสภาพก่อนแก้: ใช้หมวดอื่นที่ cfCategory none กับบรรทัดเดียวกัน
+    // (ตัวที่ตัดสินคือหมวดในตารางกฎ ไม่ใช่รูปของบรรทัด)
+    const st = run([opening({ subCode: "trf.internal" }), rentIn()]);
+    expect(st.openingCash, "ยอดไม่ได้ไปอยู่ต้นงวด").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.reconciled, "กระทบยอดไม่ลงเพราะ 1,000,000 ลอยอยู่").toBe(false);
+  });
+
+  it("ยอดยกมาที่ลงวันก่อนงวด ก็ยังเป็นยอดต้นงวด (นับครั้งเดียว ไม่ซ้ำ)", () => {
+    const st = run([opening({ docDate: "2025-12-31", cashDate: "2025-12-31" }), rentIn()]);
+    expect(st.openingCash).toBe(1_000_000);
+    expect(st.netChange).toBe(50_000);
+    expect(st.reconciled).toBe(true);
+  });
+});
+
+describe("อัตราแลกเปลี่ยนของบัญชีเงินฝากสกุลต่างประเทศ", () => {
+  it("แปลงค่าสิ้นเดือน: ยอดบาทขยับ แต่ไม่เข้าสามส่วน · ไม่ใช่ anomaly · กระทบยอดลง", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "t-fx",
+        subCode: "trf.fx_translate_up",
+        // บรรทัดเงินสดของบัญชี **สกุลต่างประเทศ** จึงมีสกุลกำกับ (ด่าน DB บังคับ)
+        lines: [ln(CASH, 5_000, 0, "none", "USD"), ln("3410", 0, 5_000, "none", "USD")],
+      }),
+    ]);
+    expect(st.netChange, "สามส่วนต้องมีแต่ค่าเช่า").toBe(50_000);
+    expect(st.fxEffect, "ผลกระทบอัตราแลกเปลี่ยนแยกบรรทัดของตัวเอง").toBe(5_000);
+    expect(st.anomalies, "การแปลงค่าไม่ใช่ความผิดปกติ").toEqual([]);
+    expect(st.reconciled, "เงินสดเปลี่ยน 55,000 = 50,000 + 5,000").toBe(true);
+    expect(st.difference).toBe(0);
+    expect(st.closingCash).toBe(55_000);
+  });
+
+  it("แลกเป็นบาทจริง: ส่วนต่างที่ทำให้ยอดบาทรวมขยับอยู่บรรทัดผลกระทบอัตราแลกเปลี่ยน", () => {
+    // ตัดเงินตราออกตามอัตราตามบัญชี 370,000 · รับบาท 375,000 · กำไรจริง 5,000
+    const st = run([
+      tx({
+        txnId: "t-conv",
+        subCode: "trf.fx_convert",
+        lines: [
+          ln(CASH, 375_000, 0, "none"), // บาทเข้าบัญชีบาท → ไม่มีสกุลกำกับ
+          ln(CASH, 0, 370_000, "none", "USD"), // เงินตราออกจากบัญชี FCD
+          ln("4330", 0, 5_000, "none"),
+        ],
+      }),
+    ]);
+    expect(st.netChange).toBe(0);
+    expect(st.fxEffect).toBe(5_000);
+    expect(st.anomalies).toEqual([]);
+    expect(st.reconciled).toBe(true);
+    expect(st.closingCash).toBe(5_000);
+  });
+
+  it("แปลงค่าลง: ผลกระทบติดลบและยังกระทบยอดลง", () => {
+    const st = run([
+      rentIn(),
+      tx({
+        txnId: "t-fx-down",
+        subCode: "trf.fx_translate_down",
+        lines: [ln("3410", 4_000, 0, "none", "USD"), ln(CASH, 0, 4_000, "none", "USD")],
+      }),
+    ]);
+    expect(st.netChange).toBe(50_000);
+    expect(st.fxEffect).toBe(-4_000);
+    expect(st.reconciled).toBe(true);
+    expect(st.closingCash).toBe(46_000);
+  });
+
+  it("**MUTATION** หมวดอื่นที่เงินสดไม่หักกันเป็นศูนย์ยังเป็น anomaly เหมือนเดิม", () => {
+    // ถ้าข้อยกเว้นกว้างเกินไป (เช่นยกเว้นทุกหมวดที่ cfCategory = none)
+    // ยอดเงินสดที่หายจากงบจะเงียบหมด — เคสนี้กันไว้
+    const st = run([
+      tx({
+        txnId: "t-bad",
+        subCode: "trf.internal",
+        lines: [ln(CASH, 100_000, 0, "none"), ln("1200", 0, 100_000, "none")],
+      }),
+    ]);
+    expect(st.fxEffect, "หมวดที่ไม่ใช่เรื่องค่าเงินห้ามถูกนับเป็นผลกระทบอัตราแลกเปลี่ยน").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.reconciled).toBe(false);
+  });
+
+  /**
+   * **ผู้ตรวจ BLOCK ข้อ 2 ที่ระดับงบ** — เคสนี้ต้องมี ไม่งั้นด่านถูกปิดเสียงเงียบๆ
+   *
+   * ใบแปลงค่าที่ลงบน **บัญชีบาท** เป็นหมวดค่าเงินเหมือนกัน ถ้าเช็คแค่หมวด
+   * (`isFxCashSub`) ยอดที่โผล่จากอากาศจะถูกกลืนเข้า `fxEffect` แล้วงบขึ้น
+   * `reconciled: true` ทั้งที่เงินสดเพิ่มมา 1,000,000 บาทโดยไม่มีที่มา
+   * — ผู้ตรวจวัดได้บนฐานข้อมูลจริง: บัญชีบาทจาก −36,500 เป็น 963,500
+   *
+   * ตัวตัดสินคือ **บรรทัดนั้นมีสกุลที่ไม่ใช่บาทหรือไม่** ไม่ใช่ชื่อหมวด
+   */
+  it("แปลงค่าบน **บัญชีบาท** (ไม่มีสกุลกำกับ) → ห้ามกลืนเข้า fxEffect ต้องดังเป็น anomaly", () => {
+    const st = run([
+      tx({
+        txnId: "t-fx-thb",
+        subCode: "trf.fx_translate_up",
+        // ไม่มีสกุลบนบรรทัดใดเลย = บัญชีบาท → ยอดบาทไม่ควรขยับเพราะอัตราแลกเปลี่ยน
+        lines: [ln(CASH, 1_000_000, 0, "none"), ln("3410", 0, 1_000_000, "none")],
+      }),
+    ]);
+    expect(st.fxEffect, "บัญชีบาทไม่มีผลกระทบจากอัตราแลกเปลี่ยน").toBe(0);
+    expect(st.anomalies.map((a) => a.kind)).toContain("cashOutsideStatement");
+    expect(st.anomalies[0]?.message).toMatch(/ไม่มีบรรทัดเงินสดสกุลต่างประเทศ/);
+    expect(st.reconciled, "เงินสด 1,000,000 ที่ไม่มีที่มาต้องทำให้กระทบยอดไม่ลง").toBe(false);
+  });
+
+  it("หมวดค่าเงินที่มีเงินตราจริงบางบรรทัด → ยังเข้า fxEffect ตามเดิม (ด่านไม่แน่นเกิน)", () => {
+    const st = run([
+      tx({
+        txnId: "t-fx-mixed",
+        subCode: "trf.fx_convert",
+        lines: [
+          ln(CASH, 370_500, 0, "none"),
+          ln(CASH, 0, 370_000, "none", "USD"),
+          ln("4330", 0, 500, "none"),
+        ],
+      }),
+    ]);
+    expect(st.fxEffect).toBe(500);
+    expect(st.anomalies).toEqual([]);
+  });
+
+  it("ไม่มีรายการค่าเงินเลย → fxEffect เป็น 0 (ไม่ใช่ undefined)", () => {
+    const st = run([rentIn()]);
+    expect(st.fxEffect).toBe(0);
+    expect(st.reconciled).toBe(true);
+  });
+});

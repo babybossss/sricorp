@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* โหมดตัวใหญ่ +2px ตั้งค่ารายผู้ใช้ — ตั้งบน <html data-large-text> */
+    --app-base-font: 18px;
+  }
+  html[data-large-text="true"] {
+    --app-base-font: 20px;
+  }
+
+  /*
+   * โหมดตัวใหญ่: ขยายทุกระดับ +2px
+   *
+   * เคยมีรูนี้: ตั้งแต่ `--app-base-font` ตัวเดียว ซึ่งมีผลแค่ `body { font-size }`
+   * แต่ขนาดตัวอักษรใน `tailwind.config.ts` เขียนเป็น **px ตายตัว** ทุกระดับ
+   * (sm 16 · base 18 · lg 20 · h2 22 · h1 28 · display 36) อะไรที่ใส่ `text-base`
+   * หรือ `text-sm` จึงไม่ขยับเลย — ปุ่มยัง 18px ป้ายช่องยัง 16px
+   * วัดแล้วว่าโหมดนี้ **ไม่ทำงานจริง** ทั้งที่ผู้ใช้มีผู้สูงอายุและ CLAUDE.md บังคับไว้
+   *
+   * ทำไมไม่เปลี่ยน config เป็น rem แล้วขยาย root: นั่นคือการรื้อสเกลตัวอักษร
+   * ทุกหน้าพร้อมกัน ขณะที่ line-height ยังเป็น px ตายตัว ข้อความจะล้นกล่องบรรทัด
+   * การระบุ +2px ตรงนี้ทีละระดับ **ตรงกับข้อกำหนด** และจำกัดผลอยู่ในบล็อกเดียว
+   *
+   * line-height ขยายตามอีก +2px ไม่งั้นตัวโตขึ้นแต่กล่องบรรทัดเท่าเดิม = ตัวอักษรชนกัน
+   */
+  html[data-large-text="true"] .text-sm {
+    font-size: 18px;
+    line-height: 26px;
+  }
+  html[data-large-text="true"] .text-base {
+    font-size: 20px;
+    line-height: 30px;
+  }
+  html[data-large-text="true"] .text-lg {
+    font-size: 22px;
+    line-height: 30px;
+  }
+  html[data-large-text="true"] .text-h2 {
+    font-size: 24px;
+    line-height: 32px;
+  }
+  html[data-large-text="true"] .text-h1 {
+    font-size: 30px;
+    line-height: 38px;
+  }
+  html[data-large-text="true"] .text-display {
+    font-size: 38px;
+    line-height: 46px;
+  }
+  body {
+    @apply bg-canvas text-ink-900;
+    font-size: var(--app-base-font);
+    line-height: 1.55;
+    /* ตัวเลขทั้งระบบใช้ tabular numbers */
+    font-variant-numeric: tabular-nums;
+  }
+  a {
+    @apply text-brand-600;
+  }
+  a:hover {
+    @apply text-brand-700 underline;
+  }
+  /* คอนทราสต์สูง: วงแหวนโฟกัสหนา 3px มองเห็นชัดทุกพื้นหลัง */
+  :focus-visible {
+    outline: 3px solid theme("colors.brand.600");
+    outline-offset: 2px;
+  }
+}
