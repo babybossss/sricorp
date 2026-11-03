@@ -153,11 +153,11 @@ export default async function AuthStatusPage() {
         <dl className="mt-3 flex flex-col gap-3">
           <div>
             <dt className="text-sm text-ink-600">Site URL</dt>
-            <dd className="mt-0.5 break-all rounded border border-line bg-surface p-[10px_12px] text-base">{origin}</dd>
+            <dd className="mt-0.5 overflow-x-auto whitespace-nowrap rounded border border-line bg-surface p-[10px_12px] text-base">{origin}</dd>
           </div>
           <div>
             <dt className="text-sm text-ink-600">Redirect URLs (ต้องมีทั้งสองบรรทัด)</dt>
-            <dd className="mt-0.5 break-all rounded border border-line bg-surface p-[10px_12px] text-base">
+            <dd className="mt-0.5 overflow-x-auto whitespace-nowrap rounded border border-line bg-surface p-[10px_12px] text-base">
               {origin}/auth/callback
               <br />
               {origin}
