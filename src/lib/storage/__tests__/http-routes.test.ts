@@ -16,11 +16,52 @@ function setEnv(url?: string, key?: string) {
   }
 }
 
+/**
+ * ประกอบ multipart เป็น **ไบต์นิ่ง** ไม่ใช่ `FormData`
+ *
+ * เคยส่ง `body: fd` ตรงๆ ซึ่ง undici แปลงเป็น ReadableStream แบบ lazy
+ * เทสต์หลายตัวในไฟล์นี้ตั้งใจให้ route **ปฏิเสธก่อนอ่าน body** (ไม่ใช่ same-origin ·
+ * content-length เกิน · ไม่ได้ล็อกอิน) body stream จึงถูกทิ้งโดยไม่ถูก consume
+ * แล้ว undici มา enqueue ใส่ stream ที่ปิดแล้วหลังเทสต์จบ
+ *   → TypeError: Invalid state: ReadableStream is already closed
+ * เทสต์ทุกตัวยังเขียว แต่ vitest นับเป็น unhandled error แล้วให้ exit ไม่เป็นศูนย์ = CI แดง
+ * (เห็นบน node 24 ของ CI · node 22 ของเครื่อง dev ไม่เกิด — undici คนละรุ่น)
+ *
+ * ไบต์นิ่งไม่มี stream ให้ค้าง จึงปิดปัญหานี้ทั้งชนิด ไม่ใช่แก้ทีละเทสต์
+ * `req.formData()` ยังแกะได้เหมือนเดิมเพราะใส่ content-type + boundary ให้ตรง
+ */
+const BOUNDARY = "----sriosTestBoundary9f3a";
+
 function multipart(parts: { file?: Uint8Array | null; ownerId?: string }, headers: Record<string, string> = {}) {
-  const fd = new FormData();
-  if (parts.ownerId !== undefined) fd.set("ownerId", parts.ownerId);
-  if (parts.file !== undefined && parts.file !== null) fd.set("file", new Blob([parts.file as BlobPart], { type: "image/jpeg" }), "สลิป.jpg");
-  return new Request("http://localhost/api/attachments", { method: "POST", body: fd, headers });
+  const enc = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const push = (s: string) => chunks.push(enc.encode(s));
+
+  if (parts.ownerId !== undefined) {
+    push(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="ownerId"\r\n\r\n${parts.ownerId}\r\n`);
+  }
+  if (parts.file !== undefined && parts.file !== null) {
+    // ชื่อไฟล์เป็นภาษาไทยโดยตั้งใจ — เทสต์ตรวจว่า ref ที่ได้ไม่เอาชื่อไฟล์ที่ส่งมาใช้
+    push(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="สลิป.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`);
+    chunks.push(parts.file);
+    push("\r\n");
+  }
+  push(`--${BOUNDARY}--\r\n`);
+
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const body = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    body.set(c, at);
+    at += c.byteLength;
+  }
+
+  return new Request("http://localhost/api/attachments", {
+    method: "POST",
+    body,
+    // ผู้เรียกทับ header ได้ (เทสต์บางตัวทับ content-length ให้โกหก) จึงต้องวาง default ไว้ก่อน
+    headers: { "content-type": `multipart/form-data; boundary=${BOUNDARY}`, ...headers },
+  });
 }
 
 describe("storageReadiness — ไม่มี env ต้องบอก ไม่ตกไปใช้ของจำลอง", () => {
