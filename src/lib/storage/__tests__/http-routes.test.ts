@@ -57,9 +57,37 @@ describe("readCappedBody / readUploadForm", () => {
 
   it("stream ที่โกหก content-length (หรือไม่มี) → หยุดอ่านเมื่อเกินเพดาน", async () => {
     let pulled = 0;
-    const body = new ReadableStream({ pull(c) { pulled++; c.enqueue(new Uint8Array(1024 * 1024)); } }, { highWaterMark: 0 });
+    // ต้นทางต้อง **หยุดป้อนเมื่อถูกยกเลิก**
+    //
+    // ของเดิม pull() enqueue 1MB ไปเรื่อยๆ ไม่มีเงื่อนไขหยุด พอ readCappedBody
+    // เลิกอ่านและปิด stream ตามที่ควร pull ที่ค้างอยู่ยัง enqueue ต่อ
+    // → "Invalid state: ReadableStream is already closed" เป็น unhandled rejection
+    // เทสต์เองยังเขียว แต่ vitest นับ unhandled error แล้วให้ exit ไม่เป็นศูนย์ = CI แดง
+    // (เห็นบน node 24 ของ CI · node 22 ของเครื่อง dev ไม่เกิด — undici ต่างรุ่นกัน)
+    //
+    // ไม่ใช่บั๊กของโค้ดจริง: การที่ readCappedBody หยุดอ่านแล้วทิ้ง stream คือพฤติกรรมที่ต้องการ
+    let cancelled = false;
+    const body = new ReadableStream(
+      {
+        pull(c) {
+          if (cancelled) return;
+          pulled++;
+          try {
+            c.enqueue(new Uint8Array(1024 * 1024));
+          } catch {
+            // ปิดไปแล้วระหว่างที่ pull ค้างอยู่ — เลิกป้อน ไม่โยนต่อให้กลายเป็น rejection ลอย
+            cancelled = true;
+          }
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 }
+    );
     const req = new Request("http://x", { method: "POST", body, duplex: "half" } as RequestInit);
     expect(await readCappedBody(req, MAX_ATTACHMENT_BYTES)).toMatchObject({ ok: false, code: "too_large" });
+    // ยังตรวจเรื่องเดิม: ต้องหยุดอ่านเร็ว ไม่ใช่ดูดทั้ง stream
     expect(pulled).toBeLessThan(10);
   });
 
