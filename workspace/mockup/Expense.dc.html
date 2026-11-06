@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ขอเบิกเงิน</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<style>body{margin:0}a{color:#004AAD}a:hover{color:#003A8A}input{font:inherit;color:#0A2540;box-sizing:border-box}</style>
+</helmet>
+<div style="width: 390px; height: 1000px; box-sizing: border-box; background: #F6F9FC; color: #0A2540; font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 18px; line-height: 28px; display: flex; flex-direction: column;">
+  <div style="flex-grow: 1; padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 14px; overflow: hidden;">
+    <h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600;">ขอเบิกเงิน</h1>
+    <label style="display: flex; flex-direction: column; gap: 4px;">วันที่จ่าย<input value="05/11/2026" style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+    <label style="display: flex; flex-direction: column; gap: 4px;">เหตุผล<input value="เติมน้ำมันรถบริษัท" style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <div>ประเภทบิล <span style="color: #B3123A;">(ต้องเลือก)</span></div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+        <button onClick="{{pickNamed}}" style="min-height: 56px; border: 1px solid #C9D2DC; border-radius: 10px; font: inherit; font-size: 16px; line-height: 22px; cursor: pointer; background: {{nBg}}; color: {{nFg}};">บิลออกชื่อบริษัท</button>
+        <button onClick="{{pickCash}}" style="min-height: 56px; border: 1px solid #C9D2DC; border-radius: 10px; font: inherit; font-size: 16px; line-height: 22px; cursor: pointer; background: {{cBg}}; color: {{cFg}};">บิลเงินสด</button>
+      </div>
+    </div>
+    <div style="height: 132px; box-sizing: border-box; border: 2px dashed #C9D2DC; border-radius: 12px; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #425466;">
+      <span style="font-weight: 600; color: #0A2540;">รูปบิล.jpg</span>
+      <span style="font-size: 16px; line-height: 24px;">แตะเพื่อถ่ายใหม่หรือแนบไฟล์</span>
+    </div>
+    <label style="display: flex; flex-direction: column; gap: 4px;">ยอดเงิน (บาท)<input value="1,250.00" style="height: 56px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px; font-size: 22px; font-weight: 600;"></label>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <div>ค่าใช้จ่ายของ <span style="color: #B3123A;">(ต้องเลือก)</span></div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+        <button onClick="{{pickCorp}}" style="min-height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; font: inherit; font-size: 16px; cursor: pointer; background: {{eBg}}; color: {{eFg}};">บริษัท SRI</button>
+        <button onClick="{{pickPer}}" style="min-height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; font: inherit; font-size: 16px; cursor: pointer; background: {{pBg}}; color: {{pFg}};">ส่วนตัว</button>
+      </div>
+    </div>
+    <button onClick="{{send}}" style="min-height: 56px; border: 0; border-radius: 10px; background: #004AAD; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer;">ส่งเบิก ฿ 1,250</button>
+    <sc-if value="{{hasMsg}}" hint-placeholder-val="{{false}}">
+      <div role="status" style="border-radius: 10px; padding: 10px 12px; font-size: 16px; line-height: 24px; background: {{msgBg}}; color: {{msgFg}};">{{msg}}</div>
+    </sc-if>
+  </div>
+  <nav aria-label="เมนูหลัก" style="height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #E3E8EE; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); font-size: 16px;">
+    <a href="Home.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">หน้าแรก</a>
+    <a href="Clock.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">ลงเวลา</a>
+    <a href="Request.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">คำขอ</a>
+    <a href="Expense.dc.html" style="display: flex; align-items: center; justify-content: center; color: #004AAD; font-weight: 600; text-decoration: none;">เบิกเงิน</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1000}}'>
+class Component extends DCLogic {
+  state = { bill: null, who: null, tried: false };
+  renderVals() {
+    const { bill, who, tried } = this.state;
+    const ok = tried && bill && who;
+    const on = (v) => v ? ['#004AAD', '#FFFFFF'] : ['#FFFFFF', '#0A2540'];
+    const [nBg, nFg] = on(bill === 'named'), [cBg, cFg] = on(bill === 'cash');
+    const [eBg, eFg] = on(who === 'corp'), [pBg, pFg] = on(who === 'per');
+    return {
+      nBg, nFg, cBg, cFg, eBg, eFg, pBg, pFg,
+      hasMsg: tried,
+      msg: ok ? 'ส่งแล้ว รอ Management อนุมัติ' : 'เลือกประเภทบิลและค่าใช้จ่ายของใครให้ครบก่อนส่ง',
+      msgBg: ok ? '#E7F6F0' : '#FDE8ED', msgFg: ok ? '#0B5F43' : '#8F0F2E',
+      pickNamed: () => this.setState({ bill: 'named', tried: false }),
+      pickCash: () => this.setState({ bill: 'cash', tried: false }),
+      pickCorp: () => this.setState({ who: 'corp', tried: false }),
+      pickPer: () => this.setState({ who: 'per', tried: false }),
+      send: () => this.setState({ tried: true })
+    };
+  }
+}
+</script>
+</body>
+</html>

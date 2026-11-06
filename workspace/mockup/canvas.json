@@ -1,0 +1,25 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-06T05:10:00Z"},
+  "title": "SRI Staff App Mockup",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1280, "h": 820, "title": "หน้าแรก Desktop", "expand": "fill", "is_interactive": true},
+    "Structure.dc.html": {"x": 1360, "y": 0, "w": 1280, "h": 900, "title": "โครงสร้างระบบ"},
+    "Records.dc.html": {"x": 2720, "y": 0, "w": 1280, "h": 820, "title": "รายงานและส่งออก", "expand": "fill", "is_interactive": true},
+    "Home.dc.html": {"x": 0, "y": 1240, "w": 390, "h": 844, "title": "หน้าแรก มือถือ", "is_interactive": true},
+    "Clock.dc.html": {"x": 470, "y": 1240, "w": 390, "h": 844, "title": "ลงเวลา", "is_interactive": true},
+    "Request.dc.html": {"x": 940, "y": 1240, "w": 390, "h": 844, "title": "ขอลา / OT", "is_interactive": true},
+    "Expense.dc.html": {"x": 1410, "y": 1240, "w": 390, "h": 1000, "title": "สำรองจ่าย", "is_interactive": true},
+    "Approve.dc.html": {"x": 1880, "y": 1240, "w": 390, "h": 1000, "title": "อนุมัติ", "is_interactive": true},
+    "Flow.dc.html": {"x": 0, "y": 2600, "w": 1440, "h": 760, "title": "Flow การทำงาน"}
+  },
+  "order": ["Main.dc.html", "Structure.dc.html", "Records.dc.html", "Home.dc.html", "Clock.dc.html", "Request.dc.html", "Expense.dc.html", "Approve.dc.html", "Flow.dc.html"],
+  "notes": {
+    "row1": {"x": 0, "y": -260, "text": "ภาพรวมระบบ", "kind": "title1", "maxW": 4000},
+    "row2": {"x": 0, "y": 980, "text": "มือถือพนักงาน", "kind": "title1", "maxW": 2270},
+    "row3": {"x": 0, "y": 2340, "text": "Flow การทำงาน", "kind": "title1", "maxW": 1440}
+  },
+  "designSystems": []
+}

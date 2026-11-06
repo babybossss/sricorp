@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ลงเวลา</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<style>body{margin:0}a{color:#004AAD}a:hover{color:#003A8A}</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #F6F9FC; color: #0A2540; font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 18px; line-height: 28px; display: flex; flex-direction: column;">
+  <div style="flex-grow: 1; padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 16px; overflow: hidden;">
+    <h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600;">ลงเวลา</h1>
+
+    <sc-if value="{{isConsent}}" hint-placeholder-val="{{true}}">
+      <div style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 12px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px;">
+        <h2 style="margin: 0; font-size: 22px; line-height: 30px; font-weight: 600;">ขอความยินยอม</h2>
+        <div>SRI ขอใช้ตำแหน่ง GPS และรูปถ่ายตอนลงเวลา เพื่อยืนยันการเข้างานเท่านั้น</div>
+        <div style="font-size: 16px; line-height: 24px; color: #425466;">ผู้เห็นข้อมูล: Admin และหัวหน้าของคุณ<br>ไม่ติดตามตำแหน่งนอกเวลากดลงเวลา<br>ถอนความยินยอมได้ที่เมนูตั้งค่า</div>
+        <button onClick="{{agree}}" style="min-height: 56px; border: 0; border-radius: 10px; background: #004AAD; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer;">ยินยอมและไปต่อ</button>
+        <button onClick="{{decline}}" style="min-height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; background: #FFFFFF; color: #0A2540; font: inherit; cursor: pointer;">ไม่ยินยอม</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isDeclined}}" hint-placeholder-val="{{false}}">
+      <div style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 12px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px;">
+        <h2 style="margin: 0; font-size: 22px; line-height: 30px; font-weight: 600;">ลงเวลาผ่าน Admin</h2>
+        <div>กรุณาแจ้ง Admin เพื่อบันทึกเวลาให้ การไม่ยินยอมจะไม่มีผลกับการทำงานของคุณ</div>
+        <button onClick="{{restart}}" style="min-height: 52px; border: 1px solid #004AAD; border-radius: 10px; background: #FFFFFF; color: #004AAD; font: inherit; font-weight: 600; cursor: pointer;">กลับไปอ่านอีกครั้ง</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isGps}}" hint-placeholder-val="{{false}}">
+      <div style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 12px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="font-size: 16px; line-height: 24px; color: #425466;">ขั้นที่ 1 จาก 2</div>
+        <h2 style="margin: 0; font-size: 22px; line-height: 30px; font-weight: 600;">ยืนยันตำแหน่ง</h2>
+        <div style="height: 180px; border-radius: 10px; background: #EEF4FC; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#004AAD" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.400 7 11 7 11z"></path><circle cx="12" cy="10" r="2.500"></circle></svg>
+          <span style="font-weight: 600;">ออฟฟิศ บางนา</span>
+          <span style="font-size: 16px; line-height: 24px; color: #0B5F43;">อยู่ในพื้นที่ ห่างจุดลงเวลา 42 เมตร</span>
+        </div>
+        <button onClick="{{confirmGps}}" style="min-height: 56px; border: 0; border-radius: 10px; background: #004AAD; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer;">ยืนยันตำแหน่งนี้</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isSelfie}}" hint-placeholder-val="{{false}}">
+      <div style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 12px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="font-size: 16px; line-height: 24px; color: #425466;">ขั้นที่ 2 จาก 2</div>
+        <h2 style="margin: 0; font-size: 22px; line-height: 30px; font-weight: 600;">ถ่ายเซลฟี่ยืนยัน</h2>
+        <div style="height: 300px; border-radius: 10px; background: #0A2540; color: #FFFFFF; display: flex; align-items: center; justify-content: center; text-align: center;">
+          <div style="width: 170px; height: 220px; border: 2px dashed #FFFFFF; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 24px;">จัดใบหน้าให้อยู่ในกรอบ</div>
+        </div>
+        <button onClick="{{takePhoto}}" style="min-height: 56px; border: 0; border-radius: 10px; background: #0E7A56; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer;">ถ่ายรูปและลงเวลาเข้างาน</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isWorking}}" hint-placeholder-val="{{false}}">
+      <div style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 12px; padding: 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;">
+        <div style="font-size: 16px; line-height: 24px; color: #425466;">ศุกร์ 06/11/2026</div>
+        <div style="font-size: 56px; line-height: 64px; font-weight: 600; font-variant-numeric: tabular-nums;">{{time}}</div>
+        <div style="font-size: 16px; line-height: 24px; color: #0B5F43; font-weight: 500;">{{statusText}}</div>
+        <div style="font-size: 16px; line-height: 24px; color: #425466;">บันทึกแล้ว: เวลา · GPS · รูปเซลฟี่</div>
+      </div>
+      <sc-if value="{{canOut}}" hint-placeholder-val="{{true}}">
+        <button onClick="{{clockOut}}" style="width: 100%; min-height: 64px; border: 0; border-radius: 12px; background: #004AAD; color: #FFFFFF; font: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">ลงเวลาออกงาน</button>
+      </sc-if>
+      <a href="Request.dc.html" style="min-height: 52px; box-sizing: border-box; border: 1px solid #004AAD; border-radius: 10px; color: #004AAD; font-weight: 600; text-decoration: none; display: flex; align-items: center; justify-content: center;">ขอ OT</a>
+    </sc-if>
+  </div>
+  <nav aria-label="เมนูหลัก" style="height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #E3E8EE; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); font-size: 16px;">
+    <a href="Home.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">หน้าแรก</a>
+    <a href="Clock.dc.html" style="display: flex; align-items: center; justify-content: center; color: #004AAD; font-weight: 600; text-decoration: none;">ลงเวลา</a>
+    <a href="Request.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">คำขอ</a>
+    <a href="Expense.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">เบิกเงิน</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  state = { step: 'consent' };
+  renderVals() {
+    const s = this.state.step;
+    const go = (step) => () => this.setState({ step });
+    return {
+      isConsent: s === 'consent', isDeclined: s === 'declined', isGps: s === 'gps', isSelfie: s === 'selfie',
+      isWorking: s === 'in' || s === 'out', canOut: s === 'in',
+      time: s === 'out' ? '18:04' : '08:57',
+      statusText: s === 'out' ? 'ออกงานแล้ว · ทำงาน 9 ชม. 7 นาที' : 'เข้างานแล้ว · ออฟฟิศ บางนา',
+      agree: go('gps'), decline: go('declined'), restart: go('consent'),
+      confirmGps: go('selfie'), takePhoto: go('in'), clockOut: go('out')
+    };
+  }
+}
+</script>
+</body>
+</html>

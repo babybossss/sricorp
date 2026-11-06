@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ขอลาและ OT</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<style>body{margin:0}a{color:#004AAD}a:hover{color:#003A8A}input,select{font:inherit;color:#0A2540;box-sizing:border-box}</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #F6F9FC; color: #0A2540; font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 18px; line-height: 28px; display: flex; flex-direction: column;">
+  <div style="flex-grow: 1; padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 16px; overflow: hidden;">
+    <h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600;">ขอลา / OT</h1>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+      <button onClick="{{showLeave}}" style="min-height: 52px; border: 1px solid #E3E8EE; border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer; background: {{lBg}}; color: {{lFg}};">ขอลา</button>
+      <button onClick="{{showOt}}" style="min-height: 52px; border: 1px solid #E3E8EE; border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer; background: {{oBg}}; color: {{oFg}};">ขอ OT</button>
+    </div>
+
+    <sc-if value="{{isLeave}}" hint-placeholder-val="{{true}}">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="background: #EEF4FC; border-radius: 10px; padding: 10px 12px; font-size: 16px; line-height: 24px;">คงเหลือ: พักร้อน 6 วัน · ลาป่วย 28 วัน · ลากิจ 3 วัน</div>
+        <label style="display: flex; flex-direction: column; gap: 4px;">ประเภทการลา
+          <select style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px; background: #FFFFFF;"><option>ลาพักร้อน</option><option>ลาป่วย</option><option>ลากิจ</option></select>
+        </label>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+          <label style="display: flex; flex-direction: column; gap: 4px;">ตั้งแต่<input value="10/11/2026" style="width: 100%; height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+          <label style="display: flex; flex-direction: column; gap: 4px;">ถึง<input value="11/11/2026" style="width: 100%; height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+        </div>
+        <label style="display: flex; flex-direction: column; gap: 4px;">เหตุผล<input placeholder="พิมพ์สั้นๆ" style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isOt}}" hint-placeholder-val="{{false}}">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="background: #EEF4FC; border-radius: 10px; padding: 10px 12px; font-size: 16px; line-height: 24px;">เดือนนี้อนุมัติ OT แล้ว 2 ชั่วโมง</div>
+        <label style="display: flex; flex-direction: column; gap: 4px;">วันที่<input value="06/11/2026" style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+          <label style="display: flex; flex-direction: column; gap: 4px;">เริ่ม<input value="18:00" style="width: 100%; height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+          <label style="display: flex; flex-direction: column; gap: 4px;">สิ้นสุด<input value="20:00" style="width: 100%; height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+        </div>
+        <div style="font-weight: 600;">รวม 2 ชั่วโมง</div>
+        <label style="display: flex; flex-direction: column; gap: 4px;">งานที่ทำ<input placeholder="พิมพ์สั้นๆ" style="height: 52px; border: 1px solid #C9D2DC; border-radius: 10px; padding: 0 12px;"></label>
+      </div>
+    </sc-if>
+
+    <button onClick="{{send}}" style="min-height: 56px; border: 0; border-radius: 10px; background: #004AAD; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer;">{{sendLabel}}</button>
+    <sc-if value="{{sent}}" hint-placeholder-val="{{false}}">
+      <div role="status" style="background: #E7F6F0; color: #0B5F43; border-radius: 10px; padding: 10px 12px; font-size: 16px; line-height: 24px;">บันทึกคำขอแล้ว รอหัวหน้าอนุมัติ</div>
+    </sc-if>
+  </div>
+  <nav aria-label="เมนูหลัก" style="height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #E3E8EE; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); font-size: 16px;">
+    <a href="Home.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">หน้าแรก</a>
+    <a href="Clock.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">ลงเวลา</a>
+    <a href="Request.dc.html" style="display: flex; align-items: center; justify-content: center; color: #004AAD; font-weight: 600; text-decoration: none;">คำขอ</a>
+    <a href="Expense.dc.html" style="display: flex; align-items: center; justify-content: center; color: #425466; text-decoration: none;">เบิกเงิน</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  state = { tab: 'leave', sent: false };
+  renderVals() {
+    const l = this.state.tab === 'leave';
+    return {
+      isLeave: l, isOt: !l, sent: this.state.sent,
+      lBg: l ? '#004AAD' : '#FFFFFF', lFg: l ? '#FFFFFF' : '#0A2540',
+      oBg: l ? '#FFFFFF' : '#004AAD', oFg: l ? '#0A2540' : '#FFFFFF',
+      sendLabel: l ? 'ส่งคำขอลา' : 'ส่งคำขอ OT',
+      showLeave: () => this.setState({ tab: 'leave', sent: false }),
+      showOt: () => this.setState({ tab: 'ot', sent: false }),
+      send: () => this.setState({ sent: true })
+    };
+  }
+}
+</script>
+</body>
+</html>
