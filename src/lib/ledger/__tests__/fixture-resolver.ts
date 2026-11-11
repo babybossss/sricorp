@@ -1,0 +1,119 @@
+/**
+ * resolver ขนาดเล็กสำหรับเทสต์ engine — **ห้าม import จาก `@/lib/mock`**
+ *
+ * เทสต์ของ engine ต้องไม่ผูกกับข้อมูลจำลองของแอป ไม่งั้นวันที่ใครแก้
+ * `src/lib/mock/banks.ts` (เช่น ย้ายบัญชีไปอยู่ชื่อคนอื่น) เทสต์บัญชีจะพัง
+ * ทั้งที่กฎบัญชีไม่ได้เปลี่ยนอะไรเลย — และกลับกัน เทสต์จะผ่านได้ด้วยเหตุผลผิดๆ
+ *
+ * ชุดนี้มีเท่าที่เคสในเทสต์ต้องใช้:
+ * - `corp` นิติบุคคล (บังคับเอกสาร) · `thanakorn` / `thanawin` บุคคล
+ * - `family` มุมมองรวม เลือกเป็นผู้ถือไม่ได้
+ * - `b4` + `b4b` ของคนเดียวกัน (โอนในผู้ถือเดียวกัน) · `b1` corp · `b5` อีกคน
+ * - **บัญชีที่ปิดใช้งานแล้วอย่างน้อยหนึ่งตัวต่อผู้ถือ** (`b4c` · `b6` · `b2`)
+ *   เพื่อให้เคสเทสต์แตะได้ทั้งเส้นทางเปิดและปิด (D-092) — ถ้าไม่มีบัญชีที่ปิดในชุดนี้
+ *   เทสต์จะผ่านได้ด้วยเหตุผลผิดๆ คือ "ไม่เคยมีบัญชีปิดให้ชน"
+ */
+
+import type { BankInfo, LedgerResolver, OwnerInfo } from "../types";
+
+/**
+ * ไฟล์หลักฐานที่ "อัปโหลดจริงแล้ว" สำหรับเคสที่ต้องผ่านด่าน corporate_strict (D-095)
+ *
+ * ด่านนับเฉพาะ **path ของไฟล์ใน Storage** (`<owner_id>/<uploader_id>/<uuid>.<ext>`)
+ * ชื่อไฟล์อย่าง `"slip.pdf"` ใช้ไม่ได้อีก — เคสที่ตั้งใจให้ "แนบของปลอม" ใช้ `FAKE_EVIDENCE`
+ *
+ * owner ใน path ไม่ตรงกับ `"corp"` ของ fixture ชุดนี้โดยตั้งใจไม่ได้ (รหัสสั้นไม่ใช่ uuid)
+ * ด่านจึงเทียบ owner ไม่ได้ตรงนี้ — เคสที่ทดสอบการเทียบ owner อยู่ใน
+ * `evidence-real-files.test.ts` ซึ่งใช้ resolver ที่ผู้ถือเป็น uuid เหมือนใน DB
+ */
+export const EVIDENCE = [
+  "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/cccccccc-3333-4333-8333-cccccccccccc/dddddddd-4444-4444-8444-dddddddddddd.pdf",
+];
+
+/** ชื่อไฟล์ที่ผู้ใช้พิมพ์เอง — ไม่ใช่หลักฐานตามกติกา (D-095) */
+export const FAKE_EVIDENCE = ["สลิป.jpg"];
+
+const OWNERS: OwnerInfo[] = [
+  { id: "family", name: "SRI Family (รวมทุกชื่อ)", policy: "corporate_strict", selectableAsHolder: false },
+  { id: "corp", name: "SRI Corporation", policy: "corporate_strict", selectableAsHolder: true },
+  { id: "thanakorn", name: "ธนากร", policy: "personal_flexible", selectableAsHolder: true },
+  { id: "thanawin", name: "ธนวินท์", policy: "personal_flexible", selectableAsHolder: true },
+];
+
+const BANK_ACCOUNTS: BankInfo[] = [
+  { id: "b1", name: "SRI - SCB", ownerId: "corp", isActive: true, currency: "THB" },
+  { id: "b2", name: "SRI - BBL (ปิดแล้ว)", ownerId: "corp", isActive: false, currency: "THB" },
+  { id: "b4", name: "ธนากร - BBL", ownerId: "thanakorn", isActive: true, currency: "THB" },
+  { id: "b4b", name: "ธนากร - SCB", ownerId: "thanakorn", isActive: true, currency: "THB" },
+  { id: "b4c", name: "ธนากร - TTB (ปิดแล้ว)", ownerId: "thanakorn", isActive: false, currency: "THB" },
+  { id: "b5", name: "ธนวินท์ - KBANK", ownerId: "thanawin", isActive: true, currency: "THB" },
+  { id: "b6", name: "ธนวินท์ - BBL (ปิดแล้ว)", ownerId: "thanawin", isActive: false, currency: "THB" },
+  /* ---- บัญชีเงินฝากสกุลต่างประเทศ (FCD · 20261025000004) ----
+   * `b4usd` ของ `thanakorn` คู่กับ `b4`/`b4b` ที่เป็นบัญชีบาทของคนเดียวกัน
+   *   (เส้นทางแลกเงินต้องมีบัญชีบาทปลายทางของผู้ถือเดียวกัน)
+   * `b5usd` ของ `thanawin` ไว้ให้เคสข้ามผู้ถือมีของให้ชนจริง
+   * **และบัญชีที่ "ไม่บอกสกุล" (`b4x`) ต้องมีในชุดนี้** ไม่งั้นเทสต์จะไม่เคยแตะ
+   *   เส้นทางข้อมูลไม่ครบ ซึ่งคือเหตุที่งาน FCD ถูก BLOCK รอบก่อน (บทเรียนข้อ 3)
+   */
+  { id: "b4usd", name: "ธนากร - SCB FCD (USD)", ownerId: "thanakorn", isActive: true, currency: "USD" },
+  { id: "b4jpy", name: "ธนากร - SCB FCD (JPY)", ownerId: "thanakorn", isActive: true, currency: "JPY" },
+  { id: "b5usd", name: "ธนวินท์ - KBANK FCD (USD)", ownerId: "thanawin", isActive: true, currency: "USD" },
+  { id: "b4x", name: "ธนากร - บัญชีที่ไม่บอกสกุล", ownerId: "thanakorn", isActive: true },
+];
+
+/** บัญชีเงินตราที่เคสเงินตราอ้างถึงได้โดยไม่ต้องพิมพ์รหัสซ้ำ */
+export const FCD = {
+  usd: BANK_ACCOUNTS.find((b) => b.id === "b4usd")!,
+  jpy: BANK_ACCOUNTS.find((b) => b.id === "b4jpy")!,
+  otherOwnerUsd: BANK_ACCOUNTS.find((b) => b.id === "b5usd")!,
+  /** บัญชีที่ resolver ไม่บอกสกุล — ต้องถูกปฏิเสธ ไม่ใช่ถูกตีเป็นบาท */
+  unknownCurrency: BANK_ACCOUNTS.find((b) => b.id === "b4x")!,
+};
+
+/** บัญชีที่ปิดใช้งานแล้ว — อ้างชื่อในข้อความ error ได้โดยไม่ต้องพิมพ์ซ้ำในเทสต์ */
+export const CLOSED = {
+  corp: BANK_ACCOUNTS.find((b) => b.id === "b2")!,
+  thanakorn: BANK_ACCOUNTS.find((b) => b.id === "b4c")!,
+  thanawin: BANK_ACCOUNTS.find((b) => b.id === "b6")!,
+};
+
+/** resolver ปกติที่เคสส่วนใหญ่ใช้ */
+export const TEST_RESOLVER: LedgerResolver = {
+  owner: (id) => OWNERS.find((o) => o.id === id) ?? null,
+  bankAccount: (id) => BANK_ACCOUNTS.find((b) => b.id === id) ?? null,
+};
+
+/**
+ * resolver ที่ "ไม่รู้จักใครเลย" — ใช้ยืนยันว่า engine ปฏิเสธด้วย PostingError
+ * ไม่ใช่ crash และไม่ใช่เดาเป็นผู้ถือ/บัญชีอื่น
+ */
+export const EMPTY_RESOLVER: LedgerResolver = {
+  owner: () => null,
+  bankAccount: () => null,
+};
+
+/** รู้จักผู้ถือ แต่ไม่รู้จักบัญชีธนาคารเลย — แยกสองสาเหตุออกจากกันในเทสต์ */
+export const NO_BANK_RESOLVER: LedgerResolver = {
+  owner: TEST_RESOLVER.owner,
+  bankAccount: () => null,
+};
+
+/**
+ * resolver ที่ **คืนข้อมูลบัญชีไม่ครบ** — ไม่มีฟิลด์ `isActive` เลย
+ *
+ * จำลอง resolver รุ่นเก่า/ตัวที่อ่านจากแหล่งที่ยังไม่มีคอลัมน์นี้ (เช่น view ที่ลืม select)
+ * engine ต้อง **ไม่** ตีความว่า "ไม่บอก = เปิดใช้งาน" เพราะถ้าตีความแบบนั้น
+ * วันที่ resolver ตัวใดตัวหนึ่งลืมส่งฟิลด์นี้ การกันบัญชีปิดจะหายไปเงียบๆ ทั้งระบบ
+ * (บทเรียน mace-windu ข้อ 1 และ ข้อ 3 — ข้อมูลไม่ครบต้องปฏิเสธ ไม่ใช่เดา)
+ *
+ * `as BankInfo` คือจุดที่ตั้งใจโกงชนิดข้อมูล เพราะ TypeScript กันเคสนี้ให้แล้ว
+ * แต่ resolver ตัวจริงรับข้อมูลจากฐานข้อมูลตอน runtime ซึ่ง TypeScript กันไม่ถึง
+ */
+export const MISSING_ACTIVE_FLAG_RESOLVER: LedgerResolver = {
+  owner: TEST_RESOLVER.owner,
+  bankAccount: (id) => {
+    const b = BANK_ACCOUNTS.find((x) => x.id === id);
+    if (!b) return null;
+    return { id: b.id, name: b.name, ownerId: b.ownerId } as BankInfo;
+  },
+};

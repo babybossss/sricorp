@@ -1,0 +1,948 @@
+import { describe, it, expect } from "vitest";
+import {
+  buildPosting as buildPostingWith,
+  buildPostingDraft as buildPostingDraftWith,
+  assertBalanced,
+  totalDebit,
+  totalCredit,
+  allLines,
+} from "../posting";
+import { PostingError, type PostingInput } from "../types";
+import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
+
+/**
+ * engine รับ resolver เป็นพารามิเตอร์ (ไม่มี default ที่ชี้ไปข้อมูลจำลอง)
+ * เทสต์ชุดนี้จึงผูกกับ fixture ของตัวเองที่นี่ที่เดียว แล้วเคสด้านล่างเรียกเหมือนเดิม
+ */
+const buildPosting = (input: PostingInput) => buildPostingWith(input, TEST_RESOLVER);
+const buildPostingDraft = (input: PostingInput) => buildPostingDraftWith(input, TEST_RESOLVER);
+import { isCashAccount } from "@/lib/rules/coa";
+import {
+  TX_TYPES,
+  findSub,
+  canAccrueFromForm,
+  movesCash,
+  isFxTranslationSub,
+  isFxRealisingSub,
+  type SubCategory,
+} from "@/lib/rules/tx-rules";
+import { isFxTranslationAccount } from "@/lib/rules/coa";
+
+const base = {
+  amount: 12000,
+  ownerId: "thanakorn",
+  bankAccountId: "b4",
+};
+
+/**
+ * บัญชีธนาคารของหมวดนี้ตอนไล่ทั้งตารางกฎ — **ต้องไม่ส่งให้หมวดที่ไม่มีเงินเคลื่อน**
+ *
+ * engine ปฏิเสธบัญชีบนรายการ `cash: "none"` โดยตั้งใจ (บัญชีที่ติดมากับรายการ
+ * ที่ไม่มีขาเงินสดจะถูกนับเป็นความเคลื่อนไหวของบัญชีนั้นตอนกระทบยอด)
+ * fixture ที่ยัดบัญชีให้ทุกหมวดจึงไม่ใช่ "ข้อมูลครบ" แต่เป็นข้อมูลที่ขัดกับหมวด
+ */
+const bankFor = (s: { cash: string; dr: string; cr: string }) =>
+  fxBankFor(s as SubCategory) ?? (movesCash(s as Parameters<typeof movesCash>[0]) ? "b4" : undefined);
+
+/* ---------------- เงินตราต่างประเทศ (FCD) ตอนไล่ทั้งตารางกฎ ----------------
+ *
+ * หมวดค่าเงินบังคับข้อมูลที่หมวดอื่นไม่มี และ **ยอดบาทต้องมาจากอัตราพอดี**
+ * ตัวเลขชุดนี้จึงเลือกให้ลงตัวกับ `amount` 12,000 บาท:
+ *   แปลงค่า: 10,000 USD × (37.70 − 36.50) = 12,000
+ *   แลกเงิน:    320 USD × 37.50           = 12,000
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `fx-posting.test.ts` ครบทุกช่อง
+ * (บทเรียนข้อ 3 — ชุดที่ส่งครบเสมอไม่เคยแตะเส้นทางข้อมูลขาด)
+ */
+const fxBankFor = (s: SubCategory) => (isFxTranslationSub(s) || isFxRealisingSub(s) ? "b4usd" : undefined);
+
+const fxTranslationFor = (s: SubCategory) =>
+  isFxTranslationSub(s)
+    ? isFxTranslationAccount(s.cr)
+      ? {
+          currency: "USD",
+          balanceOriginal: 10_000,
+          bookRateToThb: 36.5,
+          bookRateDate: "2026-10-31",
+          newRateToThb: 37.7,
+          newRateDate: "2026-11-30",
+        }
+      : {
+          // ยอดบาทลด — อัตราใหม่ต่ำกว่าอัตราตามบัญชี
+          currency: "USD",
+          balanceOriginal: 10_000,
+          bookRateToThb: 37.7,
+          bookRateDate: "2026-10-31",
+          newRateToThb: 36.5,
+          newRateDate: "2026-11-30",
+        }
+    : undefined;
+
+/**
+ * **ซื้อเงินตราเข้าบัญชี FCD** (25/10) — ต้นทางเป็นบัญชี **บาท** ปลายทางเป็น FCD
+ * 320 USD × 37.50 = 12,000 บาท ลงตัวกับ `amount` ของชุดนี้พอดี
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `fx-posting.test.ts`
+ */
+const isFxAcquiring = (s: SubCategory) => s.requires?.includes("fxAcquisition") ?? false;
+
+const fxAcquisitionFor = (s: SubCategory) =>
+  isFxAcquiring(s)
+    ? {
+        currency: "USD",
+        amountOriginal: 320,
+        dealRateToThb: 37.5,
+        dealRateDate: "2026-12-31",
+      }
+    : undefined;
+
+const fxConversionFor = (s: SubCategory) =>
+  isFxRealisingSub(s)
+    ? {
+        currency: "USD",
+        amountOriginal: 320,
+        balanceOriginalBefore: 320,
+        bookRateToThb: 36.5,
+        bookRateDate: "2026-10-31",
+        dealRateToThb: 37.5,
+        dealRateDate: "2026-12-31",
+        unrealizedBefore: 0,
+      }
+    : undefined;
+
+
+/**
+ * ข้อมูลตีราคาของหมวดที่บังคับ (D-111 ข้อ 2) — ตอนไล่ทั้งตารางกฎ
+ *
+ * ยอดบาทต้องคูณกับอัตราลงตัว ไม่งั้น engine ปฏิเสธ (และปฏิเสธถูก)
+ * เคสที่ **ไม่ส่ง** ข้อมูลพวกนี้อยู่ใน `revaluation-posting.test.ts` ครบทุกช่อง
+ */
+const revaluationFor = (s: { requires?: readonly string[] }) =>
+  s.requires?.includes("revaluation")
+    ? { currency: "USD", rateToThb: 36.5, valueOriginal: 1_000, valueThb: 36_500 }
+    : undefined;
+
+/**
+ * ยอดคงเหลือของบัญชีต้นทางสำหรับหมวด **ย้ายยอดทั้งก้อน** (27/10)
+ *
+ * engine ย้ายได้เฉพาะทั้งก้อน และ **ไม่เชื่อยอดที่พิมพ์** → ตอนไล่ทั้งตารางกฎ
+ * ต้องส่งยอดที่ "อ่านจากสมุด" เท่ากับ `amount` พอดี
+ * คัดด้วยธงจากตารางกฎ ไม่ใช่รหัสหมวด · เคสที่ **ไม่ส่ง** ข้อมูลนี้ (และเคสยอดไม่ตรง)
+ * อยู่ใน `reclass-whole-balance.test.ts` ครบทุกช่อง (บทเรียนข้อ 3)
+ */
+const balanceMoveFor = (s: SubCategory) =>
+  s.requires?.includes("wholeBalanceMove")
+    ? { sourceCoaCode: s.cr, sourceBalance: base.amount }
+    : undefined;
+
+describe("Money Invariant 1 — ทุกรายการต้องสมดุล", () => {
+  it("ทุกหมวดย่อยในตารางกฎ สร้างบรรทัดที่สมดุลได้", () => {
+    for (const t of TX_TYPES) {
+      for (const s of t.subs) {
+        const input = {
+          ...base,
+          bankAccountId: bankFor(s),
+          typeKey: t.key,
+          subCode: s.code,
+          assetId: "rent1",
+          contactId: "c1",
+          // เคสพิเศษที่ต้องมีข้อมูลเพิ่ม
+          disposal: s.requires?.includes("capitalGain")
+            ? { costBasis: 10000, salePrice: 12000 }
+            : undefined,
+          repayment: s.requires?.includes("principalInterestSplit")
+            ? { principal: 9000, interest: 3000 }
+            : undefined,
+          // ซื้อเงินตราต้องเข้าบัญชี **FCD** · โอนอื่นเข้าบัญชีบาทอีกใบ
+          transferToBankAccountId: isFxAcquiring(s)
+            ? "b4usd"
+            : t.key === "transfer"
+              ? "b4b"
+              : undefined,
+          revaluation: revaluationFor(s),
+          balanceMove: balanceMoveFor(s),
+          fxTranslation: fxTranslationFor(s),
+          fxConversion: fxConversionFor(s),
+          fxAcquisition: fxAcquisitionFor(s),
+        };
+        const r = buildPosting(input);
+        expect(totalDebit(allLines(r)), `${s.code} debit=credit`).toBe(totalCredit(allLines(r)));
+        expect(allLines(r).length, `${s.code} ต้องมีอย่างน้อย 2 บรรทัด`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+});
+
+describe("Money Invariant 2 — ไม่มีเงินลอย", () => {
+  it("ทุกบรรทัดเงินสดต้องผูกบัญชีธนาคาร", () => {
+    for (const t of TX_TYPES) {
+      for (const s of t.subs) {
+        const r = buildPosting({
+          ...base,
+          bankAccountId: bankFor(s),
+          typeKey: t.key,
+          subCode: s.code,
+          assetId: "rent1",
+          contactId: "c1",
+          disposal: s.requires?.includes("capitalGain") ? { costBasis: 10000, salePrice: 12000 } : undefined,
+          repayment: s.requires?.includes("principalInterestSplit") ? { principal: 9000, interest: 3000 } : undefined,
+          // ซื้อเงินตราต้องเข้าบัญชี **FCD** · โอนอื่นเข้าบัญชีบาทอีกใบ
+          transferToBankAccountId: isFxAcquiring(s)
+            ? "b4usd"
+            : t.key === "transfer"
+              ? "b4b"
+              : undefined,
+          revaluation: revaluationFor(s),
+          balanceMove: balanceMoveFor(s),
+          fxTranslation: fxTranslationFor(s),
+          fxConversion: fxConversionFor(s),
+          fxAcquisition: fxAcquisitionFor(s),
+        });
+        for (const l of allLines(r)) {
+          if (isCashAccount(l.coaCode)) {
+            expect(l.bankAccountId, `${s.code} บรรทัด ${l.coaCode}`).toBeTruthy();
+          }
+        }
+      }
+    }
+  });
+});
+
+describe("รายการธรรมดาสองบรรทัด", () => {
+  it("ค่าเช่า: เงินสดเดบิต · รายได้ค่าเช่าเครดิต", () => {
+    const r = buildPosting({ ...base, typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" });
+    expect(allLines(r)).toHaveLength(2);
+    const cash = allLines(r).find((l) => l.coaCode === "1100")!;
+    const rent = allLines(r).find((l) => l.coaCode === "4200")!;
+    expect(cash.debit).toBe(12000);
+    expect(cash.bankAccountId).toBe("b4");
+    expect(rent.credit).toBe(12000);
+  });
+
+  it("ค่าซ่อม: ค่าใช้จ่ายเดบิต · เงินสดเครดิต", () => {
+    const r = buildPosting({ ...base, typeKey: "expense", subCode: "exp.repair", assetId: "rent1" });
+    expect(allLines(r).find((l) => l.coaCode === "5120")!.debit).toBe(12000);
+    expect(allLines(r).find((l) => l.coaCode === "1100")!.credit).toBe(12000);
+  });
+
+  it("กู้เงินธนาคาร: เงินสดเดบิต · หนี้สินเครดิต และไม่แตะ P&L", () => {
+    const r = buildPosting({ ...base, typeKey: "finance_in", subCode: "fin.loan_bank", contactId: "c3" });
+    expect(allLines(r).find((l) => l.coaCode === "1100")!.debit).toBe(12000);
+    expect(allLines(r).find((l) => l.coaCode === "2410")!.credit).toBe(12000);
+    // ไม่มีบรรทัดรายได้เลย
+    expect(allLines(r).some((l) => l.coaCode.startsWith("4"))).toBe(false);
+  });
+
+  it("ปล่อยกู้: ลูกหนี้เดบิต ไม่ใช่ค่าใช้จ่าย", () => {
+    const r = buildPosting({ ...base, typeKey: "invest_buy", subCode: "inv.lend", contactId: "c4" });
+    expect(allLines(r).find((l) => l.coaCode === "1300")!.debit).toBe(12000);
+    expect(allLines(r).some((l) => l.coaCode.startsWith("5"))).toBe(false);
+  });
+});
+
+describe("Backlog ข้อ 4 — ขายทรัพย์สามบรรทัด", () => {
+  it("ขายได้กำไร: ตัดทรัพย์ตามต้นทุน · เงินเข้าตามราคาขาย · กำไรเข้า 4300", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 3_000_000,
+      disposal: { costBasis: 2_450_000, salePrice: 3_000_000 },
+    });
+    assertBalanced(allLines(r));
+    expect(allLines(r).find((l) => l.coaCode === "1500")!.credit).toBe(2_450_000);
+    expect(allLines(r).find((l) => l.coaCode === "1100")!.debit).toBe(3_000_000);
+    expect(allLines(r).find((l) => l.coaCode === "4300")!.credit).toBe(550_000);
+  });
+
+  it("ขายขาดทุน: ขาดทุนเข้า 5910 ฝั่งเดบิต", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 2_000_000,
+      disposal: { costBasis: 2_450_000, salePrice: 2_000_000 },
+    });
+    assertBalanced(allLines(r));
+    expect(allLines(r).find((l) => l.coaCode === "5910")!.debit).toBe(450_000);
+  });
+
+  it("ค่าใช้จ่ายในการขายลดเงินที่เข้าบัญชี และลดกำไร", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 2_950_000,
+      disposal: { costBasis: 2_450_000, salePrice: 3_000_000, sellingCosts: 50_000 },
+    });
+    assertBalanced(allLines(r));
+    expect(allLines(r).find((l) => l.coaCode === "1100")!.debit).toBe(2_950_000);
+    expect(allLines(r).find((l) => l.coaCode === "4300")!.credit).toBe(500_000);
+  });
+
+  it("ขายเท่าทุน ไม่มีบรรทัดกำไรหรือขาดทุน", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 2_450_000,
+      disposal: { costBasis: 2_450_000, salePrice: 2_450_000 },
+    });
+    expect(allLines(r)).toHaveLength(2);
+    expect(allLines(r).some((l) => l.coaCode === "4300" || l.coaCode === "5910")).toBe(false);
+  });
+
+  it("ทรัพย์ทุกบรรทัดผูก assetId เพื่อคำนวณต้นทุนย้อนหลังได้", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 3_000_000,
+      disposal: { costBasis: 2_450_000, salePrice: 3_000_000 },
+    });
+    expect(allLines(r).find((l) => l.coaCode === "1500")!.assetId).toBe("rent1");
+  });
+});
+
+describe("Backlog ข้อ 5 — คืนเงินกู้สามบรรทัด", () => {
+  it("เงินต้นลดหนี้สิน · ดอกเบี้ยเป็นค่าใช้จ่าย · เงินสดออกเต็มจำนวน", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "finance_out",
+      subCode: "fin.repay_bank",
+      contactId: "c3",
+      amount: 50_000,
+      repayment: { principal: 40_000, interest: 10_000 },
+    });
+    assertBalanced(allLines(r));
+    expect(allLines(r).find((l) => l.coaCode === "2410")!.debit).toBe(40_000);
+    expect(allLines(r).find((l) => l.coaCode === "5400")!.debit).toBe(10_000);
+    expect(allLines(r).find((l) => l.coaCode === "1100")!.credit).toBe(50_000);
+  });
+
+  it("จ่ายดอกอย่างเดียว ไม่มีบรรทัดหนี้สิน", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "finance_out",
+      subCode: "fin.repay_bank",
+      contactId: "c3",
+      amount: 10_000,
+      repayment: { principal: 0, interest: 10_000 },
+    });
+    expect(allLines(r)).toHaveLength(2);
+    expect(allLines(r).some((l) => l.coaCode === "2410")).toBe(false);
+  });
+
+  it("เงินต้น + ดอกเบี้ย ต้องเท่ายอดที่จ่าย ไม่งั้นปฏิเสธ", () => {
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "finance_out",
+        subCode: "fin.repay_bank",
+        contactId: "c3",
+        amount: 50_000,
+        repayment: { principal: 40_000, interest: 5_000 },
+      })
+    ).toThrow(PostingError);
+  });
+});
+
+describe("โอนระหว่างบัญชี — สองขาเสมอ (Money Invariant 3)", () => {
+  it("เงินออกจากบัญชีต้นทาง เข้าบัญชีปลายทาง", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 20_000,
+      transferToBankAccountId: "b4b",
+    });
+    assertBalanced(allLines(r));
+    expect(allLines(r)).toHaveLength(2);
+    const out = allLines(r).find((l) => l.credit > 0)!;
+    const inn = allLines(r).find((l) => l.debit > 0)!;
+    expect(out.bankAccountId).toBe("b4");
+    expect(inn.bankAccountId).toBe("b4b");
+  });
+
+  it("ไม่ระบุบัญชีปลายทาง = ปฏิเสธ ไม่สร้างขาเดียว", () => {
+    expect(() =>
+      buildPosting({ ...base, typeKey: "transfer", subCode: "trf.internal", amount: 20_000 })
+    ).toThrow(/ปลายทาง/);
+  });
+
+  it("โอนเข้าบัญชีเดิม = ปฏิเสธ", () => {
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        amount: 20_000,
+        transferToBankAccountId: "b4",
+      })
+    ).toThrow(/บัญชีเดียวกัน/);
+  });
+
+  it("โอนภายในไม่เข้า P&L", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 20_000,
+      transferToBankAccountId: "b4b",
+    });
+    expect(allLines(r).every((l) => isCashAccount(l.coaCode))).toBe(true);
+  });
+});
+
+describe("กันรายการที่ DB จะปฏิเสธอยู่ดี", () => {
+  it("หมวดย่อยไม่ตรงกับประเภท", () => {
+    expect(() =>
+      buildPosting({ ...base, typeKey: "income", subCode: "fin.loan_bank" })
+    ).toThrow(/ไม่อยู่ใต้ประเภท/);
+  });
+
+  it("หมวดย่อยไม่มีอยู่จริง", () => {
+    expect(() => buildPosting({ ...base, typeKey: "income", subCode: "inc.ไม่มี" })).toThrow();
+  });
+
+  it("จำนวนเงินต้องมากกว่า 0", () => {
+    expect(() => buildPosting({ ...base, amount: 0, typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" })).toThrow(/มากกว่า 0/);
+    expect(() => buildPosting({ ...base, amount: -1, typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" })).toThrow();
+  });
+
+  it("ต้องระบุบัญชีธนาคารเสมอ", () => {
+    expect(() =>
+      buildPosting({ ...base, bankAccountId: "", typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" })
+    ).toThrow(/บัญชี/);
+  });
+
+  it("หมวดที่บังคับผูกทรัพย์ ถ้าไม่ผูกต้องปฏิเสธ", () => {
+    expect(() =>
+      buildPosting({ ...base, typeKey: "income", subCode: "inc.rent", contactId: "c1" })
+    ).toThrow(/ทรัพย์/);
+  });
+
+  it("หมวดที่บังคับผู้ติดต่อ ถ้าไม่ระบุต้องปฏิเสธ", () => {
+    expect(() =>
+      buildPosting({ ...base, typeKey: "finance_in", subCode: "fin.loan_bank" })
+    ).toThrow(/ผู้ติดต่อ/);
+  });
+});
+
+describe("คำอธิบายภาษาคน", () => {
+  it("บอกว่าระบบลงบัญชีให้อย่างไร", () => {
+    const r = buildPosting({ ...base, typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" });
+    expect(r.summary.length).toBeGreaterThan(0);
+    expect(r.summary.join(" ")).toContain(findSub("inc.rent")!.sub.plain);
+  });
+});
+
+/**
+ * เส้นทางที่ mace-windu ชี้ว่าเทสต์ชุดแรกไม่เคยแตะ
+ * ทุกเคสในนี้เคยผ่านเข้าไปได้แล้วลงบัญชีผิด ก่อนจะถูกแก้
+ */
+describe("เส้นทางที่เคยหลุด — ข้อมูลไม่ครบต้องถูกปฏิเสธ ไม่ใช่เดาให้", () => {
+  it("คืนเงินกู้โดยไม่ระบุการแยกเงินต้น/ดอกเบี้ย ต้องถูกปฏิเสธ", () => {
+    // เคยตกไปเส้นทางปกติ → ลงเงินต้นเต็ม 50,000 ดอกเบี้ยหายจาก P&L
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "finance_out",
+        subCode: "fin.repay_bank",
+        contactId: "c3",
+        amount: 50_000,
+      })
+    ).toThrow(/แยกเงินต้น/);
+  });
+
+  it("ขายทรัพย์โดยไม่ระบุต้นทุน ต้องถูกปฏิเสธ", () => {
+    // เคยตัดทรัพย์ด้วยราคาขายแทนต้นทุน และไม่รับรู้กำไรเลย
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "invest_sell",
+        subCode: "inv.sell_re",
+        assetId: "rent1",
+        amount: 3_000_000,
+      })
+    ).toThrow(/ต้นทุนและราคาขาย/);
+  });
+
+  it("ยอดหัวรายการต้องตรงกับเงินที่เข้าบัญชีจริง", () => {
+    // amount ที่ไม่ตรงกับ salePrice − sellingCosts ทำให้กระทบยอดธนาคารพัง
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "invest_sell",
+        subCode: "inv.sell_re",
+        assetId: "rent1",
+        amount: 1,
+        disposal: { costBasis: 2_450_000, salePrice: 3_000_000 },
+      })
+    ).toThrow(/ยอดที่รับจริง/);
+  });
+
+  it("ค่าใช้จ่ายในการขายมากกว่าราคาขาย ต้องถูกปฏิเสธ", () => {
+    // เคยได้บรรทัดเงินสดติดลบ ซึ่ง DB มี check (debit >= 0) ปฏิเสธอยู่แล้ว
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "invest_sell",
+        subCode: "inv.sell_re",
+        assetId: "rent1",
+        amount: 0,
+        disposal: { costBasis: 1000, salePrice: 600, sellingCosts: 1000 },
+      })
+    ).toThrow();
+  });
+
+  it("กำไรขายหลักทรัพย์ต้องไม่ไปโผล่บรรทัดกำไรขายอสังหาฯ", () => {
+    const re = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_re",
+      assetId: "rent1",
+      amount: 120,
+      disposal: { costBasis: 100, salePrice: 120 },
+    });
+    const sec = buildPosting({
+      ...base,
+      typeKey: "invest_sell",
+      subCode: "inv.sell_securities",
+      amount: 120,
+      disposal: { costBasis: 100, salePrice: 120 },
+    });
+    expect(allLines(re).some((l) => l.coaCode === "4300")).toBe(true);
+    expect(allLines(sec).some((l) => l.coaCode === "4300")).toBe(false);
+    expect(allLines(sec).some((l) => l.coaCode === "4900")).toBe(true);
+  });
+});
+
+describe("โอนข้าม owner ต้องระบุลักษณะ (Money Invariant 3)", () => {
+  it("โอนภายในผู้ถือเดียวกัน ได้รายการเดียวสองบรรทัด", () => {
+    // b4 และ b4b เป็นของธนากรทั้งคู่
+    const r = buildPosting({
+      ...base,
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 20_000,
+      transferToBankAccountId: "b4b",
+    });
+    expect(r.transactions).toHaveLength(1);
+    assertBalanced(allLines(r));
+  });
+
+  it("โอนข้ามผู้ถือโดยไม่ระบุลักษณะ ต้องถูกปฏิเสธ", () => {
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        amount: 20_000,
+        transferToBankAccountId: "b1",
+        })
+    ).toThrow(/ลักษณะ/);
+  });
+
+  it("โอนข้ามผู้ถือได้สองรายการคู่กัน ฝ่ายละหนึ่ง", () => {
+    const r = buildPosting({
+      ...base,
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 20_000,
+      transferToBankAccountId: "b1",
+      intercompanyNature: "loan",
+      // ปลายทางเป็นนิติบุคคล ขาของฝ่ายนั้นจึงต้องมีหลักฐานและคู่ค้าด้วย
+      attachments: EVIDENCE,
+      contactId: "c1",
+    });
+    expect(r.transactions).toHaveLength(2);
+    // แต่ละรายการต้องสมดุลในตัวเอง เพราะ DB ตรวจต่อ transaction
+    for (const t of r.transactions) assertBalanced(t.lines);
+    expect(r.transactions[0].ownerId).toBe("thanakorn");
+    expect(r.transactions[1].ownerId).toBe("corp");
+    expect(r.summary.join(" ")).toMatch(/ข้ามผู้ถือ/);
+  });
+
+  it("ผู้ถือปลายทางอ่านจากบัญชีเอง ไม่เชื่อสิ่งที่ผู้ใช้เว้นได้", () => {
+    // b1 เป็นของ SRI Corporation — ต้องรู้เองว่าข้ามผู้ถือ แม้ไม่มีฟิลด์บอก
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        amount: 20_000,
+        transferToBankAccountId: "b1",
+      })
+    ).toThrow(/ข้ามผู้ถือ/);
+  });
+
+  it("โอนไปหานิติบุคคลโดยไม่แนบหลักฐาน ต้องถูกปฏิเสธตั้งแต่ต้น", () => {
+    // ขาที่สองเป็นของ corporate_strict — ถ้าไม่ดักที่นี่จะไปตายที่ DB ตอน post
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        amount: 20_000,
+        transferToBankAccountId: "b1",
+        intercompanyNature: "loan",
+        contactId: "c1",
+      })
+    ).toThrow(/หลักฐาน/);
+  });
+
+  it("ปันผลข้ามผู้ถือ: ฝ่ายจ่ายลดส่วนของเจ้าของ ฝ่ายรับได้รายได้", () => {
+    const r = buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 100_000,
+      transferToBankAccountId: "b4",
+      intercompanyNature: "dividend",
+      attachments: EVIDENCE,
+      contactId: "c1",
+    });
+    const payer = r.transactions.find((t) => t.ownerId === "corp")!;
+    const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    // 3200 เงินถอนของเจ้าของ — ปันผลลดส่วนของเจ้าของ ไม่ใช่ค่าใช้จ่าย
+    expect(payer.lines.find((l) => l.coaCode === "3200")!.debit).toBe(100_000);
+    expect(payer.lines.some((l) => l.coaCode.startsWith("5"))).toBe(false);
+    expect(receiver.lines.find((l) => l.coaCode === "4410")!.credit).toBe(100_000);
+  });
+});
+
+describe("Corporate strict — ดักก่อนให้ผู้ใช้เห็นข้อความที่เข้าใจได้", () => {
+  it("ฝั่งบริษัทไม่แนบหลักฐาน ต้องเตือนตั้งแต่ก่อนส่ง", () => {
+    expect(() =>
+      buildPosting({
+        ...base,
+        ownerId: "corp",
+        bankAccountId: "b1",
+        typeKey: "income",
+        subCode: "inc.rent",
+        assetId: "rent1",
+        contactId: "c1",
+        attachments: [],
+      })
+    ).toThrow(/หลักฐาน/);
+  });
+
+  it("ฝั่งบริษัทแนบหลักฐานแล้ว ผ่าน", () => {
+    const r = buildPosting({
+      ...base,
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "income",
+      subCode: "inc.rent",
+      assetId: "rent1",
+      contactId: "c1",
+      attachments: EVIDENCE,
+    });
+    assertBalanced(allLines(r));
+  });
+
+  it("ฝั่งบุคคลไม่แนบหลักฐานได้ (personal_flexible)", () => {
+    const r = buildPosting({
+      ...base,
+      ownerId: "thanakorn",
+      typeKey: "income",
+      subCode: "inc.rent",
+      assetId: "rent1",
+      contactId: "c1",
+    });
+    assertBalanced(allLines(r));
+  });
+});
+
+
+describe("หมวดกระแสเงินสดของรายการข้ามผู้ถือ", () => {
+  const lend = () =>
+    buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 500_000,
+      transferToBankAccountId: "b4",
+      intercompanyNature: "loan",
+      attachments: EVIDENCE,
+      contactId: "c1",
+    });
+
+  it("ปล่อยกู้เป็น Investing ของฝ่ายจ่าย · Financing ของฝ่ายรับ", () => {
+    const r = lend();
+    const payer = r.transactions.find((t) => t.ownerId === "corp")!;
+    const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    expect(payer.lines.every((l) => l.cfCategory === "investing")).toBe(true);
+    expect(receiver.lines.every((l) => l.cfCategory === "financing")).toBe(true);
+  });
+
+  it("เงินระหว่างกันไม่ปนกับพอร์ตจริง", () => {
+    const r = lend();
+    const payer = r.transactions.find((t) => t.ownerId === "corp")!;
+    // 1310 ลูกหนี้ระหว่างกัน ไม่ใช่ 1300 เงินให้กู้ยืมของจริง
+    expect(payer.lines.some((l) => l.coaCode === "1310")).toBe(true);
+    expect(payer.lines.some((l) => l.coaCode === "1300")).toBe(false);
+  });
+
+  it("เพิ่มทุนในเครือไม่ปนกับพอร์ตหลักทรัพย์", () => {
+    const r = buildPosting({
+      ownerId: "thanakorn",
+      bankAccountId: "b4",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 1_000_000,
+      transferToBankAccountId: "b1",
+      intercompanyNature: "capital",
+      attachments: EVIDENCE,
+      contactId: "c1",
+    });
+    const payer = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    // 1710 เงินลงทุนในบริษัทในเครือ ไม่ใช่ 1700 พอร์ตหลักทรัพย์
+    expect(payer.lines.some((l) => l.coaCode === "1710")).toBe(true);
+    expect(payer.lines.some((l) => l.coaCode === "1700")).toBe(false);
+  });
+
+  it("ปันผลรับเป็น Operating ของฝ่ายรับ ตรงกับหมวด inc.dividend", () => {
+    const r = buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "transfer",
+      subCode: "trf.internal",
+      amount: 100_000,
+      transferToBankAccountId: "b4",
+      intercompanyNature: "dividend",
+      attachments: EVIDENCE,
+      contactId: "c1",
+    });
+    const receiver = r.transactions.find((t) => t.ownerId === "thanakorn")!;
+    expect(receiver.lines.every((l) => l.cfCategory === "operating")).toBe(true);
+  });
+});
+
+describe("รับคืนเงินต้นพร้อมดอกเบี้ย — แยกหมวดกระแสเงินสด", () => {
+  const redeem = () =>
+    buildPosting({
+      ownerId: "corp",
+      bankAccountId: "b1",
+      typeKey: "invest_sell",
+      subCode: "inv.srr_redeem",
+      assetId: "th_b",
+      contactId: "c4",
+      attachments: EVIDENCE,
+      amount: 1_100_000,
+      repayment: { principal: 1_000_000, interest: 100_000 },
+    });
+
+  it("เงินต้นเป็น Investing · ดอกเบี้ยเป็น Operating ไม่รวมเป็นก้อนเดียว", () => {
+    const lines = allLines(redeem());
+    const cash = lines.filter((l) => l.coaCode === "1100");
+    expect(cash).toHaveLength(2);
+    expect(cash.find((l) => l.debit === 1_000_000)!.cfCategory).toBe("investing");
+    expect(cash.find((l) => l.debit === 100_000)!.cfCategory).toBe("operating");
+  });
+
+  it("ดอกเบี้ยรับลงเป็นรายได้ ไม่ใช่ค่าใช้จ่าย", () => {
+    const lines = allLines(redeem());
+    const interest = lines.find((l) => l.coaCode === "4100")!;
+    expect(interest.credit).toBe(100_000);
+    expect(interest.debit).toBe(0);
+  });
+
+  it("รับแต่ดอกเบี้ยล้วน ต้องบอกให้ไปใช้หมวดรายได้แทน", () => {
+    expect(() =>
+      buildPosting({
+        ownerId: "corp",
+        bankAccountId: "b1",
+        typeKey: "invest_sell",
+        subCode: "inv.srr_redeem",
+        assetId: "th_b",
+        contactId: "c4",
+        attachments: EVIDENCE,
+        amount: 100_000,
+        repayment: { principal: 0, interest: 100_000 },
+      })
+    ).toThrow(/ดอกเบี้ยรับ/);
+  });
+
+  it("ยังสมดุลแม้แตกเป็นสี่บรรทัด", () => {
+    assertBalanced(allLines(redeem()));
+  });
+});
+
+/**
+ * `buildPostingDraft()` มีไว้ให้ฟอร์มพรีวิวบรรทัดก่อนแนบไฟล์
+ * จึงต้องพิสูจน์ว่า **ตัวที่ใช้บันทึกจริงยังบังคับครบ** ไม่มีทางลัด
+ */
+describe("พรีวิวผ่อนได้ แต่ทางที่บันทึกจริงต้องไม่ผ่อน", () => {
+  const corpSale = {
+    typeKey: "invest_sell" as const,
+    subCode: "inv.sell_re",
+    ownerId: "corp",
+    bankAccountId: "b1",
+    assetId: "rent1",
+    contactId: "c1",
+    amount: 3_000_000,
+    disposal: { costBasis: 2_450_000, salePrice: 3_000_000 },
+  };
+
+  it("นิติบุคคลยังไม่แนบไฟล์: พรีวิวเห็นบรรทัดได้", () => {
+    const r = buildPostingDraft(corpSale);
+    assertBalanced(allLines(r));
+    expect(allLines(r).some((l) => l.coaCode === "4300")).toBe(true);
+  });
+
+  it("นิติบุคคลยังไม่แนบไฟล์: บันทึกจริงไม่ได้", () => {
+    expect(() => buildPosting(corpSale)).toThrow(/ต้องแนบหลักฐาน/);
+    expect(() => buildPosting({ ...corpSale, attachments: EVIDENCE })).not.toThrow();
+  });
+
+  it("นิติบุคคลไม่ระบุคู่ค้า: บันทึกจริงไม่ได้แม้แนบไฟล์แล้ว", () => {
+    expect(() =>
+      buildPosting({ ...corpSale, contactId: undefined, attachments: EVIDENCE })
+    ).toThrow(/ต้องระบุคู่ค้า/);
+  });
+
+  it("โอนข้ามผู้ถือไปหานิติบุคคล: ขาที่สองก็ต้องผ่านกติกาของนิติบุคคล", () => {
+    // ผู้ถือต้นทางเป็นบุคคล จึงไม่มีอะไรดักถ้าตรวจแค่ input.ownerId
+    const crossToCorp = {
+      ...base,
+      typeKey: "transfer" as const,
+      subCode: "trf.internal",
+      transferToBankAccountId: "b1",
+      intercompanyNature: "loan" as const,
+    };
+    expect(buildPostingDraft(crossToCorp).transactions).toHaveLength(2);
+    expect(() => buildPosting(crossToCorp)).toThrow(/ต้องแนบหลักฐาน/);
+    expect(() =>
+      buildPosting({ ...crossToCorp, attachments: EVIDENCE, contactId: "c3" })
+    ).not.toThrow();
+  });
+
+  it("มุมมองรวมเลือกเป็นผู้ถือไม่ได้ ตั้งแต่ตอนพรีวิว", () => {
+    expect(() =>
+      buildPostingDraft({ ...base, ownerId: "family", typeKey: "income", subCode: "inc.rent", assetId: "rent1", contactId: "c1" })
+    ).toThrow(/มุมมองรวม/);
+  });
+});
+
+/**
+ * ยังไม่ได้รับ/จ่ายเงิน — ถ้าลงเงินสดไว้ก่อน ยอดธนาคารจะไม่ตรง statement
+ * และกระทบยอดกับธนาคารไม่ได้ (Money Invariant 5)
+ */
+describe("ค้างรับ-ค้างจ่าย", () => {
+  const rent = {
+    ...base,
+    typeKey: "income" as const,
+    subCode: "inc.rent",
+    assetId: "rent1",
+    contactId: "c1",
+  };
+
+  it("ค่าเช่าค้างรับ: ไม่มีบรรทัดเงินสด ลงลูกหนี้ค่าเช่าแทน", () => {
+    const lines = allLines(buildPosting({ ...rent, notYetPaid: true }));
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "1200")?.debit).toBe(base.amount);
+    expect(lines.find((l) => l.coaCode === "4200")?.credit).toBe(base.amount);
+    assertBalanced(lines);
+  });
+
+  it("ค้างรับไม่นับในงบกระแสเงินสด เพราะเงินยังไม่เคลื่อน", () => {
+    const lines = allLines(buildPosting({ ...rent, notYetPaid: true }));
+    expect(lines.every((l) => l.cfCategory === "none")).toBe(true);
+  });
+
+  it("ค่าใช้จ่ายค้างจ่าย: ลงเจ้าหนี้ ไม่ใช่เงินสดออก", () => {
+    const lines = allLines(
+      buildPosting({ ...base, typeKey: "expense", subCode: "exp.repair", assetId: "rent1", notYetPaid: true })
+    );
+    expect(lines.some((l) => isCashAccount(l.coaCode))).toBe(false);
+    expect(lines.find((l) => l.coaCode === "2100")?.credit).toBe(base.amount);
+    assertBalanced(lines);
+  });
+
+  it("ไม่ติ๊กค้าง ต้องได้บรรทัดเงินสดเหมือนเดิม", () => {
+    const lines = allLines(buildPosting(rent));
+    expect(lines.filter((l) => isCashAccount(l.coaCode))).toHaveLength(1);
+  });
+
+  it("หมวดที่ตั้งค้างไม่ได้ ต้องถูกปฏิเสธ ไม่ใช่เดาให้", () => {
+    // โอนที่ยังไม่โอน = ยังไม่เกิดรายการ
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "transfer",
+        subCode: "trf.internal",
+        transferToBankAccountId: "b4b",
+        notYetPaid: true,
+      })
+    ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+
+    // หมวดที่ตัวมันเองคือการล้างลูกหนี้ — ตั้งค้างซ้ำจะล้างได้สองทาง ลูกหนี้ติดลบ (D-069b)
+    expect(() =>
+      buildPosting({
+        ...base,
+        typeKey: "invest_sell",
+        subCode: "inv.collect_rent",
+        contactId: "c1",
+        notYetPaid: true,
+      })
+    ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+  });
+
+  /**
+   * D-069 เติม `accrualCoa` ให้ทุกหมวดที่เงินเคลื่อนจริง รวมเส้นทางพิเศษด้วย
+   * แต่สาขาที่สร้างบรรทัดเอง (แยกเงินต้น/ดอกเบี้ย · กำไรขาดทุน) **ไม่ได้อ่าน `notYetPaid`**
+   * ปล่อยผ่านจะได้บรรทัดเงินสดทั้งที่ผู้ใช้บอกว่าเงินยังไม่เข้า — ต้องปฏิเสธให้เห็น
+   */
+  it("เส้นทางพิเศษที่มีบัญชีพักแล้ว แต่ engine ยังพักไม่ได้ ต้องปฏิเสธ ไม่ใช่ลงเงินสดเงียบๆ", () => {
+    const special = TX_TYPES.flatMap((t) => t.subs.map((s) => ({ t, s }))).filter(
+      ({ s }) => s.accrualCoa && !canAccrueFromForm(s)
+    );
+    expect(special.length, "ต้องมีหมวดเส้นทางพิเศษให้ทดสอบ").toBeGreaterThan(0);
+
+    for (const { t, s } of special) {
+      expect(() =>
+        buildPosting({
+          ...base,
+          typeKey: t.key,
+          subCode: s.code,
+          assetId: "rent1",
+          contactId: "c1",
+          transferToBankAccountId: "b4b",
+          disposal: { costBasis: 100, salePrice: base.amount },
+          repayment: { principal: base.amount, interest: 0 },
+          notYetPaid: true,
+        }),
+        s.code
+      ).toThrow(/ตั้งค้างรับ-ค้างจ่ายไม่ได้/);
+    }
+  });
+
+  it("ทุกหมวดที่ตั้งค้างได้ ต้องได้บรรทัดที่สมดุลและไม่มีเงินสด", () => {
+    for (const t of TX_TYPES) {
+      for (const s of t.subs) {
+        // ถามฟังก์ชันเดียวกับ engine ไม่ใช่ `!s.accrualCoa` — ไม่งั้นลูปนี้จะลาก
+        // เส้นทางพิเศษ (ที่ตั้งค้างไม่ได้) เข้ามาด้วย แล้วเทสต์จะพังด้วยเหตุผลที่ชี้ผิดจุด
+        if (!canAccrueFromForm(s)) continue;
+        const lines = allLines(
+          buildPosting({
+            ...base,
+            typeKey: t.key,
+            subCode: s.code,
+            assetId: "rent1",
+            contactId: "c1",
+            notYetPaid: true,
+          })
+        );
+        assertBalanced(lines);
+        expect(lines.some((l) => isCashAccount(l.coaCode)), s.code).toBe(false);
+      }
+    }
+  });
+});

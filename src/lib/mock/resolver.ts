@@ -1,0 +1,65 @@
+/**
+ * LedgerResolver ที่สร้างจากข้อมูลจำลอง — **ชั้นนอกของ engine**
+ *
+ * ไฟล์นี้อยู่ใน `lib/mock` โดยตั้งใจ ไม่ใช่ใน `lib/ledger`
+ * เพราะ engine ต้องไม่รู้จักข้อมูลจำลองเลย (CLAUDE.md งานถัดไปข้อ 2)
+ *
+ * ตอนต่อ Supabase จริง: เขียน resolver อีกตัวที่อ่านจาก `sri_os.owners` /
+ * `sri_os.bank_accounts` แล้วสลับ **ที่ชั้นนี้** — ไม่ต้องแตะ `lib/ledger` เลย
+ *
+ * ทุกฟังก์ชันคืน `null` เมื่อหาไม่เจอ ไม่ throw และไม่เดา —
+ * engine เป็นคนแปลงเป็น `PostingError` ที่ผู้ใช้อ่านได้ (ที่เดียว ข้อความเดียว)
+ */
+
+import type { BankInfo, LedgerResolver, OwnerInfo } from "@/lib/ledger/types";
+import { isBankActive } from "@/lib/store";
+import { ENTITIES } from "./entities";
+import { BANKS } from "./banks";
+
+const toOwnerInfo = (e: (typeof ENTITIES)[number]): OwnerInfo => ({
+  id: e.id,
+  name: e.name,
+  policy: e.policy,
+  selectableAsHolder: e.selectableAsHolder,
+});
+
+const toBankInfo = (b: (typeof BANKS)[number]): BankInfo => ({
+  id: b.id,
+  name: b.name,
+  ownerId: b.ownerId,
+  /**
+   * สถานะปิด-เปิดอ่าน **ค่าสดจาก store** ที่เดียวกับที่หน้าจออ่าน (`isBankActive`)
+   * **ห้ามอ่าน `b.off`** — นั่นเป็นค่า seed ที่ถูกแช่ไว้ในไฟล์ตั้งแต่ตอน import
+   *
+   * เคยอ่าน `b.off` แล้วเกิดรูนี้: ผู้ใช้ปิดบัญชีในหน้าตั้งค่า (เปลี่ยน `bankOff` ใน store)
+   * หน้าจอซ่อนบัญชีให้ แต่เครื่องยนต์ยังเห็นว่าเปิดอยู่ = การกันบัญชีปิด (D-092)
+   * ไม่ทำงานจริงในแอป ทั้งที่เทสต์ของเครื่องยนต์ผ่านหมด
+   *
+   * ฟังก์ชันนี้ถูกเรียก **ตอน `bankAccount()` ถูกเรียก** ไม่ใช่ตอนสร้างโมดูล จึงได้ค่าสด
+   * ข้อนี้ยังสำคัญวันที่ resolver ตัวจริงอ่านจาก `sri_os.bank_accounts`: ห้ามห่อสถานะ
+   * เป็น snapshot ที่สร้างครั้งเดียว ไม่งั้นบัญชีที่ปิดใน DB จะยังรับรายการใหม่ได้
+   * จนกว่าจะ deploy ใหม่ — รูเดิมในรูปแบบใหม่
+   */
+  isActive: isBankActive(b.id),
+});
+
+/**
+ * resolver ตัวที่หน้าจอใช้อยู่ตอนนี้
+ *
+ * บัญชีที่ปิดใช้งาน (`off`) **ยังต้องหาเจอ** เพราะรายการย้อนหลังที่อ้างถึงมัน
+ * ต้องแสดงและ reverse ได้ — การซ่อนจากตัวเลือกเป็นเรื่องของฟอร์ม ไม่ใช่ของ engine
+ *
+ * การกันไม่ให้ลงรายการ **ใหม่** เข้าบัญชีที่ปิดเป็นหน้าที่ของ engine ซึ่งอ่านจาก
+ * `isActive` ที่นี่ส่งไปให้ (D-092) — คืน null แทนจะทำให้กลับรายการเก่าไม่ได้เลย
+ * ซึ่งขัดกฎเหล็กข้อ 1 ที่ให้แก้รายการที่ post แล้วด้วย reverse + ลงใหม่เท่านั้น
+ */
+export const MOCK_RESOLVER: LedgerResolver = {
+  owner(id) {
+    const e = ENTITIES.find((x) => x.id === id);
+    return e ? toOwnerInfo(e) : null;
+  },
+  bankAccount(id) {
+    const b = BANKS.find((x) => x.id === id);
+    return b ? toBankInfo(b) : null;
+  },
+};

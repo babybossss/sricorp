@@ -1,0 +1,255 @@
+import { isCashAccount } from "@/lib/rules/coa";
+import type { SubCategory } from "@/lib/rules/tx-rules";
+import type { PostingInput, PostingResult } from "@/lib/ledger/types";
+
+/**
+ * แปลงผลลัพธ์ของ `buildPosting()` เป็น payload ของ RPC `sri_os.fn_post_entry` (D-091)
+ *
+ * **ไฟล์นี้ไม่คิดบัญชี** — ทุกบรรทัดมาจาก `PostingResult` ที่ engine คืนมาตรงๆ แปลงชื่อช่องเป็น snake_case
+ * เท่านั้น ห้ามเพิ่ม/ตัด/แก้บรรทัดที่นี่ (ถ้าต้องแก้คู่บัญชี แก้ที่ตารางกฎ + engine)
+ *
+ * ช่องของหัวรายการที่ engine ไม่ได้คืน (วันที่ · หมวดย่อย · ผู้ติดต่อ · ทรัพย์ · ไฟล์แนบ · หมายเหตุ)
+ * มาจาก `PostingInput` ที่ใช้สร้างผลลัพธ์นั้นเอง — ไม่ได้มาจาก state ของฟอร์ม
+ *
+ * สัญญาของ RPC: ช่องที่ไม่อยู่ในรายการ = ปฏิเสธทั้งใบ (supabase/migrations/20261008000011)
+ */
+
+export type PostEntryLine = {
+  coa_code: string;
+  bank_account_id?: string;
+  asset_id?: string;
+  debit: number;
+  credit: number;
+  cf_category?: string;
+  memo?: string;
+  /* ---- เงินตราต่างประเทศต่อบรรทัด (FCD · 20261025000004 + 20261025000005) ----
+   * `debit`/`credit` เป็นบาทเสมอ · สี่ช่องนี้คือข้อมูลประกอบที่ทำให้ตรวจย้อนได้
+   * **ต้องส่งต่อให้ครบทั้งสี่** — ด่าน `fn_assert_line_fx` ปฏิเสธบรรทัดที่ส่งมาไม่ครบ
+   * (เช่นขา 3410 ที่ไม่มีสกุล = ด่านล้างผลต่างมองไม่เห็น แล้วกำไรถูกนับสองครั้ง)
+   * และประตู `fn_post_entry` ปฏิเสธช่องที่ไม่รู้จักทั้งใบ จึงชื่อต้องตรงกับคอลัมน์ */
+  currency?: string;
+  amount_original?: number;
+  fx_rate?: number;
+  fx_rate_date?: string;
+};
+
+export type PostEntryTransaction = {
+  owner_id: string;
+  counter_owner_id?: string;
+  intercompany_nature?: string;
+  lines: PostEntryLine[];
+};
+
+export type PostEntryPayload = {
+  txn_type_code: string;
+  doc_date: string;
+  cash_date: string | null;
+  memo?: string;
+  attachments?: string[];
+  asset_id?: string;
+  contact_id?: string;
+  /** ใบล้างยอดค้างใช้เก็บเลขอ้างอิงการยืนยัน `<id รายการต้นทาง>-clr-<n>` — ที่มาของประวัติการล้าง */
+  source_ref?: string;
+  /** ภาษีหัก ณ ที่จ่าย (D-111) — ต้องส่งคู่กันทั้งอัตราและยอด · ใบที่มีบรรทัด 1800 แต่หัวรายการว่าง DB ปฏิเสธทั้งใบ */
+  wht_rate?: number;
+  wht_amount?: number;
+  wht_certificate_no?: string;
+  /**
+   * tag ของใบ (ADR 0002/0003) — **ส่งเมื่อผู้ใช้เลือก tag เท่านั้น** (ไม่เลือก = ไม่มีคีย์ ไม่ใช่อาร์เรย์ว่าง)
+   * `tag_ids` = ชนิดที่ไม่ถ่วงน้ำหนัก · `tag_weights` = {tag_id: สัดส่วน} ของชนิดที่ถ่วงน้ำหนัก (Σ = 1 พอดีต่อชนิด)
+   * ประตูที่ยังไม่รู้จักสองช่องนี้ปฏิเสธทั้งใบ ("มีช่องที่ยังไม่รู้จัก") → แอปแปลเป็น "ยังไม่ได้ลง migration"
+   */
+  tag_ids?: string[];
+  tag_weights?: Record<string, number>;
+  /** `import` = ยอดตั้งต้นที่นำเข้าจากไฟล์ (`fn_reimport_opening`) · ที่เหลือ (ฟอร์ม) เป็น `manual` เสมอ */
+  source: "manual" | "import";
+  transactions: PostEntryTransaction[];
+};
+
+/** ข้อมูลที่ประกอบ payload ไม่ได้ — ข้อความอ่านรู้เรื่อง ไม่ใช่ error ดิบ */
+export class PayloadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PayloadError";
+  }
+}
+
+const blank = (s: string | undefined | null): string | undefined => (s && s.trim() !== "" ? s : undefined);
+
+export function toPostEntryPayload(
+  input: PostingInput,
+  result: PostingResult,
+  header: { docDate: string; cashDate: string | null; sourceRef?: string; source?: "manual" | "import" }
+): PostEntryPayload {
+  if (!result.transactions.length) {
+    throw new PayloadError("เครื่องยนต์บัญชีไม่ได้คืนรายการเลย — ไม่ส่งอะไรไปฐานข้อมูล");
+  }
+
+  // กฎของ DB (ตรงกับ trigger cash_date): มีบรรทัดเงินสด 11xx ⟺ ต้องมี cash_date
+  // ตัดสินจาก **บรรทัดที่ engine ส่งมา** ไม่ใช่จากธงในฟอร์ม (บทเรียนข้อ 2)
+  const hasCashLine = result.transactions.some((t) => t.lines.some((l) => isCashAccount(l.coaCode)));
+  if (hasCashLine && !header.cashDate) {
+    throw new PayloadError("รายการนี้มีเงินเข้า/ออกบัญชีจริง — ต้องระบุวันที่เงินเข้า/ออกจริงให้ถูกต้อง");
+  }
+
+  /**
+   * **ใบที่ลดบัญชีพักต้องมีลิงก์ไปรายการต้นทาง — แต่ด่านนั้นอยู่ที่ DB เท่านั้น**
+   * (20261025000007 · `fn_assert_clearing_not_over_for`)
+   *
+   * ที่นี่ **ไม่ตรวจซ้ำโดยตั้งใจ** เพราะเงื่อนไขจริงคือ "ของค้างที่ยังเปิดอยู่ของผู้ถือ
+   * ในบัญชีพักนั้นมีมากกว่าหนึ่งใบหรือไม่" ซึ่งตอบได้จากสมุดที่ post แล้วเท่านั้น
+   * ชั้นนี้เป็นฟังก์ชันบริสุทธิ์ที่ไม่เห็นสมุด → ถ้าเดาแล้วปฏิเสธ จะไปปิดเส้นทางที่
+   * ถูกต้อง (ลงใบรับชำระเองตอนมีของค้างใบเดียว) ซึ่งแอปใช้อยู่จริง (บทเรียนข้อ 7)
+   * และถ้าเดาแล้วปล่อย ก็ไม่ได้เพิ่มความปลอดภัยอะไร — DB ปฏิเสธอยู่ดี
+   *
+   * สิ่งที่ชั้นนี้ทำได้คือ **ส่งต่อ `source_ref` ให้ครบ** เมื่อผู้เรียกมีให้
+   */
+  return {
+    txn_type_code: input.subCode,
+    doc_date: header.docDate,
+    cash_date: hasCashLine ? header.cashDate : null,
+    memo: blank(input.memo),
+    attachments: input.attachments?.length ? [...input.attachments] : undefined,
+    asset_id: blank(input.assetId),
+    contact_id: blank(input.contactId),
+    source_ref: blank(header.sourceRef),
+    // ส่งเมื่อ input บอกว่าถูกหักภาษีเท่านั้น (engine ตรวจแล้วว่าสอดคล้องกับบรรทัด 1800 ที่สร้าง)
+    wht_rate: input.wht ? input.wht.rate : undefined,
+    wht_amount: input.wht ? input.wht.amount : undefined,
+    wht_certificate_no: blank(input.wht?.certificateNo),
+    source: header.source ?? "manual",
+    transactions: result.transactions.map((t) => ({
+      owner_id: t.ownerId,
+      counter_owner_id: t.counterOwnerId,
+      intercompany_nature: t.intercompanyNature,
+      lines: t.lines.map((l) => ({
+        coa_code: l.coaCode,
+        bank_account_id: l.bankAccountId,
+        asset_id: l.assetId,
+        debit: l.debit,
+        credit: l.credit,
+        cf_category: l.cfCategory,
+        memo: l.memo,
+        /**
+         * บรรทัดบาท (ของเดิมทุกใบ) **ไม่มีสี่ช่องนี้เลย** — ใส่คีย์ที่ค่าเป็น
+         * `undefined` ไม่ได้ เพราะ check constraint `transaction_lines_fx_shape`
+         * ยอมแค่ "ครบทั้งสี่" หรือ "ไม่มีเลย" และประตูเทียบรายชื่อช่องจากคีย์ที่ส่งมา
+         * ส่งต่อตามที่ engine สร้างอย่างเดียว ไม่เติมและไม่ตัดค่า
+         */
+        ...(l.currency === undefined
+          ? {}
+          : {
+              currency: l.currency,
+              amount_original: l.amountOriginal,
+              fx_rate: l.fxRate,
+              fx_rate_date: l.fxRateDate,
+            }),
+      })),
+    })),
+  };
+}
+
+/**
+ * หมวดที่เส้นทางบันทึกยังต่อไม่ครบ → คืนเหตุผล · ต้องกั้นก่อนบันทึก ไม่ใช่บันทึกครึ่งเดียว
+ *
+ * อ่านจากธง `requires` ในตารางกฎ (ไม่ได้เช็ครหัสหมวด):
+ * - `loanTerms` — ต้องสร้างสัญญา + ตารางงวดใน `contracts`/`schedules` ด้วย ซึ่งยังไม่ได้ต่อ
+ *   ถ้าลงแต่บัญชี สัญญาจะไม่มีตัวตนและหน้ายืนยันรับ-จ่ายไม่มีงวดให้ดึง
+ * - ขายทรัพย์ (`capitalGain`) **เปิดแล้วสำหรับทรัพย์ชิ้นเดียว (whole_item)** — ต้นทุน ค่ารีโนเวทสะสม และส่วนเกินทุนที่ค้างอ่านจากสมุดใน `postEntry`
+ *   (`disposal-context*.ts`) ทรัพย์ที่ขายบางส่วนได้ (หุ้น/ทอง/กองทุน) ถูกปฏิเสธที่นั่นพร้อมเหตุผล เพราะต้องตัดล็อตในธุรกรรมเดียวกับใบขาย
+ *
+ * **หมวดอัตราแลกเปลี่ยน (แปลงค่า/แลกเงิน) เปิดแล้ว** — ไม่ถูกกั้นที่นี่อีก (25/10) · พิสูจน์ด้วยเทสต์กับ Postgres จริง
+ * (`fx-posting.pg.test.ts`): ฟอร์มส่งแค่ "วันของอัตราที่เลือกจากตาราง + จำนวนเงินตราที่แลก" แล้ว `postEntry` อ่านยอดเงินตรา
+ * อัตราที่ยอดบาทตั้งอยู่ และผลต่างที่ค้างใน 3410 จากสมุดเอง (`fx-context-server.ts`) ไม่เชื่อค่าจาก browser
+ * ถ้าข้อมูลไม่ครบ (ไม่เลือกอัตรา · ไม่มีอัตราในตาราง · ยอดบาทไม่ตรงอัตราใด) = ปฏิเสธพร้อมบอกวิธีแก้ ไม่เดา
+ */
+export function notWiredReason(
+  sub: Pick<SubCategory, "label" | "requires"> | undefined
+): string | null {
+  if (!sub?.requires) return null;
+  if (sub.requires.includes("loanTerms")) {
+    return `หมวด "${sub.label}" ต้องสร้างสัญญาและตารางงวดในฐานข้อมูลด้วย ซึ่งยังไม่ได้ต่อ — ยังบันทึกจริงไม่ได้ในรอบนี้ (ระบบไม่ลงบัญชีครึ่งเดียว)`;
+  }
+  return null;
+}
+
+type DbErrorLike = { message?: string; code?: string; details?: string | null; hint?: string | null };
+
+const HAS_THAI = /[฀-๿]/;
+
+/**
+ * ข้อความของ error จาก DB ที่คนอ่านรู้เรื่อง
+ *
+ * ด่านใน DB คืนข้อความไทยมาอยู่แล้ว (`บันทึกรายการไม่ได้: …` · `Money Invariant …`) → ส่งต่อตามนั้น
+ * ไม่ตัด ไม่แปลงเป็น "เกิดข้อผิดพลาด" กลางๆ · เฉพาะ error ของ Postgres/PostgREST ที่ไม่มีข้อความไทยเท่านั้น
+ * ที่แปลให้ พร้อมแนบข้อความเดิมไว้ท้ายเพื่อให้ผู้ดูแลตามต่อได้
+ */
+export function humanizeDbError(err: DbErrorLike | null | undefined): string {
+  const message = (err?.message ?? "").trim();
+  const code = err?.code ?? "";
+  const tail = message ? ` (รายละเอียดทางเทคนิค: ${[code, message].filter(Boolean).join(" · ")})` : "";
+
+  // ด่านล้างยอดค้างของ DB (กรณีแอปส่งลิงก์มาไม่ทัน เช่น มีคนลงของค้างใหม่ระหว่างเปิดฟอร์ม)
+  if (/ไม่มีทางรู้ว่าล้างของใบไหน/.test(message)) {
+    return "มีของค้างหลายใบ ต้องเลือกว่าชำระใบไหน — โหลดหน้าใหม่แล้วเลือกรายการที่ต้องการชำระก่อนบันทึก · ยังไม่ได้บันทึกอะไร";
+  }
+
+  if (message && HAS_THAI.test(message)) return message;
+
+  if (code === "42501" || /row-level security|permission denied/i.test(message)) {
+    return `บัญชีของคุณไม่มีสิทธิ์ทำรายการนี้ — ฐานข้อมูลปฏิเสธตามสิทธิ์ (การลงสมุดบัญชีต้องมีสิทธิ์อนุมัติเข้าสมุด และต้องเห็นผู้ถือรายนี้ในขอบเขตของคุณ)${tail}`;
+  }
+  if (code === "23505") return `ฐานข้อมูลบอกว่ามีรายการนี้อยู่แล้ว ไม่ได้บันทึกซ้ำ${tail}`;
+  if (code === "23503") return `รายการอ้างถึงข้อมูลที่ไม่มีอยู่ในฐานข้อมูล (เช่น ผู้ติดต่อ ทรัพย์ หรือบัญชีที่ถูกลบ) ให้โหลดหน้าใหม่แล้วเลือกใหม่${tail}`;
+  if (/JWT|not authenticated|session/i.test(message)) return `เข้าสู่ระบบหมดอายุ — ให้เข้าสู่ระบบใหม่แล้วบันทึกอีกครั้ง${tail}`;
+  if (/fetch failed|network|ECONN|timeout/i.test(message)) {
+    return `ติดต่อฐานข้อมูลไม่ได้ — ยังไม่ทราบว่ารายการถูกบันทึกหรือไม่ ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ${tail}`;
+  }
+  return `ฐานข้อมูลไม่รับรายการนี้ ยังไม่มีรายการถูกบันทึก${tail}`;
+}
+
+/**
+ * ผู้ถือที่ payload แตะจริงต้องเป็น `active` — ตรวจทั้ง `owner_id` และ `counter_owner_id`
+ *
+ * อ่านจากสิ่งที่ engine คืนมา (รวมปลายทางที่ engine หามาจากบัญชี) ไม่เชื่อช่องที่ผู้ใช้เว้นได้
+ * ฟอร์มซ่อน `planned` ไว้แล้ว แต่คำขอที่แก้เองข้ามหน้าจอได้ → ต้องกันฝั่งเซิร์ฟเวอร์ด้วย
+ * คืนข้อความปฏิเสธ หรือ `null` ถ้าผ่าน
+ */
+export function refuseInactiveOwners(
+  payload: Pick<PostEntryPayload, "transactions">,
+  owners: readonly { id: string; name: string; status: string }[]
+): string | null {
+  const byId = new Map(owners.map((o) => [o.id, o]));
+  for (const t of payload.transactions) {
+    for (const id of [t.owner_id, t.counter_owner_id]) {
+      if (!id) continue;
+      const o = byId.get(id);
+      if (!o) return "ไม่รู้จักผู้ถือที่รายการนี้อ้างถึง — ยังไม่ได้บันทึกอะไร";
+      if (o.status === "planned") {
+        return `"${o.name}" ยังไม่ได้จดทะเบียน จึงยังเป็นเจ้าของรายการไม่ได้ — ยังไม่ได้บันทึกอะไร`;
+      }
+      if (o.status !== "active") {
+        return `"${o.name}" ไม่ได้ใช้งานอยู่ จึงเป็นเจ้าของรายการใหม่ไม่ได้ — ยังไม่ได้บันทึกอะไร`;
+      }
+    }
+  }
+  return null;
+}
+
+/** อ่านผลของ `fn_post_entry` — ตอบสำเร็จได้ก็ต่อเมื่อ DB คืน id ครบทุกก้อนที่ส่งไป */
+export function readPostResult(
+  data: unknown,
+  expected: number
+): { ok: true; transactionIds: string[]; replayed: boolean } | { ok: false; message: string } {
+  const out = data as { transaction_ids?: unknown; replayed?: unknown } | null;
+  const ids = Array.isArray(out?.transaction_ids)
+    ? (out!.transaction_ids as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
+  if (ids.length !== expected) {
+    return {
+      ok: false,
+      message: "ฐานข้อมูลตอบกลับไม่ครบ — ยังยืนยันไม่ได้ว่ารายการถูกบันทึก ให้เปิดหน้าสมุดบัญชีตรวจก่อนกดบันทึกซ้ำ",
+    };
+  }
+  return { ok: true, transactionIds: ids, replayed: out?.replayed === true };
+}
