@@ -29,11 +29,13 @@ const BANNED: { re: RegExp; why: string }[] = [
 
 describe("หน้างบห้ามเขียนงวดตายตัว", () => {
   const files = [
+    // คอมโพเนนต์ของสมุดบัญชี (ไม่ใช่ .tsx ใน VIEWS)
+    { f: "components/ledger/ledger-tabs.tsx", src: readFileSync(path.join(PAGES, "..", "components", "ledger", "ledger-tabs.tsx"), "utf8") },
     ...readdirSync(VIEWS)
       .filter((f) => f.endsWith(".tsx") && !statSync(path.join(VIEWS, f)).isDirectory())
       .map((f) => ({ f, src: readFileSync(path.join(VIEWS, f), "utf8") })),
     // หน้าที่แสดงงบโดยตรง — /balance เคยเขียน "ณ วันที่ 31 ธ.ค." ตายตัวเหมือนกัน
-    ...["balance", "reports"].map((d) => ({
+    ...["balance", "reports", "ledger"].map((d) => ({
       f: `app/${d}/page.tsx`,
       src: readFileSync(path.join(PAGES, d, "page.tsx"), "utf8"),
     })),

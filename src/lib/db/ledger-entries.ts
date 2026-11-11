@@ -10,6 +10,22 @@
  */
 
 import { isCashAccount } from "@/lib/rules/coa";
+import { periodLabel, periodRange } from "./statements";
+
+/**
+ * ช่วงเวลาของสมุดบัญชี — กรองแบบ "อยู่ในช่วง start..end" (สมุดคือรายการ ไม่ใช่ยอด ณ วัน)
+ * กรองด้วย **วันที่เอกสาร (doc_date)** เหมือนงบกำไรขาดทุน และเป็นคอลัมน์แรก/ตัวเรียงของหน้านี้
+ * ไม่ใช้ cash_date เพราะรายการค้างรับ-ค้างจ่ายยังไม่มีวันเงินจริง (null) จะหายจากสมุดเงียบๆ
+ * คำนวณวันที่ผ่าน periodRange() ตัวเดียวกับ /reports และ /balance
+ */
+export type LedgerPeriod = { year: number; month: number | null; start: string; end: string; label: string };
+export const ledgerPeriod = (year: number, month: number | null): LedgerPeriod => ({
+  year,
+  month,
+  ...periodRange(year, month),
+  label: periodLabel(year, month),
+});
+
 
 export type LedgerEntryLine = {
   coaCode: string;

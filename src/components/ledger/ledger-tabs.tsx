@@ -12,6 +12,7 @@ import { findSub } from "@/lib/rules/tx-rules";
 import { useReference } from "@/components/reference/reference-provider";
 import { FAMILY_VIEW } from "@/lib/db/reference-types";
 import { cashNet } from "@/lib/db/ledger-entries";
+import type { LedgerPeriod } from "@/lib/db/ledger-entries";
 import type { LedgerListState } from "@/lib/db/ledger-entries-server";
 import { isoToDmy } from "@/lib/format";
 import { EntryDrawer } from "./entry-drawer";
@@ -25,7 +26,7 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function LedgerTabs({ ledger, pending }: { ledger: LedgerListState; pending: PendingAccrualsState }) {
+export function LedgerTabs({ ledger, pending, period }: { ledger: LedgerListState; pending: PendingAccrualsState; period: LedgerPeriod }) {
   const [tab, setTab] = React.useState<TabKey>("list");
   return (
     <div className="flex flex-col gap-4">
@@ -50,13 +51,13 @@ export function LedgerTabs({ ledger, pending }: { ledger: LedgerListState; pendi
         </Link>
       </div>
 
-      {tab === "list" ? <ListTab ledger={ledger} pending={pending} /> : null}
+      {tab === "list" ? <ListTab ledger={ledger} pending={pending} period={period} /> : null}
       {tab === "confirm" ? <ConfirmTab pending={pending} /> : null}
     </div>
   );
 }
 
-function ListTab({ ledger, pending }: { ledger: LedgerListState; pending: PendingAccrualsState }) {
+function ListTab({ ledger, pending, period }: { ledger: LedgerListState; pending: PendingAccrualsState; period: LedgerPeriod }) {
   const entityId = useApp((s) => s.entityId);
   const ref = useReference();
   const [openId, setOpenId] = React.useState<string | null>(null);
@@ -85,7 +86,7 @@ function ListTab({ ledger, pending }: { ledger: LedgerListState; pending: Pendin
   const currentOwner = entityId === FAMILY_VIEW ? undefined : ownerOf(entityId);
 
   const filters = [
-    { label: "ช่วงวันที่", value: ledger.truncated ? "ล่าสุด (ยังมีเก่ากว่านี้)" : "ทั้งหมดที่บันทึกแล้ว" },
+    { label: "ช่วงเวลา (วันที่เอกสาร)", value: `${period.label}${ledger.truncated ? " (แสดงเฉพาะล่าสุด)" : ""}` },
     { label: "ถือในชื่อ", value: currentOwner?.name ?? "รวมทุกชื่อ" },
   ];
 
@@ -128,7 +129,7 @@ function ListTab({ ledger, pending }: { ledger: LedgerListState; pending: Pendin
             {rows.length === 0 ? (
               <tr>
                 <Td colSpan={11} className="py-8 text-center text-ink-600">
-                  ยังไม่มีรายการในสมุดบัญชี{currentOwner ? `ของ ${currentOwner.name}` : ""} — กด “บันทึกรายการ” ด้านบนเพื่อเริ่มลงรายการ
+                  ไม่มีรายการ{period.label}ในสมุดบัญชี{currentOwner ? `ของ ${currentOwner.name}` : ""} — เลือกช่วงเวลาอื่น หรือกด “บันทึกรายการ” ด้านบนเพื่อเริ่มลงรายการ
                 </Td>
               </tr>
             ) : null}

@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadReference } from "./reference";
 import { fetchAllPages } from "./paged";
-import { groupLedgerRows, type LedgerEntry, type LedgerViewRow } from "./ledger-entries";
+import { groupLedgerRows, type LedgerPeriod, type LedgerEntry, type LedgerViewRow } from "./ledger-entries";
 
 /** เพดานบรรทัดที่อ่านต่อครั้ง (ประมาณ 300-500 รายการ) — เกินแล้วบอกผู้ใช้ ไม่ตัดเงียบ */
 export const LEDGER_LINE_LIMIT = 2000;
@@ -11,10 +11,10 @@ export type LedgerListState =
   | { ok: false; error: string };
 
 /**
- * อ่านสมุดบัญชีล่าสุดจาก `v_ledger_posted` (ผ่าน RLS ของผู้ใช้) — ห้ามอ่าน `transactions` ตรง
+ * อ่านสมุดบัญชีในช่วงที่เลือกจาก `v_ledger_posted` (ผ่าน RLS ของผู้ใช้) — ห้ามอ่าน `transactions` ตรง
  * ล้มเหลว = คืนเหตุผล ไม่ตกกลับไปใช้ข้อมูลจำลอง
  */
-export async function loadLedgerEntries(): Promise<LedgerListState> {
+export async function loadLedgerEntries(period: LedgerPeriod): Promise<LedgerListState> {
   const refState = await loadReference();
   if (!refState.ok) return { ok: false, error: refState.error };
 
@@ -34,6 +34,9 @@ export async function loadLedgerEntries(): Promise<LedgerListState> {
             "counter_owner_id, intercompany_nature, txn_memo, attachments, source, source_ref, reverses_id, created_at, " +
             "coa_id, bank_account_id, debit, credit, cf_category, line_asset_id, line_memo"
         )
+        // กรองตามวันที่เอกสาร (ดูเหตุผลที่ ledgerPeriod) · เรียงใหม่→เก่า เพดานจึงตัดฝั่งเก่าของช่วงนั้น
+        .gte("doc_date", period.start)
+        .lte("doc_date", period.end)
         .order("doc_date", { ascending: false })
         .order("created_at", { ascending: false })
         .order("transaction_id", { ascending: true })
