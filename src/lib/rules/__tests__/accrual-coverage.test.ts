@@ -39,6 +39,10 @@ describe("ทุกหมวดที่เงินเคลื่อนจร�
     // D-111 ข้อ 1 · ทางล้างของ 1800 ภาษีถูกหัก ณ ที่จ่ายรอเครดิต
     // ตัวมันเองคือการล้างบัญชีพัก ให้มีบัญชีพักอีกจะมีสองทางล้างยอดเดียวกัน
     "inv.wht_refund",
+    // ทางล้างของ 1220 ลูกหนี้อื่น — สามหมวดตามหมวดกระแสเงินสดของต้นทาง
+    "inv.collect_other_operating",
+    "inv.collect_other_investing",
+    "inv.collect_other_financing",
   ];
 
   /**
@@ -207,19 +211,74 @@ describe("ตั้งค้างได้ ต้องล้างได้ �
     expect(routes).not.toContain("fin.deposit_received");
   });
 
-  it("1220 ยังไม่มีหมวดล้างเลยสักหมวด จึงตั้งค้างเข้ามันจากฟอร์มไม่ได้", () => {
-    /**
-     * ยืนยันสถานะจริงของตารางกฎวันนี้ ไม่ใช่สิ่งที่โค้ดคำนวณได้
-     * `1220` รับยอดจากขายทรัพย์ · รับไถ่ถอน · กู้เงินเข้า · เพิ่มทุน ซึ่งทั้งหมดรอ
-     * กลไกยืนยันรับ-จ่าย (C6) เป็นคนล้าง — ยังไม่มีหมวดคีย์มือที่เครดิต 1220 คู่กับเงินสด
-     *
-     * เทสต์นี้ **จะพังตอนเพิ่มหมวดล้าง 1220 ในอนาคต** ซึ่งถูกแล้ว:
-     * คนที่เพิ่มต้องมาแก้บรรทัดนี้ และตอนนั้นต้องตอบให้ได้ว่าหมวดล้างที่เพิ่มมา
-     * ลงกระแสเงินสดหมวดเดียวกับรายการต้นทางครบทุกหมวดหรือยัง (investing/financing
-     * ใช้บัญชีพักตัวเดียวกัน แต่คนละหมวด CF) ไม่งั้นเปิดให้ตั้งค้างแล้วเงินไปผิดหมวด
-     */
-    expect(accrualClearingRoutes("1220")).toEqual([]);
-    expect(formAccruable.filter((s) => s.accrualCoa === "1220").map((s) => s.code)).toEqual([]);
+  /**
+   * คำถามที่เทสต์เดิมตั้งไว้ให้คนที่มาเพิ่มหมวดล้าง `1220` ต้องตอบ:
+   * "หมวดล้างที่เพิ่มมา ลงกระแสเงินสดหมวดเดียวกับรายการต้นทางครบทุกหมวดหรือยัง"
+   *
+   * คำตอบคือ **ครบทั้งสามหมวด** และเทสต์สามตัวข้างล่างคือการพิสูจน์
+   * ต้นทางของ `1220` กระจายอยู่ทั้ง operating · investing · financing จึงต้องมี
+   * ทางล้างครบทั้งสาม ขาดหมวดไหนไป หมวดต้นทางของหมวดนั้นจะตั้งค้างไม่ได้ (ถูก)
+   * แต่ **ยอดยกมาตอนตั้งต้นระบบที่ลงใน `1220` ผ่าน `opn.receivable_other`
+   * จะเก็บเงินเข้าไม่ได้** เหลือทางเดียวคือตัดหนี้สูญ = ขาดทุนที่ไม่เคยเกิดจริง
+   */
+  it("1220 มีทางล้างครบทั้งสามหมวดกระแสเงินสด", () => {
+    const routes = accrualClearingRoutes("1220");
+    expect(routes.map((r) => r.code).sort()).toEqual([
+      "inv.collect_other_financing",
+      "inv.collect_other_investing",
+      "inv.collect_other_operating",
+    ]);
+    for (const cf of ["operating", "investing", "financing"] as const) {
+      expect(
+        clearingSubsFor("1220", cf).map((r) => r.code),
+        `1220 ไม่มีทางล้างที่กระแสเงินสดหมวด ${cf}`
+      ).toHaveLength(1);
+    }
+  });
+
+  it("ทางล้าง 1220 ทั้งสามหมวดเดบิตเงินสดและเครดิต 1220 เท่านั้น", () => {
+    // ตัดหนี้สูญ (เดบิต 1290) ไม่ใช่ทางล้างด้วยเงินสด — ถ้าหลุดเข้ามา
+    // จะเชื่อว่าเก็บเงินได้ทั้งที่ของจริงคือตัดทิ้งเป็นขาดทุน
+    for (const r of accrualClearingRoutes("1220")) {
+      expect(r.dr, r.code).toBe("1100");
+      expect(r.cr, r.code).toBe("1220");
+      expect(r.accrualCoa, `${r.code} ต้องไม่มีบัญชีพัก ไม่งั้นล้างได้สองทาง`).toBeUndefined();
+      expect(r.requires, r.code).toContain("contact");
+    }
+  });
+
+  it("ยอดยกมาที่ลงลูกหนี้อื่น เก็บเงินเข้าได้จริง ไม่ต้องตัดหนี้สูญ", () => {
+    // เคสจริงของลูกพี่: นำเข้ายอดตั้งต้นแล้วมีลูกหนี้อื่นค้างมา ต่อมาเก็บเงินได้
+    // ยอดยกมาไม่มีขาเงินสด → ห้ามส่ง bankAccountId (engine ปฏิเสธ ถูกแล้ว)
+    const openingSub = findSub("opn.receivable_other")!;
+    const opening = allLines(
+      buildPosting({
+        amount: base.amount,
+        ownerId: base.ownerId,
+        typeKey: openingSub.type.key,
+        subCode: openingSub.sub.code,
+        notYetPaid: false,
+      })
+    );
+    expect(net(opening, "1220"), "ยอดยกมาไม่ได้เข้า 1220").toBeGreaterThan(0);
+
+    const collect = post(findSub("inv.collect_other_operating")!.sub);
+    expect(net(opening, "1220") + net(collect, "1220"), "เก็บแล้วลูกหนี้ไม่กลับเป็นศูนย์").toBe(0);
+    // และต้องไม่แตะ P&L เลย — รับรู้ไปแล้วตอนตั้งค้าง/ยกมา
+    for (const l of collect) {
+      expect(statementOf(l.coaCode).statement, `${l.coaCode} ไม่ควรอยู่ใน P&L`).toBe("BS");
+    }
+  });
+
+  it("หมวดที่ต้องรับรู้กำไรหรือแยกเงินต้น/ดอกเบี้ย ยังตั้งค้างไม่ได้เหมือนเดิม", () => {
+    // การเพิ่มทางล้างต้องไม่เผลอเปิดเส้นทางที่ตั้งใจปิด (specialPath)
+    const stillBlocked = allSubs.filter(
+      (s) => s.accrualCoa === "1220" && s.requires?.some((r) => r === "capitalGain" || r === "principalInterestSplit")
+    );
+    expect(stillBlocked.length, "ต้องมีหมวดที่ยังปิดอยู่ให้ทดสอบ").toBeGreaterThan(0);
+    for (const s of stillBlocked) {
+      expect(canAccrueFromForm(s), `${s.code} ตั้งค้างได้แล้ว ทั้งที่ต้องรับรู้กำไร/แยกดอกเบี้ยตอนเงินเคลื่อนจริง`).toBe(false);
+    }
   });
 
   it("บัญชีพักที่ไม่มีทางล้างเลย ต้องไม่มีหมวดไหนตั้งค้างเข้ามันได้", () => {

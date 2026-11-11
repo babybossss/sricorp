@@ -399,6 +399,16 @@ export const CF_LAYOUT: CfSection[] = [
        * จากการดำเนินงานจริงเท่าไร และเงินที่ขอคืนภาษีได้เท่าไร
        */
       { line: "รับคืนภาษีหัก ณ ที่จ่าย", subCodes: ["inv.wht_refund"] },
+      /**
+       * ลูกหนี้อื่นที่เก็บเงินได้ — **แยกบรรทัดในทั้งสามหมวดโดยตั้งใจ**
+       *
+       * ยอดใน `1220` มาจากต้นทางคนละหมวดกระแสเงินสด (และจากยอดยกมาตอนตั้งต้นระบบ
+       * ซึ่งไม่รู้ต้นทางแล้ว) จึงรวมเข้าบรรทัดของรายได้แบบ `inv.collect_rent` ไม่ได้ —
+       * รวมแล้วเงินกู้ที่เข้าทีหลังจะไปโผล่ปนกับเงินสดรับจากการดำเนินงาน
+       * ผู้ใช้เลือกหมวดให้ตรงกับต้นทางตอนคีย์ บรรทัดนี้จึงบอกได้ว่าเก็บลูกหนี้อื่น
+       * ได้เท่าไร และเป็นเงินจากกิจกรรมประเภทไหน
+       */
+      { line: "รับชำระลูกหนี้อื่น", subCodes: ["inv.collect_other_operating"] },
       // บัญชีรองรับระยะสั้น (ลูกพี่สั่ง 26/10) — จ่ายกับรับคืนอยู่บรรทัดเดียวกัน
       // เหมือนเงินมัดจำข้างบน เพราะเป็นเงินก้อนเดียวกันที่ออกไปแล้วกลับมา
       { line: "สินทรัพย์หมุนเวียนอื่น จ่ายและรับคืน", subCodes: ["inv.other_current_asset", "inv.other_current_asset_back"] },
@@ -427,6 +437,7 @@ export const CF_LAYOUT: CfSection[] = [
       { line: "ขายหลักทรัพย์และทองคำ", subCodes: ["inv.sell_securities", "inv.sell_commodity"] },
       // บัญชีรองรับระยะยาว (ลูกพี่สั่ง 26/10)
       { line: "สินทรัพย์ไม่หมุนเวียน จ่ายและรับคืน", subCodes: ["inv.other_noncurrent_asset", "inv.other_noncurrent_asset_back"] },
+      { line: "รับชำระลูกหนี้อื่น", subCodes: ["inv.collect_other_investing"] },
       { line: "เงินจ่ายให้กิจการในกองกลาง (ทดรอง กู้ยืม เพิ่มทุน)", subCodes: [],
         legs: [{ nature: "advance", side: "payer" }, { nature: "loan", side: "payer" }, { nature: "capital", side: "payer" }] },
     ],
@@ -436,6 +447,7 @@ export const CF_LAYOUT: CfSection[] = [
     title: "กระแสเงินสดจากกิจกรรมจัดหาเงิน",
     lines: [
       { line: "เงินกู้รับ", subCodes: ["fin.loan_bank", "fin.loan_director", "fin.loan_other"] },
+      { line: "รับชำระลูกหนี้อื่น", subCodes: ["inv.collect_other_financing"] },
       { line: "ชำระคืนเงินต้น", subCodes: ["fin.repay_bank", "fin.repay_director"] },
       // ดอกเบี้ยจ่ายอยู่ฝั่งจัดหาเงินตามที่ตารางกฎจัดไว้ ไม่ใช่ฝั่งดำเนินงาน
       // **เป็นทางเลือกนโยบาย ไม่ใช่ข้อเท็จจริง** และทำให้กระแสเงินสดจากการ

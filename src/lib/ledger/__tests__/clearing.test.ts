@@ -15,7 +15,7 @@ import { buildClearing, buildClearingDraft } from "../clearing";
 import { allLines, assertBalanced } from "../posting";
 import { PostingError, type ClearingInput } from "../types";
 import { isCashAccount, coa } from "@/lib/rules/coa";
-import { TX_TYPES, canAccrueFromForm, clearingSubsFor, findSub } from "@/lib/rules/tx-rules";
+import { TX_TYPES, accrualClearingRoutes, canAccrueFromForm, clearingSubsFor, findSub } from "@/lib/rules/tx-rules";
 import { CLOSED, EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
 
 /** ค่าเช่าค้างรับ 12,000 ของธนากร ที่ยังไม่เคยยืนยัน */
@@ -263,9 +263,21 @@ describe("ปฏิเสธ — รายการที่ล้างไม�
     expect(m).toMatch(/ไม่ใช่รายการค้างรับ-ค้างจ่าย/);
   });
 
-  it("หมวดที่ยังไม่มีทางล้างในตารางกฎ ต้องบอกเหตุผล (D-087)", () => {
-    const m = message(() => clear({ ...receivable, typeKey: "income", subCode: "inc.dividend" }));
-    expect(m, "ต้องบอกว่าล้างไม่ได้เพราะอะไร ไม่ใช่แค่ว่าไม่ได้").toMatch(/ยังไม่มีหมวดสำหรับล้าง/);
+  /**
+   * D-087 — เดิมใช้ `inc.dividend` เป็นตัวอย่าง เพราะบัญชีพักของมัน (`1220`)
+   * ยังไม่มีทางล้างเลย · ตอนนี้ `1220` มีทางล้างครบสามหมวดแล้ว **ทุกบัญชีพักใน
+   * ตารางกฎจึงมีทางล้างครบ** ไม่มีหมวดจริงให้ยิงเข้าเส้นทางนี้อีก
+   *
+   * เก็บไว้เป็น **สายสะดุด**: ถ้ามีบัญชีพักใหม่ที่ยังไม่มีทางล้าง เทสต์นี้จะพัง
+   * เพื่อเตือนให้เอาเคสข้อความ D-087 กลับมาครอบ — ไม่ใช่ลบทิ้งแล้วปล่อยให้
+   * ข้อความ "ยังไม่มีหมวดสำหรับล้าง" ไม่มีใครตรวจอีกเลย
+   */
+  it("สายสะดุด D-087: วันนี้ทุกบัญชีพักมีทางล้างครบ ถ้ามีตัวใหม่ที่ไม่มี ต้องเอาเคสข้อความกลับมา", () => {
+    const accounts = new Set(
+      TX_TYPES.flatMap((t) => t.subs).map((s) => s.accrualCoa).filter(Boolean) as string[]
+    );
+    const withoutRoute = [...accounts].filter((a) => accrualClearingRoutes(a).length === 0);
+    expect(withoutRoute, "มีบัญชีพักที่ไม่มีทางล้าง — เอาเคสข้อความ D-087 กลับมาครอบหมวดนั้น").toEqual([]);
   });
 
   it("หมวดที่มีทางล้างแต่คนละหมวดกระแสเงินสด ต้องปฏิเสธและบอกว่าทำไม", () => {
@@ -374,7 +386,23 @@ describe("ทุกหมวดที่ตั้งค้างได้ ต้
    * ไม่งั้นช่องว่างนี้จะอยู่ต่อแบบไม่มีใครรู้ (เงินก้อนใหญ่ไปโผล่ผิดหมวดในงบกระแสเงินสด)
    */
   it("สายสะดุด: ถ้ามีหมวดตั้งค้างที่ไม่ใช่ดำเนินงาน ต้องเพิ่มเคสครอบคลุมหมวดนั้น", () => {
-    expect([...new Set(ACCRUABLE.map(({ s }) => s.cashflow))]).toEqual(["operating"]);
+    /**
+     * **ช่องว่างที่สายสะดุดนี้เฝ้าอยู่ ถูกปิดแล้ว** — การเพิ่มทางล้างของ `1220`
+     * ครบทั้งสามหมวด (`inv.collect_other_operating/investing/financing`) ทำให้หมวด
+     * ต้นทางฝั่งลงทุนและจัดหาเงินตั้งค้างได้ `ACCRUABLE` จึงมีทั้งสามหมวด และ
+     * **เคสด้านล่างเดินครบทั้งสามเองอัตโนมัติ** เพราะลูปอ่านจาก `ACCRUABLE`
+     *
+     * ตั้งแต่นี้เคส "หมวด CF ตรงกับต้นทาง" จึงพิสูจน์ได้จริงว่าเครื่องยนต์อ่านหมวด
+     * จากรายการต้นทาง ไม่ได้ฮาร์ดโค้ด "operating" ไว้ — ซึ่งเป็นสิ่งที่เทสต์นี้
+     * บอกไว้ว่าทำไม่ได้ตอนตารางกฎมีแต่หมวดดำเนินงาน
+     *
+     * ยังคงเป็นสายสะดุดต่อไป: มีหมวด CF ใหม่เมื่อไร ต้องกลับมาดูว่าลูปครอบถึงหรือยัง
+     */
+    expect([...new Set(ACCRUABLE.map(({ s }) => s.cashflow))].sort()).toEqual([
+      "financing",
+      "investing",
+      "operating",
+    ]);
   });
 
   it("ได้สองบรรทัดที่สมดุล · เงินสดหนึ่งบรรทัดผูกบัญชี · หมวด CF ตรงกับต้นทาง", () => {
