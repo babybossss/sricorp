@@ -371,3 +371,83 @@ describe("buildReversal · วันที่เงินเคลื่อน (
     expect(transactions[0].memo).toContain("txn-rent-001");
   });
 });
+
+/**
+ * ----------------------------------------------------------------
+ * บรรทัดเงินตราต่างประเทศ (FCD) — สี่ฟิลด์ต้องตามไปด้วย
+ * ----------------------------------------------------------------
+ * `debit`/`credit` เป็นบาทเสมอ ส่วน `currency` · `amountOriginal` · `fxRate` · `fxRateDate`
+ * คือข้อมูลที่ทำให้ตรวจย้อนได้ว่ายอดบาทมาจากเงินตราเท่าไรที่อัตราไหน
+ *
+ * ถ้าใบกลับรายการไม่พาสี่ฟิลด์นี้ไป: ด่าน `fn_assert_line_fx` ฝั่ง DB บังคับว่า
+ * ขาเงินสดของบัญชีที่ไม่ใช่บาท **ต้องมีครบ** และขาผลต่าง 3410 ต้องมีสกุลเสมอ
+ * → ใบกลับรายการของรายการเงินตราลงไม่ได้เลย (ตัน) และถ้าวันหนึ่งด่านนั้นหลวมลง
+ * ยอดบาทจะหักกันหมดแต่ **ยอดเงินตราคงเหลือของบัญชีจะค้างไว้ตลอดกาล**
+ *
+ * `amountOriginal` **คัดลอกตามตัว ไม่ใส่เครื่องหมายลบ** — มันคือขนาดของเงินตราที่เคลื่อน
+ * ทิศอยู่ที่เดบิต/เครดิตซึ่งสลับไปแล้ว (เหมือนยอดบาทที่ไม่ได้ติดลบแต่ย้ายข้าง)
+ */
+describe("buildReversal · บรรทัดเงินตราต่างประเทศ", () => {
+  const fcd = (): ReversalSource => ({
+    txnId: "txn-fcd-1",
+    ownerId: OWNER_A,
+    status: "posted",
+    hasLiveReversal: false,
+    docDate: "2026-10-20",
+    lines: [
+      {
+        coaCode: "1110",
+        bankAccountId: "bank-usd",
+        debit: 35000,
+        credit: 0,
+        cfCategory: "operating",
+        currency: "USD",
+        amountOriginal: 1000,
+        fxRate: 35,
+        fxRateDate: "2026-10-20",
+      },
+      { coaCode: "4100", debit: 0, credit: 35000, cfCategory: "operating" },
+    ],
+  });
+
+  it("คัดลอกครบทั้งสี่ฟิลด์ และ amountOriginal ไม่เปลี่ยนเครื่องหมาย", () => {
+    const { transactions } = buildReversal(withCash([fcd()]));
+    const [cash, revenue] = transactions[0].lines;
+    expect(cash).toMatchObject({
+      coaCode: "1110",
+      debit: 0,
+      credit: 35000,
+      currency: "USD",
+      amountOriginal: 1000,
+      fxRate: 35,
+      fxRateDate: "2026-10-20",
+    });
+    // บรรทัดบาทต้องไม่ได้คีย์สกุลติดมา (check constraint `transaction_lines_fx_shape`
+    // ยอมแค่ "ครบทั้งสี่" หรือ "ไม่มีเลย")
+    for (const k of ["currency", "amountOriginal", "fxRate", "fxRateDate"]) {
+      expect(k in revenue, `บรรทัดบาทต้องไม่มีคีย์ ${k}`).toBe(false);
+    }
+  });
+
+  it("amountOriginal = 0 (บรรทัดแปลงค่า/ล้างผลต่าง) ยังคงส่งคีย์ไปครบ ไม่ถูกตัดเพราะเป็นศูนย์", () => {
+    const translate: ReversalSource = {
+      txnId: "txn-fx-translate",
+      ownerId: OWNER_A,
+      status: "posted",
+      hasLiveReversal: false,
+      docDate: "2026-10-20",
+      lines: [
+        { coaCode: "1110", bankAccountId: "bank-usd", debit: 500, credit: 0, cfCategory: "none", currency: "USD", amountOriginal: 0, fxRate: 35.5, fxRateDate: "2026-10-31" },
+        { coaCode: "3410", debit: 0, credit: 500, cfCategory: "none", currency: "USD", amountOriginal: 0, fxRate: 35.5, fxRateDate: "2026-10-31" },
+      ],
+    };
+    const { transactions } = buildReversal(withCash([translate]));
+    for (const l of transactions[0].lines) {
+      expect(l.currency).toBe("USD");
+      expect("amountOriginal" in l).toBe(true);
+      expect(l.amountOriginal).toBe(0);
+      expect(l.fxRate).toBe(35.5);
+      expect(l.fxRateDate).toBe("2026-10-31");
+    }
+  });
+});

@@ -61,8 +61,23 @@ export type PostEntryPayload = {
    */
   tag_ids?: string[];
   tag_weights?: Record<string, number>;
-  /** `import` = ยอดตั้งต้นที่นำเข้าจากไฟล์ (`fn_reimport_opening`) · ที่เหลือ (ฟอร์ม) เป็น `manual` เสมอ */
-  source: "manual" | "import";
+  /**
+   * `import` = ยอดตั้งต้นที่นำเข้าจากไฟล์ (`fn_reimport_opening`) ·
+   * `reverse` = ใบกลับรายการ (`src/app/actions/reverse-entry.ts`) · ที่เหลือ (ฟอร์มลงรายการ) เป็น `manual` เสมอ
+   *
+   * **`'reverse'` ไม่ใช่ป้ายชื่อ** — `fn_corporate_evidence_ok` ใช้ค่านี้คู่กับ `reverses_id`
+   * ตัดสินการยกเว้นไฟล์หลักฐานของนิติบุคคล และ `fn_assert_bank_account_open` (D-092)
+   * ใช้ตัดสินว่าลงเข้าบัญชีที่ปิดแล้วได้ · ตั้งค่านี้โดยไม่มี `reverses_id` ที่พิสูจน์ได้
+   * = `fn_assert_reverse_link` ปฏิเสธทั้งใบ (ตั้งใจให้ปลอมไม่ได้)
+   */
+  source: "manual" | "import" | "reverse";
+  /**
+   * ใบที่รายการนี้กลับรายการ — **ส่งคู่กับ `source: 'reverse'` เท่านั้น**
+   *
+   * เป็นช่องของ **หัวคำขอ** (ไม่ใช่ของแต่ละใบใน `transactions[]`) → คำขอหนึ่งชี้ต้นฉบับได้ใบเดียว
+   * ซึ่งเป็นเหตุที่รายการข้ามผู้ถือยังกลับรายการไม่ได้ (ดู `reverse-entry.ts` ข้อ (ก))
+   */
+  reverses_id?: string;
   transactions: PostEntryTransaction[];
 };
 

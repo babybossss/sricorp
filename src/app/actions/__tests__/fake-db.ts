@@ -151,6 +151,53 @@ export function createFakeDb() {
       throw new Error(`ล้างยอดค้างเกิน: ต้นทาง ${src} ตั้งค้างไว้ ${Math.abs(accrued)} แต่ล้างรวม ${-sign * cleared}`);
     }
   }
+  /**
+   * หัวรายการเท่าที่ด่าน void / กลับรายการต้องใช้ — `rows` เป็นระดับบรรทัด จึงเก็บแยก
+   * (ของจริงคือตาราง `sri_os.transactions` · ที่นี่จำลองเฉพาะคอลัมน์ที่ action แตะ)
+   */
+  const heads = new Map<string, Record<string, unknown>>();
+  /** แถวของใบที่ยัง posted เท่านั้น — `v_ledger_posted` กรองด้วย allow-list `status = 'posted'` */
+  const postedRows = () => rows.filter((r) => (heads.get(r.transaction_id)?.status ?? "posted") === "posted");
+  const voidedRows = () => rows.filter((r) => heads.get(r.transaction_id)?.status === "void");
+
+  /**
+   * สำเนาของ `fn_reverse_link_ok` + `fn_assert_reverse_mirrors` (20261009000000)
+   * มีไว้ให้เทสต์ของ action **แดงเมื่อส่ง payload ที่ DB จริงจะปฏิเสธ** ไม่ใช่เพื่อแทนด่านจริง
+   */
+  function assertReverseOk(p: Payload, txns: Record<string, unknown>[]) {
+    const target = p.reverses_id as string | undefined;
+    if (p.source === "reverse" && !target) throw new Error("source = reverse แต่ไม่ได้ชี้ว่ากลับใบไหน (reverses_id ว่าง)");
+    if (!target) return;
+    const head = heads.get(target);
+    if (!head || head.status === "void") {
+      throw new Error("รายการกลับรายการต้องชี้ไปรายการจริงของผู้ถือเดียวกัน ที่ยังไม่ถูก void และยังไม่ถูกกลับรายการ");
+    }
+    for (const t of txns) {
+      if (t.owner_id !== head.owner_id) {
+        throw new Error("รายการกลับรายการต้องชี้ไปรายการจริงของผู้ถือเดียวกัน (reverses_id ของคำขอนี้เป็นของผู้ถืออีกคน)");
+      }
+    }
+    for (const [id, h] of heads) {
+      if (h.reverses_id === target && h.status !== "void" && id !== target) {
+        throw new Error("รายการนี้ถูกกลับรายการไปแล้ว (มีใบกลับรายการที่ยังไม่ถูก void ชี้มาที่เดียวกัน)");
+      }
+    }
+    // ด่านสะท้อนบรรทัด: เทียบ multiset สองทิศ — ภาพกลับด้านของต้นฉบับ vs บรรทัดที่ส่งมา
+    const key = (coa: string, bank: unknown, asset: unknown, cf: unknown, dr: number, cr: number) =>
+      JSON.stringify([coa, bank ?? null, asset ?? null, cf ?? null, dr, cr]);
+    const expected = rows
+      .filter((r) => r.transaction_id === target)
+      .map((r) => key(COA_BY_ID[r.coa_id], r.bank_account_id, r.line_asset_id, r.cf_category, Number(r.credit), Number(r.debit)))
+      .sort();
+    const actual = txns
+      .flatMap((t) => (t.lines as Record<string, unknown>[]) ?? [])
+      .map((l) => key(String(l.coa_code), l.bank_account_id, l.asset_id, l.cf_category, Number(l.debit), Number(l.credit)))
+      .sort();
+    if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+      throw new Error("ใบกลับรายการไม่ได้สะท้อนบรรทัดของต้นฉบับแบบสลับด้าน (บรรทัดขาด เกิน หรือยอดไม่ตรง)");
+    }
+  }
+
   const rpcCalls: Payload[] = [];
   /** การเรียกประตูอัปโหลดยอดตั้งต้นใหม่ (`fn_reimport_opening`) — ตัวจริงอยู่ที่ DB (พิสูจน์กับ Postgres ในเครื่อง) ที่นี่จำลองแค่ว่าถูกเรียกด้วยอะไร */
   const reimportCalls: { p_owner: string; p_payload: { entries: Payload[]; lots: Record<string, unknown>[] } }[] = [];
@@ -215,6 +262,9 @@ export function createFakeDb() {
     if (hasCash && !p.cash_date) throw new Error("ไม่มี cash_date ทั้งที่มีบรรทัดเงินสด");
     if (!hasCash && p.cash_date) throw new Error("มี cash_date ทั้งที่ไม่มีบรรทัดเงินสด");
 
+    // ด่านของ D-097: ลิงก์ใบกลับรายการต้องพิสูจน์ได้ และบรรทัดต้องสะท้อนต้นฉบับ
+    assertReverseOk(p, txns);
+
     // D-092: บัญชีที่ปิดใช้งานแล้วลงรายการใหม่ไม่ได้ (ยกเว้นใบกลับรายการ) — จำลอง fn_assert_bank_account_open
     for (const t of txns) {
       for (const l of (t.lines as Record<string, unknown>[]) ?? []) {
@@ -230,6 +280,18 @@ export function createFakeDb() {
     for (const t of txns) {
       const id = newId();
       ids.push(id);
+      heads.set(id, {
+        id,
+        owner_id: t.owner_id as string,
+        status: "posted",
+        doc_date: p.doc_date as string,
+        txn_type_code: p.txn_type_code as string,
+        source: (p.source as string) ?? "manual",
+        reverses_id: (p.reverses_id as string) ?? null,
+        voided_at: null,
+        voided_by: null,
+        void_reason: null,
+      });
       // ด่านล้างยอดค้างของ DB — ยิงก่อนใส่แถวของใบนี้ (ใบนี้ไม่นับเป็นต้นทาง) ถ้าล้มทั้งคำขอไม่เขียนอะไร
       assertClearingNotOver(id, t.owner_id as string, p, (t.lines as Record<string, unknown>[]) ?? []);
       for (const l of (t.lines as Record<string, unknown>[])) {
@@ -262,7 +324,7 @@ export function createFakeDb() {
     }
     } catch (e) {
       for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].transaction_id)) rows.splice(i, 1);
-      for (const id of ids) clears.delete(id);
+      for (const id of ids) { clears.delete(id); heads.delete(id); }
       throw e;
     }
 
@@ -276,7 +338,7 @@ export function createFakeDb() {
       }
     } catch (e) {
       for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].transaction_id)) rows.splice(i, 1);
-      for (const id of ids) clears.delete(id);
+      for (const id of ids) { clears.delete(id); heads.delete(id); }
       throw e;
     }
     seen.set(fp, ids);
@@ -354,10 +416,83 @@ export function createFakeDb() {
     return q;
   }
 
+  /**
+   * หัวรายการ (`transactions`) — มีไว้ให้ **เส้นทาง void เท่านั้น**
+   * อ่านสมุดต้องอ่านผ่าน `v_ledger_posted` (D-107) · ที่นี่จึงรับแค่ `select id/status/...`
+   * กับ `update` ที่เปลี่ยนสถานะเป็น void พร้อมด่านของ DB
+   */
+  function headsFrom() {
+    let mode: "select" | "update" = "select";
+    let patch: Record<string, unknown> = {};
+    const preds: ((r: Record<string, unknown>) => boolean)[] = [];
+    let sel: string[] | null = null;
+
+    const run = () => {
+      const hit = [...heads.values()].filter((h) => preds.every((p) => p(h)));
+      if (mode === "select") {
+        const data = hit.map((h) => (sel ? Object.fromEntries(sel.map((c) => [c, h[c]])) : { ...h }));
+        return { data, error: null as { message: string; code?: string } | null };
+      }
+      writes.push({ table: "transactions", op: "update", payload: patch, denied: control.denyWrites.has("transactions") });
+      if (control.denyWrites.has("transactions")) return { data: [], error: null };
+      for (const h of hit) {
+        // check constraint สองทาง (20261020000001): void ⟺ ครบสามคอลัมน์
+        const next = { ...h, ...patch };
+        const marks = [next.voided_at, next.voided_by, next.void_reason];
+        if (next.status === "void" && marks.some((m) => m == null)) {
+          return { data: null, error: { code: "23514", message: 'violates check constraint "transactions_void_audit"' } };
+        }
+        if (next.status !== "void" && marks.some((m) => m != null)) {
+          return { data: null, error: { code: "23514", message: 'violates check constraint "transactions_void_audit"' } };
+        }
+        // fn_void_is_terminal: ออกจาก void ไม่ได้
+        if (h.status === "void" && next.status !== "void") {
+          return { data: null, error: { code: "P0001", message: "รายการที่ยกเลิกแล้วเปลี่ยนสถานะกลับไม่ได้" } };
+        }
+        // fn_void_blocked_by_reverse: มีใบกลับรายการที่ยังนับอยู่ → void ต้นฉบับไม่ได้
+        if (next.status === "void" && h.status !== "void") {
+          for (const other of heads.values()) {
+            if (other.reverses_id === h.id && other.status !== "void") {
+              return {
+                data: null,
+                error: {
+                  code: "P0001",
+                  message: "ยกเลิกรายการนี้ไม่ได้ เพราะมีใบกลับรายการที่ยังนับในงบชี้มาที่รายการนี้ (D-097)",
+                },
+              };
+            }
+          }
+        }
+        Object.assign(h, patch);
+      }
+      const data = hit.map((h) => (sel ? Object.fromEntries(sel.map((c) => [c, h[c]])) : { ...h }));
+      return { data, error: null };
+    };
+
+    const q = {
+      select: (cols?: string) => ((sel = cols && cols !== "*" ? cols.split(",").map((c) => c.trim()) : null), q),
+      update: (p: Record<string, unknown>) => ((mode = "update"), (patch = p), q),
+      eq: (c: string, v: unknown) => (preds.push((r) => r[c] === v), q),
+      single: async () => {
+        const r = run();
+        if (r.error) return { data: null, error: r.error };
+        return r.data && r.data.length === 1
+          ? { data: r.data[0], error: null }
+          : { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } };
+      },
+      then: (resolve: (v: ReturnType<typeof run>) => unknown) => resolve(run()),
+    };
+    return q;
+  }
+
   type Pred = (r: LedgerViewRow) => boolean;
   function from(table: string) {
     if (table in tables) return tableFrom(table);
-    if (table !== "v_ledger_posted") throw new Error(`เทสต์นี้อ่านได้เฉพาะ v_ledger_posted และตารางตั้งค่า ไม่ใช่ ${table} (D-107)`);
+    if (table === "transactions") return headsFrom();
+    if (table !== "v_ledger_posted" && table !== "v_ledger_voided") {
+      throw new Error(`เทสต์นี้อ่านได้เฉพาะ v_ledger_posted / v_ledger_voided และตารางตั้งค่า ไม่ใช่ ${table} (D-107)`);
+    }
+    const base = table === "v_ledger_posted" ? postedRows : voidedRows;
     const preds: Pred[] = [];
     let cap = Infinity;
     const q = {
@@ -379,12 +514,12 @@ export function createFakeDb() {
       order: () => q,
       // PostgREST ตัดผลที่ 1,000 แถวต่อคำขอเงียบๆ — จำลองการแบ่งหน้าด้วย range เพื่อให้เทสต์จับโค้ดที่ไม่แบ่งหน้าได้
       range: async (from: number, to: number) => ({
-        data: rows.filter((r) => preds.every((p) => p(r))).slice(from, Math.min(to, from + (fake.maxRows - 1)) + 1),
+        data: base().filter((r) => preds.every((p) => p(r))).slice(from, Math.min(to, from + (fake.maxRows - 1)) + 1),
         error: null,
       }),
       limit: (n: number) => ((cap = n), q),
       then: (resolve: (v: { data: LedgerViewRow[]; error: null }) => unknown) =>
-        resolve({ data: rows.filter((r) => preds.every((p) => p(r))).slice(0, Math.min(cap, fake.maxRows)), error: null }),
+        resolve({ data: base().filter((r) => preds.every((p) => p(r))).slice(0, Math.min(cap, fake.maxRows)), error: null }),
     };
     return q;
   }
@@ -424,12 +559,12 @@ export function createFakeDb() {
   /** ยอดสุทธิ (เดบิต − เครดิต) ของบัญชีหนึ่งรหัส ทุกรายการในสมุด */
   const balance = (code: string, ownerId?: string) =>
     Math.round(
-      rows
+      postedRows()
         .filter((r) => COA_BY_ID[r.coa_id] === code && (!ownerId || r.owner_id === ownerId))
         .reduce((t, r) => t + Number(r.debit) - Number(r.credit), 0) * 100
     ) / 100;
 
-  return { client, rows, rpcCalls, reimportCalls, applyDraftCalls, control, balance, fake, tables, writes };
+  return { client, rows, heads, rpcCalls, reimportCalls, applyDraftCalls, control, balance, fake, tables, writes };
 }
 
 export type FakeDb = ReturnType<typeof createFakeDb>;

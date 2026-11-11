@@ -5,7 +5,7 @@
  * และ `fn_reimport_opening` ที่เรียกคือฟังก์ชันจริง ไม่ใช่สำเนาที่เขียนเอง · ทุกคำสั่งรันเป็น role `authenticated`
  * ของผู้ใช้ที่ระบุ (ธุรกรรมเดียวต่อคำสั่ง) — ไม่ใช่ superuser
  *
- * รองรับ: from(t).select(cols).eq/in/order/limit/range · from(t).insert(row).select(cols).single() · from(t).update(patch).eq()
+ * รองรับ: from(t).select(cols).eq/in/like/order/limit/range · from(t).insert(row).select(cols).single() · from(t).update(patch).eq().select(cols)
  *   · rpc('fn_reimport_opening' · 'fn_post_entry' · 'fn_apply_asset_draft' · 'fn_asset_cost_basis*')
  * อย่างอื่น = โยก error ทันที (ไม่เดา) เพื่อให้รู้ว่าโค้ดเริ่มใช้คำสั่งที่ตัวแทนนี้ยังไม่ได้พิสูจน์
  */
@@ -85,6 +85,7 @@ export function pgClient(db: TestDb, uid: string) {
       },
       eq: (c: string, v: unknown) => (where.push(`${ident(c)} = ${lit(v)}`), q),
       in: (c: string, vs: unknown[]) => (where.push(vs.length ? `${ident(c)} in (${vs.map(lit).join(", ")})` : "false"), q),
+      like: (c: string, pattern: string) => (where.push(`${ident(c)} like ${lit(pattern)}`), q),
       order: (c: string, o?: { ascending?: boolean }) => (order.push(`${ident(c)} ${o?.ascending === false ? "desc" : "asc"}`), q),
       limit: (n: number) => ((limit = n), q),
       range: (a: number, b: number) => {

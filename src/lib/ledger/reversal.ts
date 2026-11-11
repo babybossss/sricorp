@@ -149,6 +149,23 @@ function mirrorLine(src: PostingLine, index: number): PostingLine {
   if (src.bankAccountId !== undefined) mirrored.bankAccountId = src.bankAccountId;
   if (src.assetId !== undefined) mirrored.assetId = src.assetId;
   if (src.cfCategory !== undefined) mirrored.cfCategory = src.cfCategory;
+
+  /* ---- เงินตราต่างประเทศ (FCD) · สี่ฟิลด์ไปพร้อมกันหรือไม่ไปเลย ----
+   * `debit`/`credit` เป็นบาทอยู่แล้วและสลับข้างไปข้างบน · สี่ฟิลด์นี้บอกว่า
+   * ยอดบาทนั้นมาจากเงินตราเท่าไรที่อัตราไหน จึง **คัดลอกตามตัว ไม่คำนวณใหม่**
+   *   - `amountOriginal` ไม่ใส่เครื่องหมายลบ: มันคือ**ขนาด**ของเงินตราที่เคลื่อน
+   *     ทิศอยู่ที่เดบิต/เครดิตซึ่งสลับไปแล้ว (เหมือนยอดบาทที่ย้ายข้างแต่ไม่ติดลบ)
+   *   - `0` เป็นค่าที่ใช้จริง (บรรทัดแปลงค่า/ล้างผลต่าง 3410 ไม่มีเงินตราเคลื่อน)
+   *     จึงเทียบกับ `undefined` ไม่ใช่ตรวจความจริงเท็จ
+   * ไม่พาไปด้วย = ด่าน `fn_assert_line_fx` ปฏิเสธใบกลับรายการของรายการเงินตรา
+   * (ขาเงินสดของบัญชีที่ไม่ใช่บาทต้องมีครบ · ขา 3410 ต้องมีสกุลเสมอ) = ตัน
+   * และถ้าด่านนั้นหลวมลงวันหนึ่ง ยอดบาทจะหักกันหมดแต่ยอดเงินตราคงเหลือค้างตลอดกาล */
+  if (src.currency !== undefined) {
+    mirrored.currency = src.currency;
+    mirrored.amountOriginal = src.amountOriginal;
+    mirrored.fxRate = src.fxRate;
+    mirrored.fxRateDate = src.fxRateDate;
+  }
   return mirrored;
 }
 

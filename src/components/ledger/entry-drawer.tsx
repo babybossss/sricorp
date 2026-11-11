@@ -10,6 +10,7 @@ import { coa } from "@/lib/rules/coa";
 import { findSub } from "@/lib/rules/tx-rules";
 import { TYPE_PILL } from "@/lib/tone";
 import { isoToDmy, money, signedMoney } from "@/lib/format";
+import { ReversePanel } from "./reverse-panel";
 
 /** ชื่อบัญชี — รหัสที่ไม่อยู่ในผังบัญชีของโค้ดแสดงตามจริง ไม่เดาชื่อให้ */
 function accountName(code: string): string {
@@ -133,9 +134,9 @@ export function EntryDrawer({ entry, onClose }: { entry: LedgerEntry | null; onC
             ))}
           </div>
 
-          <div className="rounded border border-line bg-canvas p-[12px_14px] text-sm leading-6 text-ink-600">
-            รายการที่บันทึกแล้วลบไม่ได้ — ถ้าบันทึกผิด แก้ด้วยการกลับรายการ (ยังไม่ได้ต่อปุ่มกลับรายการกับฐานข้อมูลในรอบนี้)
-          </div>
+          {/* ทางออกที่ถูกต้องของกฎเหล็กข้อ 1 (ห้าม DELETE) — กลับรายการ หรือ ยกเลิกใบ (D-097)
+              ตรรกะและคู่บัญชีไม่อยู่ในหน้าจอ: แผงนี้เรียก server action ซึ่งถาม engine กับ DB ให้ */}
+          <ReversePanel entry={{ id: entry.id, source: entry.source, reversesId: entry.reversesId }} />
         </div>
       </div>
     </div>

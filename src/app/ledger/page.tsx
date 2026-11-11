@@ -3,7 +3,7 @@ import { LedgerTabs } from "@/components/ledger/ledger-tabs";
 import { PeriodBar } from "@/components/reports/period-bar";
 import { gateRoute } from "@/lib/auth/gate";
 import { ledgerPeriod } from "@/lib/db/ledger-entries";
-import { loadLedgerEntries } from "@/lib/db/ledger-entries-server";
+import { loadLedgerEntries, loadVoidedEntries } from "@/lib/db/ledger-entries-server";
 import { loadPendingAccruals } from "@/lib/db/pending-accruals-server";
 import { parseFiscalYear, parseMonth } from "@/lib/db/statements";
 import { todayDmy } from "@/lib/format";
@@ -22,7 +22,12 @@ export default async function LedgerPage({ searchParams }: { searchParams: Promi
 
   // รายการสมุดอ่านจาก v_ledger_posted เท่านั้น (D-107) — ห้ามอ่านตาราง transactions ตรง
   // รายการค้างรับ-ค้างจ่ายไม่กรองตามงวด: ต้องเห็นทุกใบที่ยังไม่ล้าง ไม่งั้นลูกหนี้ข้ามปีหายจากหน้ายืนยัน
-  const [ledger, pending] = await Promise.all([loadLedgerEntries(period), loadPendingAccruals()]);
+  // รายการที่ยกเลิกอ่านจาก `v_ledger_voided` (D-098: เห็นได้ แต่ตัดออกจากงบ) — คนละวิวกับสมุด
+  const [ledger, pending, voided] = await Promise.all([
+    loadLedgerEntries(period),
+    loadPendingAccruals(),
+    loadVoidedEntries(period),
+  ]);
 
   const sel =
     "min-h-control rounded border border-line bg-surface px-3 text-base text-ink-900 focus-visible:outline-none focus-visible:border-brand-600 focus-visible:ring-[3px] focus-visible:ring-brand-600";
@@ -55,7 +60,7 @@ export default async function LedgerPage({ searchParams }: { searchParams: Promi
             แสดงรายการของปีนี้
           </button>
         </form>
-        <LedgerTabs ledger={ledger} pending={pending} period={period} />
+        <LedgerTabs ledger={ledger} pending={pending} voided={voided} period={period} />
       </div>
     </PageShell>
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cashNet, groupLedgerRows, UNKNOWN_COA, type LedgerViewRow } from "../ledger-entries";
+import { cashNet, groupLedgerRows, groupVoidedRows, UNKNOWN_COA, type LedgerViewRow, type VoidedViewRow } from "../ledger-entries";
 
 const COA = { c1100: "1100", c4200: "4200", c1200: "1200" };
 
@@ -74,5 +74,37 @@ describe("cashNet · เงินเข้า/ออกจากบรรทั�
 
   it("ไม่มีบรรทัดเงินสด (ค้างรับ/ปรับปรุง) → null ไม่ใช่ 0", () => {
     expect(cashNet(entry([{ coaCode: "1200", debit: 100, credit: 0 }, { coaCode: "4200", debit: 0, credit: 100 }]))).toBeNull();
+  });
+});
+
+describe("groupVoidedRows · รายการที่ยกเลิก (D-098: เห็นได้ แต่ตัดออกจากงบ)", () => {
+  const vrow = (o: Partial<VoidedViewRow>): VoidedViewRow => ({
+    ...row({}),
+    voided_at: "2026-11-11T04:00:00Z",
+    voided_by: "user-1",
+    void_reason: "ลงผิดทั้งใบ",
+    ...o,
+  });
+
+  it("เก็บร่องรอยครบสามอย่าง (เมื่อไหร่ · ใคร · ทำไม) — ขาดอันใดคือผีที่ไม่มีคำอธิบาย", () => {
+    const [e] = groupVoidedRows([vrow({}), vrow({ coa_id: "c4200", debit: 0, credit: "12000.00" })], COA, false, (id) =>
+      id === "user-1" ? "ธนากร" : null
+    );
+    expect(e.lines).toHaveLength(2);
+    expect(e.voidedAt).toBe("2026-11-11T04:00:00Z");
+    expect(e.voidedBy).toBe("user-1");
+    expect(e.voidedByName).toBe("ธนากร");
+    expect(e.voidReason).toBe("ลงผิดทั้งใบ");
+  });
+
+  it("อ่านชื่อผู้ยกเลิกไม่ได้ → `voidedByName` เป็น null **ห้ามเติม id ดิบ** (หน้าจอบอกว่าไม่ทราบชื่อ)", () => {
+    const [e] = groupVoidedRows([vrow({})], COA);
+    expect(e.voidedBy).toBe("user-1");
+    expect(e.voidedByName).toBeNull();
+  });
+
+  it("ไม่มี voided_by (ข้อมูลเก่าก่อนมีคอลัมน์) → ไม่พยายามหาชื่อ", () => {
+    const [e] = groupVoidedRows([vrow({ voided_by: null })], COA, false, () => "ไม่ควรถูกเรียก");
+    expect(e.voidedByName).toBeNull();
   });
 });

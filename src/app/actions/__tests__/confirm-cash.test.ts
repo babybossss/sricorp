@@ -110,15 +110,12 @@ describe("ตั้งค้าง → ล้าง: ยอดลูกหนี
         cash_date: "2026-10-25",
         source: "reverse",
         reverses_id: clearingId,
-        transactions: [
-          {
-            owner_id: OWNER.tk,
-            lines: [
-              { coa_code: "1200", debit: 12000, credit: 0 },
-              { coa_code: "1100", bank_account_id: BANK.tk, debit: 0, credit: 12000 },
-            ],
-          },
-        ],
+        // สะท้อนบรรทัดของใบล้างแบบสลับด้าน **ครบทุกมิติ** (ด่าน fn_assert_reverse_mirrors
+        // เทียบ multiset รวม cf_category/asset/bank — ไม่ใช่เทียบแค่รหัสบัญชีกับยอด)
+        transactions: (clearing.transactions as { owner_id: string; lines: Record<string, unknown>[] }[]).map((t) => ({
+          owner_id: t.owner_id,
+          lines: t.lines.map((l) => ({ ...l, debit: l.credit, credit: l.debit })),
+        })),
       },
     });
     expect(rev.error).toBeNull();

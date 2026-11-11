@@ -147,3 +147,60 @@ export function cashNet(entry: Pick<LedgerEntry, "lines">): number | null {
 export function entryTotal(entry: Pick<LedgerEntry, "lines">): number {
   return Math.round(entry.lines.reduce((t, l) => t + l.debit, 0) * 100) / 100;
 }
+
+/* ============================================================
+ * รายการที่ยกเลิก (void) — D-098: "เห็นได้ แต่ตัดออกจากงบ"
+ * ============================================================
+ * อ่านจาก `v_ledger_voided` (ใบที่ `status = 'void'` เท่านั้น) ไม่ใช่ตารางฐาน
+ *
+ * **หน้าจอที่แสดงของพวกนี้จำเป็นเท่าตัววิว**: ถ้ายกเลิกได้แต่ไม่มีที่ให้ดู
+ * รายการจะหายไปจากสายตาผู้ใช้ทั้งที่กฎบอกว่าต้องยังเห็นได้ (และผู้สอบบัญชี
+ * ถามว่า "ทำไมเดือนนั้นหายไปหนึ่งใบ" แล้วตอบไม่ได้) = เปิดฟีเจอร์ครึ่งเดียว
+ *
+ * สามคอลัมน์ `voided_*` คือสิ่งที่ทำให้ของที่เก็บไว้มีประโยชน์ — **ต้องขอมาให้ครบ**
+ * ขาดคอลัมน์ไหนก็กลายเป็น "ผีที่ไม่มีคำอธิบาย"
+ */
+export type VoidedEntry = LedgerEntry & {
+  voidedAt: string | null;
+  /** id ของผู้ใช้ที่ยกเลิก (อ้าง `app_users`) */
+  voidedBy: string | null;
+  /**
+   * ชื่อที่แสดงของผู้ยกเลิก — `null` เมื่ออ่านชื่อไม่ได้ (ผู้ใช้ถูกปิด/อยู่นอกขอบเขตที่มองเห็น)
+   * **ห้ามเติม id ดิบลงช่องนี้** หน้าจอต้องบอกตามจริงว่าไม่ทราบชื่อ ไม่ใช่โชว์ uuid ให้คนอ่าน
+   */
+  voidedByName: string | null;
+  voidReason: string | null;
+};
+
+/** แถวของ `v_ledger_voided` = แถวของ `v_ledger_posted` + สามคอลัมน์ร่องรอยการยกเลิก */
+export type VoidedViewRow = LedgerViewRow & {
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+};
+
+/**
+ * จัดบรรทัดของ `v_ledger_voided` กลับเป็นรายการ — ใช้ตัวจัดกลุ่มตัวเดียวกับสมุด
+ * (กฎเดียวห้ามเขียนสองที่) แล้วเติมสามคอลัมน์ของการยกเลิกจากแถวแรกของใบนั้น
+ */
+export function groupVoidedRows(
+  rows: VoidedViewRow[],
+  coaCodeById: CoaCodeLookup,
+  truncated = false,
+  nameOf: (id: string) => string | null = () => null
+): VoidedEntry[] {
+  const audit = new Map<string, Pick<VoidedEntry, "voidedAt" | "voidedBy" | "voidedByName" | "voidReason">>();
+  for (const r of rows) {
+    if (audit.has(r.transaction_id)) continue;
+    audit.set(r.transaction_id, {
+      voidedAt: r.voided_at ?? null,
+      voidedBy: r.voided_by ?? null,
+      voidedByName: r.voided_by ? nameOf(r.voided_by) : null,
+      voidReason: r.void_reason ?? null,
+    });
+  }
+  return groupLedgerRows(rows, coaCodeById, truncated).map((e) => ({
+    ...e,
+    ...(audit.get(e.id) ?? { voidedAt: null, voidedBy: null, voidedByName: null, voidReason: null }),
+  }));
+}

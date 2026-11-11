@@ -13,7 +13,7 @@ import { useReference } from "@/components/reference/reference-provider";
 import { FAMILY_VIEW } from "@/lib/db/reference-types";
 import { cashNet } from "@/lib/db/ledger-entries";
 import type { LedgerPeriod } from "@/lib/db/ledger-entries";
-import type { LedgerListState } from "@/lib/db/ledger-entries-server";
+import type { LedgerListState, VoidedListState } from "@/lib/db/ledger-entries-server";
 import { isoToDmy } from "@/lib/format";
 import { EntryDrawer } from "./entry-drawer";
 import { ConfirmTab } from "./confirm-tab";
@@ -22,11 +22,24 @@ import type { PendingAccrualsState } from "@/lib/db/pending-accruals-server";
 const TABS = [
   { key: "list", label: "รายการ" },
   { key: "confirm", label: "ยืนยันรับ-จ่าย" },
+  // D-098: ใบที่ยกเลิกต้อง **ยังเห็นได้** และอยู่แยกที่ — ยกเลิกได้แต่ไม่มีที่ให้ดู
+  // คือเปิดฟีเจอร์ครึ่งเดียว (ผู้สอบบัญชีถามว่าเดือนนั้นหายไปไหน แล้วตอบไม่ได้)
+  { key: "voided", label: "รายการที่ยกเลิก" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function LedgerTabs({ ledger, pending, period }: { ledger: LedgerListState; pending: PendingAccrualsState; period: LedgerPeriod }) {
+export function LedgerTabs({
+  ledger,
+  pending,
+  voided,
+  period,
+}: {
+  ledger: LedgerListState;
+  pending: PendingAccrualsState;
+  voided: VoidedListState;
+  period: LedgerPeriod;
+}) {
   const [tab, setTab] = React.useState<TabKey>("list");
   return (
     <div className="flex flex-col gap-4">
@@ -53,6 +66,7 @@ export function LedgerTabs({ ledger, pending, period }: { ledger: LedgerListStat
 
       {tab === "list" ? <ListTab ledger={ledger} pending={pending} period={period} /> : null}
       {tab === "confirm" ? <ConfirmTab pending={pending} /> : null}
+      {tab === "voided" ? <VoidedTab voided={voided} period={period} /> : null}
     </div>
   );
 }
@@ -193,6 +207,87 @@ function ListTab({ ledger, pending, period }: { ledger: LedgerListState; pending
       <div className="text-sm text-ink-400">คลิกแถวเพื่อดูบรรทัดบัญชีที่ระบบบันทึกจริง</div>
 
       <EntryDrawer entry={openEntry} onClose={() => setOpenId(null)} />
+    </div>
+  );
+}
+
+/**
+ * รายการที่ยกเลิก (void) — D-098: "เห็นได้ แต่ตัดออกจากงบ"
+ *
+ * อ่านจาก `v_ledger_voided` (ฝั่ง server) · **ไม่มียอดรวม** โดยตั้งใจ:
+ * ของพวกนี้ไม่ถูกนับในงบแล้ว การแสดงยอดรวมจะชวนให้เข้าใจว่ายังมีความหมายทางบัญชี
+ * สิ่งที่ต้องเห็นคือ **ใคร เมื่อไหร่ ทำไม** ไม่ใช่ตัวเลขสรุป
+ */
+function VoidedTab({ voided, period }: { voided: VoidedListState; period: LedgerPeriod }) {
+  const entityId = useApp((s) => s.entityId);
+  const ref = useReference();
+
+  if (!voided.ok) {
+    return (
+      <div role="alert" className="rounded border border-neg bg-neg-bg p-[14px_16px] text-base leading-7 text-neg-fg">
+        โหลดรายการที่ยกเลิกจากฐานข้อมูลไม่สำเร็จ: {voided.error}
+        <div className="mt-1 text-sm">ลองโหลดหน้านี้ใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ</div>
+      </div>
+    );
+  }
+
+  const rows = entityId === FAMILY_VIEW ? voided.entries : voided.entries.filter((e) => e.ownerId === entityId);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded border border-line bg-canvas p-[12px_16px] text-base leading-7 text-ink-600">
+        รายการเหล่านี้ถูกยกเลิกแล้ว จึง <b>ไม่ถูกนับในงบการเงินทุกใบ</b> แต่ยังเก็บไว้ให้ตรวจย้อนได้ (ไม่มีการลบ)
+      </div>
+
+      <TableShell>
+        <Table minWidth={1100}>
+          <thead>
+            <tr>
+              <Th className="whitespace-nowrap">วันที่เอกสาร</Th>
+              <Th className="whitespace-nowrap">ประเภท</Th>
+              <Th>หมวดย่อย</Th>
+              <Th>รายละเอียด</Th>
+              <Th>ถือในชื่อ</Th>
+              <Th align="right">ยอดในใบ</Th>
+              <Th className="whitespace-nowrap">ยกเลิกเมื่อ</Th>
+              <Th>ยกเลิกโดย</Th>
+              <Th>เหตุผล</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <Td colSpan={9} className="py-8 text-center text-ink-600">
+                  ไม่มีรายการที่ยกเลิก{period.label} — ดีแล้ว
+                </Td>
+              </tr>
+            ) : null}
+            {rows.map((e, i) => {
+              const owner = ref.owners.find((o) => o.id === e.ownerId);
+              const found = findSub(e.subCode);
+              const total = e.lines.reduce((t, l) => t + l.debit, 0);
+              return (
+                <tr key={e.id} className={cn("border-l-[3px]", i % 2 ? "bg-canvas" : "bg-surface")} style={owner?.color ? { borderLeftColor: owner.color } : undefined}>
+                  <Td className="whitespace-nowrap">{isoToDmy(e.docDate)}</Td>
+                  <Td className="whitespace-nowrap">{found ? <Pill className={TYPE_PILL[found.type.tone]}>{found.type.label}</Pill> : "—"}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{found?.sub.label ?? e.subCode}</Td>
+                  <Td>{e.memo ?? "—"}</Td>
+                  <Td className="whitespace-nowrap">{owner?.name ?? "ผู้ถือที่ไม่รู้จัก"}</Td>
+                  <Td align="right" className="whitespace-nowrap tabular-nums text-ink-600">{money(total)}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{e.voidedAt ? isoToDmy(e.voidedAt.slice(0, 10)) : "—"}</Td>
+                  <Td className="whitespace-nowrap text-ink-600">{e.voidedByName ?? "ไม่ทราบชื่อผู้ใช้"}</Td>
+                  <Td>{e.voidReason ?? "—"}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      </TableShell>
+      {voided.truncated ? (
+        <div className="rounded border border-warn bg-warn-bg p-[12px_16px] text-base leading-7 text-warn-fg">
+          แสดงเฉพาะรายการล่าสุด — ในฐานข้อมูลยังมีรายการที่ยกเลิกเก่ากว่านี้อีก
+        </div>
+      ) : null}
     </div>
   );
 }
