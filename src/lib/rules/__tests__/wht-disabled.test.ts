@@ -16,7 +16,7 @@ import { confirmCash } from "@/app/actions/confirm-cash";
 import { buildPosting as buildPostingWith, allLines } from "@/lib/ledger/posting";
 import { PostingError, type PostingInput } from "@/lib/ledger/types";
 import { TEST_RESOLVER } from "@/lib/ledger/__tests__/fixture-resolver";
-import { WHT_COA } from "@/lib/rules/coa";
+import { WHT_COA, coa } from "@/lib/rules/coa";
 import { TX_TYPES, accrualCheck, canWithholdTax, whtCheck, whtEligibleSubs } from "@/lib/rules/tx-rules";
 import { WHT_ENABLED } from "@/lib/rules/wht-switch";
 
@@ -59,6 +59,33 @@ describe("1) คีย์รายการสร้างบรรทัด 180
         () => buildPosting({ ...rent(), typeKey: t.key, subCode: s.code, wht }),
         s.code
       ).toThrow(PostingError);
+    }
+  });
+
+  /**
+   * **เคสข้างบนพิสูจน์น้อยกว่าที่เห็น** (ผู้ตรวจชี้ 11/11) — หมวดส่วนใหญ่โยน
+   * `PostingError` อยู่แล้วด้วยเหตุผลอื่น (ช่องที่หมวดนั้นบังคับไม่ได้ส่งมา)
+   * เคสนี้จึงผ่านได้แม้ด่านภาษีถูกถอดออกทั้งหมด
+   *
+   * เคสนี้จึงไล่เฉพาะหมวดที่ **รูปคู่บัญชีเข้าเงื่อนไขหักภาษีอยู่แล้ว** และยืนยันว่า
+   * ข้อความที่ได้พูดถึง PEAK จริง — เงื่อนไขเขียนซ้ำที่นี่อย่างอิสระ **ไม่เรียก
+   * `canWithholdTax()`** เพราะถ้าเรียก มันจะเห็นด้วยกับตัวเองเสมอ
+   */
+  it("หมวดที่รูปคู่บัญชีเคยหักภาษีได้ ต้องถูกปฏิเสธ **เพราะเรื่องภาษี** ไม่ใช่เหตุผลอื่น", () => {
+    const shaped = TX_TYPES.flatMap((t) => t.subs.map((s) => ({ t, s }))).filter(
+      ({ s }) => s.cash === "in" && s.cashflow === "operating" && s.dr === "1100" && coa(s.cr).type === "income"
+    );
+    expect(shaped.length, "ต้องมีหมวดให้ทดสอบ (ไม่งั้นเคสนี้ผ่านเพราะลูปว่าง)").toBeGreaterThan(3);
+
+    for (const { t, s } of shaped) {
+      let thrown: unknown;
+      try {
+        buildPosting({ ...rent(), typeKey: t.key, subCode: s.code, wht });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, s.code).toBeInstanceOf(PostingError);
+      expect((thrown as Error).message, `${s.code} ถูกปฏิเสธด้วยเหตุผลอื่น ไม่ใช่เรื่องภาษี`).toMatch(/PEAK/);
     }
   });
 
