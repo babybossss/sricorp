@@ -8,6 +8,11 @@ import { readPendingAccruals } from "@/lib/db/pending-accruals-server";
 import type { PostingInput } from "@/lib/ledger/types";
 import { findSub } from "@/lib/rules/tx-rules";
 
+// สวิตช์จริงปิดอยู่ (ดู wht-switch.ts · เทสต์สถานะที่ส่งมอบอยู่ใน wht-disabled.test.ts)
+// ไฟล์นี้ตรึงสวิตช์เป็นเปิด เพื่อรักษาเทสต์ของตัวฟีเจอร์ไว้ ให้เปิดกลับแล้วยังถูกต้อง
+vi.mock("@/lib/rules/wht-switch", async (orig) => ({ ...(await orig<typeof import("@/lib/rules/wht-switch")>()), WHT_ENABLED: true }));
+
+
 /** ตั้งค้างรับค่าเช่า (ยังไม่ได้รับเงิน) ของธนากร — เส้นทางเดียวกับที่ฟอร์มส่ง */
 const accrual = (amount = 12000, over: Partial<PostingInput> = {}): PostingInput => ({
   typeKey: "income",

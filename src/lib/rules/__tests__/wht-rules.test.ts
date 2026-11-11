@@ -8,7 +8,7 @@
  *      และไม่มีใครรู้ว่าเครดิตที่ขอคืนได้จริงเหลือเท่าไร (บทเรียนข้อ 7)
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   COA,
   WHT_COA,
@@ -25,6 +25,11 @@ import {
   whtEligibleSubs,
 } from "../tx-rules";
 import { findCashflowLayoutGaps, findLayoutGaps, statementOf } from "../statements";
+
+// สวิตช์จริงปิดอยู่ (ดู wht-switch.ts · เทสต์สถานะที่ส่งมอบอยู่ใน wht-disabled.test.ts)
+// ไฟล์นี้ตรึงสวิตช์เป็นเปิด เพื่อรักษาเทสต์ของตัวฟีเจอร์ไว้ ให้เปิดกลับแล้วยังถูกต้อง
+vi.mock("@/lib/rules/wht-switch", async (orig) => ({ ...(await orig<typeof import("@/lib/rules/wht-switch")>()), WHT_ENABLED: true }));
+
 
 const allSubs = TX_TYPES.flatMap((t) => t.subs);
 

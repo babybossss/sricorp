@@ -1,10 +1,15 @@
 import "./mocks";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ctx, resetCtx } from "./ctx";
 import { ASSET, BANK, CONTACT, OWNER } from "./fake-db";
 import { postEntry, type PostEntryRequest } from "../post-entry";
 import type { PostingInput } from "@/lib/ledger/types";
 import { TX_TYPES, accrualCheck, movesCash } from "@/lib/rules/tx-rules";
+
+// สวิตช์จริงปิดอยู่ (ดู wht-switch.ts · เทสต์สถานะที่ส่งมอบอยู่ใน wht-disabled.test.ts)
+// ไฟล์นี้ตรึงสวิตช์เป็นเปิด เพื่อรักษาเทสต์ของตัวฟีเจอร์ไว้ ให้เปิดกลับแล้วยังถูกต้อง
+vi.mock("@/lib/rules/wht-switch", async (orig) => ({ ...(await orig<typeof import("@/lib/rules/wht-switch")>()), WHT_ENABLED: true }));
+
 
 const rentPaid: PostingInput = {
   typeKey: "income",

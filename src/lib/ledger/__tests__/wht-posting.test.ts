@@ -8,13 +8,18 @@
  * จะไม่มีวันแตะเส้นทางที่ข้อมูลขาด (บทเรียน mace-windu ข้อ 3)
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { buildPosting as buildPostingWith, buildPostingDraft as buildPostingDraftWith, allLines, assertBalanced } from "../posting";
 import { PostingError, type PostingInput, type PostingLine } from "../types";
 import { WHT_COA, isCashAccount } from "@/lib/rules/coa";
 import { statementOf } from "@/lib/rules/statements";
 import { TX_TYPES, whtEligibleSubs } from "@/lib/rules/tx-rules";
 import { EVIDENCE, TEST_RESOLVER } from "./fixture-resolver";
+
+// สวิตช์จริงปิดอยู่ (ดู wht-switch.ts · เทสต์สถานะที่ส่งมอบอยู่ใน wht-disabled.test.ts)
+// ไฟล์นี้ตรึงสวิตช์เป็นเปิด เพื่อรักษาเทสต์ของตัวฟีเจอร์ไว้ ให้เปิดกลับแล้วยังถูกต้อง
+vi.mock("@/lib/rules/wht-switch", async (orig) => ({ ...(await orig<typeof import("@/lib/rules/wht-switch")>()), WHT_ENABLED: true }));
+
 
 const buildPosting = (i: PostingInput) => buildPostingWith(i, TEST_RESOLVER);
 const buildPostingDraft = (i: PostingInput) => buildPostingDraftWith(i, TEST_RESOLVER);

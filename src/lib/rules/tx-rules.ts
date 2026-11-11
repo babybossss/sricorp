@@ -26,6 +26,7 @@ import {
   RETAINED_EARNINGS_COA,
   type CoaAccount,
 } from "./coa";
+import { WHT_DISABLED_WHY, WHT_ENABLED } from "./wht-switch";
 
 export type TxTypeKey =
   | "income"
@@ -2753,6 +2754,12 @@ function incomeAccrualAccounts(): Set<string> {
  * `txn_types` และมีเทสต์ฝั่ง SQL (W1) เขียนเงื่อนไขซ้ำอย่างอิสระแล้วเทียบทุกแถว
  */
 export function canWithholdTax(sub: SubCategory): boolean {
+  // ปิดที่จุดเดียว — ดู `wht-switch.ts` (ภาษีทำที่ PEAK · เปิดกลับแก้ที่นั่นที่เดียว)
+  return WHT_ENABLED && whtShapeAllows(sub);
+}
+
+/** รูปคู่บัญชีที่หักภาษีได้ (ตรรกะเดิมทั้งหมด) — แยกออกเพื่อให้เปิดสวิตช์กลับแล้วใช้ได้ทันที */
+function whtShapeAllows(sub: SubCategory): boolean {
   if (!(sub.cash === "in" && sub.cashflow === "operating" && isCashAccount(sub.dr))) {
     return false;
   }
@@ -2764,6 +2771,7 @@ export function canWithholdTax(sub: SubCategory): boolean {
 export type WhtCheck = { ok: true; account: string } | { ok: false; why: string };
 
 export function whtCheck(sub: SubCategory): WhtCheck {
+  if (!WHT_ENABLED) return { ok: false, why: WHT_DISABLED_WHY };
   if (!canWithholdTax(sub)) {
     const reasons: string[] = [];
     if (sub.cash !== "in") reasons.push(`ทิศเงินเป็น "${cashDirectionLabel(sub.cash)}" ไม่ใช่เงินเข้า`);
